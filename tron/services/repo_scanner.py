@@ -275,33 +275,44 @@ class RepoScanner:
     async def _clone(
         self, repo_url: str, branch: str, target_dir: str, github_token: Optional[str] = None
     ) -> None:
-        """Shallow clone a repo into target_dir."""
+        """Shallow clone a repo into target_dir with fallback branch detection."""
         # Inject token for private HTTPS GitHub clones
         authenticated_url = repo_url
         if github_token and repo_url.startswith("https://github.com/"):
             authenticated_url = repo_url.replace("https://github.com/", f"https://x-access-token:{github_token}@github.com/")
 
-        # Docker workers often clone host-mounted bare repos (e.g. /tmp/tron-scans) owned
-        # by another uid — without this, git 2.35+ aborts with "detected dubious ownership".
+        # Try to clone specific branch first
+        success = await self._exec_clone(authenticated_url, target_dir, branch)
+        
+        if not success:
+            logger.info("Branch '%s' not found for %s, attempting to clone default branch...", branch, repo_url)
+            # Try cloning WITHOUT a specific branch to let git pick the remote HEAD (default branch)
+            success = await self._exec_clone(authenticated_url, target_dir, None)
+
+        if not success:
+            raise RepoScanError(f"Clone failed for {repo_url}. Check if repo exists and is accessible.")
+
+        logger.info("Clone complete: %s", target_dir)
+
+    async def _exec_clone(self, url: str, target_dir: str, branch: Optional[str]) -> bool:
+        """Helper to execute the git clone command."""
         cmd = [
             "git",
             "-c",
             "safe.directory=*",
             "clone",
             "--depth", "1",
-            "--single-branch",
-            "--branch", branch,
-            authenticated_url,
-            target_dir,
         ]
+        
+        if branch:
+            cmd.extend(["--single-branch", "--branch", branch])
+            
+        cmd.extend([url, target_dir])
 
-        logger.info("Cloning %s@%s ...", repo_url, branch)
-
-        # Configure git environment to disable credential prompting for public repos
         env = os.environ.copy()
         env.update({
-            "GIT_TERMINAL_PROMPT": "0",  # Disable credential prompting
-            "GIT_ASKPASS": "echo",        # Fail fast if credentials required
+            "GIT_TERMINAL_PROMPT": "0",
+            "GIT_ASKPASS": "echo",
         })
 
         try:
@@ -311,19 +322,23 @@ class RepoScanner:
                 stderr=asyncio.subprocess.PIPE,
                 env=env,
             )
-            stdout, stderr = await asyncio.wait_for(
+            _, stderr = await asyncio.wait_for(
                 proc.communicate(), timeout=self._clone_timeout
             )
+            
+            if proc.returncode == 0:
+                return True
+            
+            err = stderr.decode("utf-8", errors="replace").lower()
+            # If it's a branch error, we can retry. If it's auth/not found, we fail.
+            if "could not find remote branch" in err or "remote branch" in err and "not found" in err:
+                return False
+                
+            # For other errors (auth, etc.), raise immediately to avoid useless retry
+            raise RepoScanError(f"Clone failed (exit {proc.returncode}): {err.strip()}")
+            
         except asyncio.TimeoutError:
-            raise RepoScanError(
-                f"Clone timed out after {self._clone_timeout}s: {repo_url}"
-            )
-
-        if proc.returncode != 0:
-            error_msg = stderr.decode("utf-8", errors="replace").strip()
-            raise RepoScanError(f"Clone failed (exit {proc.returncode}): {error_msg}")
-
-        logger.info("Clone complete: %s", target_dir)
+            raise RepoScanError(f"Clone timed out after {self._clone_timeout}s")
 
     async def _get_tracked_files(self, clone_dir: str) -> Set[str]:
         """Get list of git-tracked files (respects .gitignore)."""
