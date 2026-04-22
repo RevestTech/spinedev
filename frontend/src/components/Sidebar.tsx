@@ -175,7 +175,7 @@ export default function Sidebar() {
           
           <div className="flex items-center justify-between px-2">
             {!isCollapsed && (
-              <span className="text-[10px] font-bold text-tron-600 uppercase tracking-tighter italic">Tron Enterprise v5.3</span>
+              <span className="text-[10px] font-bold text-tron-600 uppercase tracking-tighter italic">Tron Enterprise v5.4</span>
             )}
             <button 
               onClick={() => setIsCollapsed(!isCollapsed)}

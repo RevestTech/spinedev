@@ -118,7 +118,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="Tron",
         description="Enterprise AI QA Platform — Verify Everything, Trust Nothing",
-        version="5.3.0",
+        version="5.4.0",
         docs_url="/api/docs",
         redoc_url="/api/redoc",
         openapi_url="/api/openapi.json",

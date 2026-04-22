@@ -119,6 +119,68 @@ const DOCS_DATA = [
     group: 'DEEP TECHNOLOGY',
     items: [
       {
+        id: 'privacy-guard',
+        title: 'Privacy Guard (Zero-Exfil)',
+        icon: <Lock className="w-4 h-4" />,
+        content: (
+          <div className="space-y-12">
+            <header>
+              <MethodBadge method="TECH" />
+              <h2 className="text-4xl font-black text-white tracking-tighter mt-4">Zero-Exfiltration Engine</h2>
+              <p className="text-tron-300 text-lg leading-relaxed">How Tron protects your Intellectual Property (IP) from being sent to external LLMs.</p>
+            </header>
+
+            <section className="space-y-6">
+              <p className="text-sm text-tron-400 leading-relaxed">
+                If your code is your "Secret Sauce", you shouldn't have to choose between AI security and IP protection. 
+                Tron introduces the <strong>Privacy Guard</strong> architecture, offering three tiers of protection:
+              </p>
+              
+              <div className="grid grid-cols-1 gap-6 mt-8">
+                {/* Option 1 */}
+                <div className="p-8 bg-tron-800/30 border-2 border-tron-700/50 rounded-[2rem] shadow-xl">
+                  <div className="flex items-center gap-4 mb-4">
+                    <div className="p-3 bg-blue-500/10 rounded-2xl text-blue-400"><Server className="w-6 h-6" /></div>
+                    <h3 className="text-xl font-black text-white tracking-tight">1. Local Swarm (On-Premise)</h3>
+                  </div>
+                  <p className="text-sm text-tron-300 leading-relaxed mb-4">
+                    Tron routes all agent reasoning to local models (like Llama 3 via Ollama) running on your own GPU cluster. 
+                    <strong className="text-white"> 0% of your code leaves your physical hardware.</strong>
+                  </p>
+                </div>
+
+                {/* Option 2 */}
+                <div className="p-8 bg-tron-800/30 border-2 border-tron-700/50 rounded-[2rem] shadow-xl">
+                  <div className="flex items-center gap-4 mb-4">
+                    <div className="p-3 bg-purple-500/10 rounded-2xl text-purple-400"><Network className="w-6 h-6" /></div>
+                    <h3 className="text-xl font-black text-white tracking-tight">2. Ghost Logic (Pseudonymization)</h3>
+                  </div>
+                  <p className="text-sm text-tron-300 leading-relaxed mb-4">
+                    Before sending code to an external LLM, Tron dynamically obfuscates all proprietary business logic names. 
+                    The AI sees the "math" and structure to find bugs, but has no idea what the business context is.
+                  </p>
+                  <CodeBlock title="GHOST LOGIC TRANSFORMATION" code={`// Original Code:\ndef calculate_revest_fnft_yield(vault_id, apy_rate):\n    vault_data = get_vault(vault_id)\n    return vault_data.balance * apy_rate\n\n// Obfuscated Payload sent to OpenAI:\ndef SECURE_ALIAS_001(SECURE_ALIAS_002, SECURE_ALIAS_003):\n    SECURE_ALIAS_004 = SECURE_ALIAS_005(SECURE_ALIAS_002)\n    return SECURE_ALIAS_004.SECURE_ALIAS_006 * SECURE_ALIAS_003`} />
+                  <p className="text-xs text-tron-500 font-bold mt-2">Tron automatically de-obfuscates the response before showing it in the UI.</p>
+                </div>
+
+                {/* Option 3 */}
+                <div className="p-8 bg-tron-800/30 border-2 border-tron-700/50 rounded-[2rem] shadow-xl">
+                  <div className="flex items-center gap-4 mb-4">
+                    <div className="p-3 bg-green-500/10 rounded-2xl text-green-400"><Code className="w-6 h-6" /></div>
+                    <h3 className="text-xl font-black text-white tracking-tight">3. Universal Signature Extraction</h3>
+                  </div>
+                  <p className="text-sm text-tron-300 leading-relaxed mb-4">
+                    Tron strips out the entire body of every function across all supported languages (Python, C#, Java, Go). 
+                    The LLM only receives interfaces and type hints, ensuring your proprietary algorithms never leave your network.
+                  </p>
+                  <CodeBlock title="C# SIGNATURE EXTRACTION" language="csharp" code={`// Original C# Logic:\npublic async Task<VaultResponse> ProcessYield(Guid id) {\n    var secretAlgorithm = ... // PROPRIETARY\n    return result;\n}\n\n// Redacted Payload sent to LLM:\npublic async Task<VaultResponse> ProcessYield(Guid id) { /* TRON REDACTED IP */ }`} />
+                </div>
+              </div>
+            </section>
+          </div>
+        )
+      },
+      {
         id: 'temporal',
         title: 'Temporal Orchestration',
         icon: <Activity className="w-4 h-4" />,
@@ -349,7 +411,7 @@ export default function Wiki() {
                   <div className="mt-10 flex flex-col gap-2 pt-6 border-t border-tron-700">
                     <span className="text-[10px] font-black text-tron-600 uppercase tracking-widest">Stack Stability</span>
                     <span className="text-xs text-green-400 font-black uppercase tracking-tighter flex items-center gap-2">
-                       <Activity className="w-3.5 h-3.5" /> v5.3.0-STABLE
+                       <Activity className="w-3.5 h-3.5" /> v5.4.0-STABLE
                     </span>
                   </div>
                </div>

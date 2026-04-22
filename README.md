@@ -1,6 +1,6 @@
 # Tron — AI Agents That Never Drift, Verify Every Finding, Always Complete the Task
 
-**Version:** 5.3  
+**Version:** 5.4  
 **Status:** Implementation Ready  
 **Timeline:** 8-10 weeks (AI-assisted) — Phased Production Delivery  
 **Ports:** All services run on **13000+ range** (see [PORT_REFERENCE.md](docs/operations/PORT_REFERENCE.md))
