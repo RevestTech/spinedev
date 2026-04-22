@@ -4,8 +4,9 @@ import {
   ArrowLeft, Play, GitBranch, Bug, AlertTriangle,
   CheckCircle2, XCircle, FileCode, ChevronRight, BarChart3,
   Shield, Zap, RefreshCw, ClipboardList, TrendingUp,
-  Share2, Info
+  Share2, Info, Globe, Settings
 } from 'lucide-react'
+import GithubRepoBrowser from '../components/GithubRepoBrowser'
 
 import ForceGraph2D from 'react-force-graph-2d'
 import {
@@ -368,8 +369,9 @@ function EvolveArtifactView({ artifact }: { artifact: any }) {
 export default function ProjectDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const [showGithub, setShowGithub] = useState(false)
   const [activeTab, setActiveTab] = useState<'overview' | 'graph'>('overview')
-  const { data: project } = usePolling(() => api.getProject(id!), 15000, [id])
+  const { data: project, refetch: refetchProject } = usePolling(() => api.getProject(id!), 15000, [id])
   const { data: audits, refetch } = usePolling(
     () => api.listAudits({ project_id: id!, page_size: 50 }),
     4000,
@@ -378,6 +380,20 @@ export default function ProjectDetail() {
   const [scanning, setScanning] = useState(false)
   const [buildBusy, setBuildBusy] = useState(false)
   const [evolveBusy, setEvolveBusy] = useState(false)
+
+  async function handleGithubSelect(repo: api.GithubRepo) {
+    if (!project) return
+    try {
+      await api.updateProject(project.id, {
+        repo_url: repo.html_url,
+        name: repo.name,
+      })
+      await refetchProject()
+      setShowGithub(false)
+    } catch (err: any) {
+      alert('Failed to link repository: ' + err.message)
+    }
+  }
 
   const auditItems = audits?.items ?? []
   const latestAudit = auditItems[0] ?? null
@@ -493,6 +509,12 @@ export default function ProjectDetail() {
             {project.repo_url && (
               <span className="text-tron-500 text-xs font-mono truncate max-w-xs">{project.repo_url}</span>
             )}
+            <button 
+              onClick={() => setShowGithub(true)}
+              className="flex items-center gap-1.5 px-2.5 py-1 bg-white/5 hover:bg-white/10 text-white rounded-lg text-[10px] font-black uppercase tracking-widest border border-white/10 transition-all"
+            >
+              <Globe className="w-3 h-3" /> Relink Repository
+            </button>
           </div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
@@ -775,6 +797,13 @@ export default function ProjectDetail() {
         </div>
       ) : (
         <DependencyGraph projectId={id!} />
+      )}
+
+      {showGithub && (
+        <GithubRepoBrowser 
+          onSelect={handleGithubSelect}
+          onClose={() => setShowGithub(false)}
+        />
       )}
     </div>
   )
