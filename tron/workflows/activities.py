@@ -315,8 +315,21 @@ async def scan_repository(project_meta: ProjectMeta) -> ScanResult:
     import json as _json
     from tron.services.repo_scanner import RepoScanner, RepoScanError, detect_languages
     from tron.infra.redis.client import get_redis
+    from tron.infra.secrets import get_secret
 
     if project_meta.repo_url:
+        # Retrieve token from vault for private clones
+        token = None
+        try:
+            # 1. Try primary tron key
+            token = await get_secret("github_token")
+        except (KeyError, RuntimeError):
+            try:
+                # 2. Try the shared organization key found in vault
+                token = await get_secret("enginsights:github-api-token", explicit=True)
+            except (KeyError, RuntimeError):
+                token = None
+
         scanner = RepoScanner(
             max_files=2000,
             max_total_size=50 * 1024 * 1024,
@@ -324,6 +337,7 @@ async def scan_repository(project_meta: ProjectMeta) -> ScanResult:
         file_contents = await scanner.scan(
             repo_url=project_meta.repo_url,
             branch=project_meta.default_branch,
+            github_token=token,
         )
         if not file_contents:
             raise RepoScanError(

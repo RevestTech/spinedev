@@ -208,6 +208,7 @@ class RepoScanner:
         repo_url: str,
         branch: str = "main",
         subdirectory: Optional[str] = None,
+        github_token: Optional[str] = None,
     ) -> Dict[str, str]:
         """Clone a repo and return analyzable file contents.
 
@@ -215,6 +216,7 @@ class RepoScanner:
             repo_url: Git clone URL (https or ssh).
             branch: Branch or tag to checkout.
             subdirectory: Optional subdirectory to scope the scan to.
+            github_token: Optional PAT for authenticated HTTPS cloning.
 
         Returns:
             Dict mapping relative file paths to their contents.
@@ -226,7 +228,7 @@ class RepoScanner:
 
         try:
             # 1. Clone
-            await self._clone(repo_url, branch, clone_dir)
+            await self._clone(repo_url, branch, clone_dir, github_token=github_token)
 
             # 2. Get tracked files via git ls-files (respects .gitignore)
             tracked_files = await self._get_tracked_files(clone_dir)
@@ -271,9 +273,14 @@ class RepoScanner:
             raise
 
     async def _clone(
-        self, repo_url: str, branch: str, target_dir: str
+        self, repo_url: str, branch: str, target_dir: str, github_token: Optional[str] = None
     ) -> None:
         """Shallow clone a repo into target_dir."""
+        # Inject token for private HTTPS GitHub clones
+        authenticated_url = repo_url
+        if github_token and repo_url.startswith("https://github.com/"):
+            authenticated_url = repo_url.replace("https://github.com/", f"https://x-access-token:{github_token}@github.com/")
+
         # Docker workers often clone host-mounted bare repos (e.g. /tmp/tron-scans) owned
         # by another uid — without this, git 2.35+ aborts with "detected dubious ownership".
         cmd = [
@@ -284,7 +291,7 @@ class RepoScanner:
             "--depth", "1",
             "--single-branch",
             "--branch", branch,
-            repo_url,
+            authenticated_url,
             target_dir,
         ]
 
