@@ -32,13 +32,19 @@ async def list_github_repos(
     org: Optional[str] = Query(None, description="GitHub Organization name"),
 ):
     """Fetch available repositories from GitHub."""
+    token = None
     try:
+        # 1. Try primary tron key
         token = await get_secret("github_token")
-    except KeyError:
-        token = None
+    except (KeyError, RuntimeError):
+        try:
+            # 2. Try the shared organization key found in vault
+            token = await get_secret("enginsights:github-api-token")
+        except (KeyError, RuntimeError):
+            token = None
         
     if not token:
-        # Fallback to env for local dev if vault not configured
+        # 3. Fallback to env for local dev if vault not configured
         import os
         token = os.environ.get("TRON_PLAN_GIT_TOKEN")
         

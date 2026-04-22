@@ -10,11 +10,11 @@ const STATUS_FILTERS = ['all', 'running', 'completed', 'failed', 'queued'] as co
 
 export default function Audits() {
   const [statusFilter, setStatusFilter] = useState<string>('all')
-  const { data: projects } = usePolling(() => api.listProjects(1, 200), 30000, [])
+  const { data: projects } = usePolling(() => api.listProjects(1, 50), 30000, [])
   const { data } = usePolling(
     () => api.listAudits({
       status: statusFilter === 'all' ? undefined : statusFilter,
-      page_size: 100,
+      page_size: 50,
     }),
     3000,
     [statusFilter],

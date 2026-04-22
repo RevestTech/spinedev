@@ -122,12 +122,12 @@ async def get_cost_dashboard(
                 )
             ).where(uw)
         )
-        total_audits = int(
-            await session.scalar(select(func.count()).select_from(AuditRun).where(aw)) or 0
-        )
+        total_audits_raw = await session.scalar(select(func.count()).select_from(AuditRun).where(aw))
 
-        total_cost_usd = float(total_cost_raw or 0)
+        total_cost_usd = float(total_cost_raw or 0.0)
         total_tokens = int(total_tokens_raw or 0)
+        total_audits = int(total_audits_raw or 0)
+        
         avg_cost_per_audit = (
             total_cost_usd / total_audits if total_audits else 0.0
         )
@@ -208,13 +208,16 @@ async def get_cost_dashboard(
             .where(aw)
             .group_by(func.date(AuditRun.created_at))
         )
-        audits_per_day = {row[0]: int(row[1]) for row in day_audits.all() if row[0]}
+        
+        # Ensure keys are strings for dictionary lookup
+        audits_per_day = {str(row[0]): int(row[1]) for row in day_audits.all() if row[0]}
 
         daily_trend: list[DailyCost] = []
         for row in day_cost.all():
-            dkey = row[0]
-            if dkey is None:
+            dval = row[0]
+            if dval is None:
                 continue
+            dkey = str(dval)
             daily_trend.append(
                 DailyCost(
                     date=dkey,

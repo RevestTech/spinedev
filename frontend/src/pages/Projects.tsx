@@ -11,8 +11,8 @@ import { usePolling } from '../hooks/usePolling'
 import * as api from '../api'
 
 export default function Projects() {
-  const { data, refetch } = usePolling(() => api.listProjects(1, 100), 10000, [])
-  const { data: audits } = usePolling(() => api.listAudits({ page_size: 200 }), 8000, [])
+  const { data, refetch } = usePolling(() => api.listProjects(1, 50), 10000, [])
+  const { data: audits } = usePolling(() => api.listAudits({ page_size: 50 }), 8000, [])
   const navigate = useNavigate()
   const [showCreate, setShowCreate] = useState(false)
   const [showGithub, setShowGithub] = useState(false)
