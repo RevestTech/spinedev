@@ -10,8 +10,9 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
-from tron.api.deps import get_session
-from tron.infra.secrets.keyvault import keyvault
+from tron.api.routes.admin_auth import require_api_key
+from tron.infra.db.session import get_session
+from tron.infra.secrets import get_secret
 from tron.services.github_service import GitHubService
 
 logger = logging.getLogger(__name__)
@@ -31,7 +32,11 @@ async def list_github_repos(
     org: Optional[str] = Query(None, description="GitHub Organization name"),
 ):
     """Fetch available repositories from GitHub."""
-    token = await keyvault.get_secret("tron/github_token")
+    try:
+        token = await get_secret("github_token")
+    except KeyError:
+        token = None
+        
     if not token:
         # Fallback to env for local dev if vault not configured
         import os
