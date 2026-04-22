@@ -11,7 +11,9 @@ export function setApiKey(key: string) {
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const key = getApiKey();
-  const res = await fetch(`${API_BASE}${path}`, {
+  // Ensure path has leading slash
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  const res = await fetch(`${API_BASE}${normalizedPath}`, {
     credentials: 'include',
     ...options,
     headers: {
@@ -47,41 +49,17 @@ export const getReady = () =>
 
 // ── Admin UI session (httpOnly cookie; optional X-API-Key for automation) ──
 export const adminMe = () =>
-  fetch(`${API_BASE}/admin/me`, {
-    credentials: 'include',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(getApiKey() ? { 'X-API-Key': getApiKey() } : {}),
-    },
-  }).then(async r => {
-    if (!r.ok) throw new Error(`${r.status}`);
-    return r.json() as Promise<{ ok: boolean }>;
-  });
+  request<{ ok: boolean }>('/admin/me');
 
 export const adminLogin = (password: string) =>
-  fetch(`${API_BASE}/admin/login`, {
+  request<{ ok: boolean }>('/admin/login', {
     method: 'POST',
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ password }),
-  }).then(async r => {
-    const body = await r.json().catch(() => ({}));
-    if (!r.ok) {
-      const d = (body as { detail?: string }).detail;
-      throw new Error(typeof d === 'string' ? d : 'Login failed');
-    }
-    return body as { ok: boolean };
   });
 
 export const adminLogout = () =>
-  fetch(`${API_BASE}/admin/logout`, {
+  request<{ ok: boolean }>('/admin/logout', {
     method: 'POST',
-    credentials: 'include',
-    headers: {
-      ...(getApiKey() ? { 'X-API-Key': getApiKey() } : {}),
-    },
-  }).then(r => {
-    if (!r.ok) throw new Error(`${r.status}`);
   });
 
 // ── Projects ──
