@@ -23,6 +23,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass, field
+from typing import AsyncGenerator, Dict, List, Optional
 
 import httpx
 
@@ -116,8 +117,10 @@ class KMacVaultClient:
             f"{KMAC_TOKEN_PATH} or KMAC_TOKEN env var."
         )
 
-    def _full_key(self, key: str) -> str:
+    def _full_key(self, key: str, explicit: bool = False) -> str:
         """Build the full vault key with prefix (e.g., "tron:db_password")."""
+        if explicit:
+            return key
         # KMac vault expects keys with prefix
         # If key already has prefix, don't add it again
         if key.startswith(self.secret_prefix):
@@ -127,7 +130,7 @@ class KMacVaultClient:
         key_normalized = key.replace("/", "_").replace("-", "_")
         return f"{self.secret_prefix}{key_normalized}"
 
-    async def get(self, key: str, *, field_name: str = "value") -> str:
+    async def get(self, key: str, *, field_name: str = "value", explicit: bool = False) -> str:
         """
         Read a single secret from KMac vault.
 
@@ -135,6 +138,7 @@ class KMacVaultClient:
             key: Secret path relative to prefix, e.g. "db/password" or "auth/secret-key" 
                  → "tron:db_password" or "tron:auth_secret_key"
             field_name: Ignored (KMac returns simple {"key": "...", "value": "..."})
+            explicit: If True, use the key exactly as provided (bypass prefixing).
 
         Returns:
             The secret value as a string.
@@ -153,7 +157,7 @@ class KMacVaultClient:
 
         # Fetch from KMac vault
         http = await self._get_http()
-        full_key = self._full_key(key)
+        full_key = self._full_key(key, explicit=explicit)
         path = f"/get/{full_key}"
 
         try:
@@ -248,9 +252,9 @@ def _get_client() -> KMacVaultClient:
     return _client
 
 
-async def get_secret(key: str, *, field_name: str = "value") -> str:
+async def get_secret(key: str, *, field_name: str = "value", explicit: bool = False) -> str:
     """Module-level convenience: read a single secret from KMac vault."""
-    return await _get_client().get(key, field_name=field_name)
+    return await _get_client().get(key, field_name=field_name, explicit=explicit)
 
 
 async def get_secrets(keys: list[str], *, field_name: str = "value") -> dict[str, str]:

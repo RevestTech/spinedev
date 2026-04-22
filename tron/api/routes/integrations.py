@@ -33,22 +33,30 @@ async def list_github_repos(
 ):
     """Fetch available repositories from GitHub."""
     token = None
-    try:
-        # 1. Try primary tron key
-        token = await get_secret("github_token")
-    except (KeyError, RuntimeError):
+    logger.info("Attempting to retrieve GitHub token from vault...")
+    
+    # 1. Try different possible keys in the vault
+    keys_to_try = ["github_token", "tron:github_token", "enginsights:github-api-token"]
+    
+    for k in keys_to_try:
         try:
-            # 2. Try the shared organization key found in vault
-            token = await get_secret("enginsights:github-api-token")
-        except (KeyError, RuntimeError):
-            token = None
-        
+            # Use explicit=True for keys that already have a prefix or are from other projects
+            is_explicit = ":" in k
+            token = await get_secret(k, explicit=is_explicit)
+            if token: 
+                logger.info(f"Successfully found GitHub token using key: {k}")
+                break
+        except Exception as e:
+            logger.debug(f"Key {k} not found in vault: {e}")
+
     if not token:
-        # 3. Fallback to env for local dev if vault not configured
+        # 2. Fallback to env for local dev if vault not configured
         import os
         token = os.environ.get("TRON_PLAN_GIT_TOKEN")
+        if token: logger.info("Using TRON_PLAN_GIT_TOKEN from environment")
         
     if not token:
+        logger.error("No GitHub token found in vault or environment")
         raise HTTPException(
             status_code=400, 
             detail="GitHub integration not configured. Please add 'tron/github_token' to vault."
