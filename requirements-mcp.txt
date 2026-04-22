@@ -1,0 +1,3 @@
+# Deprecated: use the project root `requirements.txt` (includes `mcp[cli]`).
+# Kept as a one-line alias so older docs/scripts still work.
+-r requirements.txt

@@ -1,0 +1,57 @@
+# docker-compose.dev.yml — Development overrides
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
+#
+# Changes from production:
+# - MinIO runs without TLS (no cert setup needed)
+# - API mounts source code for hot-reload
+# - Debug logging enabled
+# - Vault runs in dev mode with auto-init
+
+version: '3.8'
+
+services:
+  # MinIO without TLS for local dev
+  minio:
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: tron-minio-admin
+      MINIO_ROOT_PASSWORD: dev-minio-password
+      MINIO_SERVER_URL: http://minio:9000
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+
+  # API with hot-reload for development
+  tron-api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    volumes:
+      - ./tron:/app/tron
+      - ./alembic:/app/alembic
+      - ./alembic.ini:/app/alembic.ini
+    environment:
+      LOG_LEVEL: DEBUG
+      MINIO_SECURE: "false"
+      DB_HOST: postgres  # Connect directly to postgres in dev
+      DB_PORT: 5432
+      # Vault config inherited from docker-compose.yml (KMac Vault)
+    # NOTE: --reload removed — it breaks FastAPI BackgroundTasks (async tasks never execute).
+    # Source is still volume-mounted, so rebuild with: docker compose up -d --build tron-api
+    command: ["python", "-m", "uvicorn", "tron.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--log-level", "debug"]
+
+  # Worker with source mount
+  tron-worker:
+    volumes:
+      - ./tron:/app/tron
+    environment:
+      LOG_LEVEL: DEBUG
+      MINIO_SECURE: "false"

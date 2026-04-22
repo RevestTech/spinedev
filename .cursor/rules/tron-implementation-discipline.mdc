@@ -1,0 +1,31 @@
+---
+description: Tron — scoped changes, tests, and stack boundaries
+alwaysApply: true
+---
+
+# Implementation discipline
+
+## Scope
+
+- One logical goal per change: a single requirement fix, a single bug, or one small vertical slice. No drive-by refactors, no unrelated file churn.
+- Do not add unsolicited markdown docs; **exception**: updating **`MASTER_PROPOSAL_TODO.md`** / **`REQUIREMENTS_TRACEABILITY.md`** when requirements status changes.
+
+## Evidence
+
+- **Backend behavior**: prefer a test under `tests/` or a clear reference to an API route / Temporal workflow / activity name.
+- **User-visible behavior**: touch the relevant app (`frontend/` vs `admin-ui/`) intentionally; do not assume both are the same product.
+
+## Stack boundaries
+
+- **Python app**: `tron/` (FastAPI, workers, workflows, agents).
+- **Primary UI**: `frontend/`
+- **Legacy / optional admin SPA**: `admin-ui/`
+- **Infra**: `docker-compose.yml`, `config/`, `docker/` — keep changes minimal and consistent with existing patterns.
+
+## Dependencies and secrets
+
+- Do not commit secrets. Follow `.env.example` and existing keyvault/env patterns in code.
+
+## Finishing vs starting
+
+- Prefer completing an item listed in **`MASTER_PROPOSAL_TODO.md`** (or an agreed P0/P1) over starting new features not on that list, unless the user explicitly reprioritizes.

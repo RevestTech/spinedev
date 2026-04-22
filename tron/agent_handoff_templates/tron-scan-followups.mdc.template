@@ -1,0 +1,15 @@
+---
+description: After a Tron security audit, triage and fix findings in this repository (not in Tron itself)
+alwaysApply: true
+---
+
+# Tron scan follow-ups (this application)
+
+1. Tron **audited this repo** (path or Git remote configured in Tron). Your operator uses Tron’s UI/API; you work **in this checkout**.
+2. **Read** repository root **`TRON_POST_SCAN.md`** — audit snapshot and checklist for **{{APP_NAME}}**.
+3. **Read** **`tron.md`** at the repo root for **Tron activity** (append-only log of what Tron did on this repo) and any team notes.
+4. **Source of truth for findings** is Tron (**{{TRON_UI_BASE}}**) for audit **`{{TRON_AUDIT_ID}}`** — use the UI or Tron API to pull titles, file paths, and suggested fixes. Do not invent findings.
+5. **Validate before editing:** classify true positive vs false positive / accepted risk; document rationale for dismissals.
+6. **Apply fixes in this repo** only (Dockerfile, compose, app code). Do not change the Tron scanner repo to hide issues here.
+7. Prefer **evidence-led** patches: quote the finding, show the current code, then change the minimum lines needed.
+8. When triage is complete, update the checkboxes in **`TRON_POST_SCAN.md`** and list linked PRs/issues there.

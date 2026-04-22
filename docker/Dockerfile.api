@@ -1,0 +1,51 @@
+# Tron API Service
+# Multi-stage build for minimal production image
+
+# ── Stage 1: Dependencies ──
+FROM python:3.11-slim AS builder
+
+WORKDIR /build
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
+
+# ── Stage 2: Runtime ──
+FROM python:3.11-slim
+
+# Security: run as non-root
+RUN groupadd -r tron && useradd -r -g tron -d /app -s /sbin/nologin tron
+
+# Install runtime dependencies only
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq5 \
+    curl \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy installed packages from builder
+COPY --from=builder /install /usr/local
+
+WORKDIR /app
+
+# Copy application code
+COPY tron/ ./tron/
+COPY alembic/ ./alembic/
+COPY alembic.ini .
+
+# Security: no root
+USER tron
+
+EXPOSE 8000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=30s \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+# Run with uvicorn — 1 worker per container, scale via replicas
+CMD ["python", "-m", "uvicorn", "tron.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--log-level", "info"]

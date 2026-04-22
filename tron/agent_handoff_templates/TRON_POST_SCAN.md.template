@@ -1,0 +1,43 @@
+# Tron post-scan — {{APP_NAME}}
+
+**Tron UI / API base:** {{TRON_UI_BASE}}  
+**Audit id (fill):** {{TRON_AUDIT_ID}}
+
+This file lives in **this application’s** repository so local agents (Cursor, Claude, Codex) load it automatically with the codebase.
+
+**Workflow:** read **`AGENTS.md`** / **`CLAUDE.md`** / **`.cursor/rules/`** first, then this file for the finding snapshot, then **`tron.md`** for **Tron activity** (append-only handoff log + team notes).
+
+## Snapshot (paste from Tron audit page after each run)
+
+| Field | Value |
+|--------|--------|
+| Status | |
+| Duration | |
+| Started | |
+| Completed | |
+| Total findings | |
+| Critical / High / Medium / Low | / / / |
+
+## Top paths or themes (examples)
+
+_List 5–10 rows from Tron “Top findings” or export._
+
+1.
+2.
+3.
+
+## Triage checklist
+
+1. Open the audit in Tron; confirm id and status match the table above.
+2. Work **High** first: open each finding, read description + suggested fix, open the cited file at the line in **this** repo.
+3. Label each item: **true positive** (fix here), **false positive / accepted risk** (one-line rationale), or **needs design** (ticket).
+4. Prefer one PR per root cause (e.g. repeated Dockerfile pattern) over dozens of one-line edits.
+5. Re-run Tron audit when ready; update this file’s snapshot table.
+
+## Done criteria
+
+- [ ] All **High** items triaged with fix, defer note, or FP rationale.
+- [ ] **Medium** triaged or scheduled (link issue below).
+- [ ] Optional: link FCNow PRs:
+
+_Issues / PRs:_

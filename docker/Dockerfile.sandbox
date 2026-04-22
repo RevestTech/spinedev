@@ -1,0 +1,32 @@
+# Tron Sandbox Service
+# ONLY container with Docker socket access
+# Creates ephemeral containers for code execution in Layer 3
+
+FROM python:3.11-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Docker CLI (to create ephemeral containers — no daemon, just client)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    docker.io \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY tron/ ./tron/
+
+# NOTE: This service runs as root because it needs Docker socket access.
+# This is the ONLY service that does. It is isolated from all others
+# and only accepts gRPC requests from tron-api/tron-worker.
+
+EXPOSE 50051
+
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
+    CMD curl -sf http://127.0.0.1:50051/health || exit 1
+
+CMD ["python", "-m", "tron.sandbox"]

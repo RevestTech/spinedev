@@ -1,0 +1,398 @@
+version: '3.8'
+
+# Tron Production Docker Compose Overrides
+# Use with: docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# This file overrides dev settings with production-hardened configuration:
+# - Resource limits (CPU, memory)
+# - Restart policies
+# - Health checks
+# - Log drivers with rotation
+# - Removed dev volumes and debug settings
+# - API replica scaling
+# - TLS/HTTPS hints for nginx
+#
+# Environment variables still come from .env in the base compose file.
+
+services:
+  # ──────────────────────────────────────────────────────────────────
+  # INFRASTRUCTURE SERVICES — Production Hardened
+  # ──────────────────────────────────────────────────────────────────
+
+  postgres:
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '1'
+          memory: 1G
+
+  pgbouncer:
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+
+  redis:
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1.5G
+        reservations:
+          cpus: '0.5'
+          memory: 750M
+
+  minio:
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+  temporal:
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '1'
+          memory: 1G
+
+  temporal-ui:
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+
+  # ──────────────────────────────────────────────────────────────────
+  # APPLICATION SERVICES — Production Hardened
+  # ──────────────────────────────────────────────────────────────────
+
+  # Tron API — 3 replicas for load balancing
+  tron-api:
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      replicas: 3
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+      # Restart policy: unless-stopped
+      restart_policy:
+        condition: unless-stopped
+        delay: 5s
+        max_attempts: 5
+        window: 120s
+
+  # Tron Workers — scaled to handle load
+  tron-worker:
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      replicas: 3
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '1'
+          memory: 1G
+      restart_policy:
+        condition: unless-stopped
+        delay: 5s
+        max_attempts: 5
+        window: 120s
+
+  # Tron Sandbox — single instance, handles gRPC load balancing
+  tron-sandbox:
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '1'
+          memory: 1G
+      restart_policy:
+        condition: unless-stopped
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+
+  # ──────────────────────────────────────────────────────────────────
+  # OBSERVABILITY STACK — Production Hardened
+  # ──────────────────────────────────────────────────────────────────
+
+  nginx:
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # PRODUCTION HINTS: Uncomment below for TLS with Let's Encrypt
+    # volumes:
+    #   - ./config/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    #   - ./config/nginx/ssl:/etc/nginx/ssl:ro          # CA-signed certificates
+    #   - /etc/letsencrypt:/etc/letsencrypt:ro          # Let's Encrypt certs (mount from host)
+    #   - ./admin/dist:/usr/share/nginx/html:ro
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+
+  otel-collector:
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+  prometheus:
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+  grafana:
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+  tempo:
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+  loki:
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+  alertmanager:
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 256M
+        reservations:
+          cpus: '0.125'
+          memory: 128M
+
+  # ──────────────────────────────────────────────────────────────────
+  # BACKUP & MAINTENANCE
+  # ──────────────────────────────────────────────────────────────────
+
+  tron-backup:
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 256M
+        reservations:
+          cpus: '0.125'
+          memory: 128M
+
+# ──────────────────────────────────────────────────────────────────
+# PRODUCTION DEPLOYMENT NOTES
+# ──────────────────────────────────────────────────────────────────
+#
+# 1. SCALING
+#    - API replicas: 3 (handle HTTP requests)
+#    - Worker replicas: 3 (process Temporal workflows)
+#    - Increase replicas based on load, memory availability
+#    - Use Nginx upstream block for HTTP load balancing
+#    - Workers auto-discover via Temporal task queues
+#
+# 2. RESOURCE REQUESTS & LIMITS
+#    - limits: Hard ceiling, container killed if exceeded
+#    - reservations: Minimum guaranteed resources (use for scheduling)
+#    - Adjust based on observed metrics in Prometheus/Grafana
+#
+# 3. RESTART POLICIES
+#    - unless-stopped: Restart on failure, honor manual stop
+#    - max_attempts: Max restart attempts within window
+#    - window: Time window for counting restart attempts
+#    - delay: Wait before restarting failed container
+#
+# 4. LOGGING
+#    - json-file driver with rotation (10MB per file, max 3 files = 30MB per service)
+#    - Logs aggregated to Loki for centralized search
+#    - Total log volume for all services: ~500MB rotating
+#
+# 5. NETWORKING
+#    - Use overlay network for multi-host deployments
+#    - Load balancer (Nginx) on separate host in production
+#    - Internal services communicate via container names (DNS)
+#
+# 6. TLS/HTTPS
+#    - Nginx: Uncomment TLS volumes in nginx service above
+#    - Get certificates from Let's Encrypt (certbot) or import CA-signed certs
+#    - MinIO: Already configured with TLS (./config/minio/certs/)
+#    - Clients: Use https://api.tron.example.com (port 443 via Nginx)
+#
+# 7. SECRET ROTATION
+#    - All secrets in KMac Vault, NOT in .env
+#    - Implement secret rotation via vault-agent sidecar
+#    - See docs/operations/RUNBOOKS.md for rotation procedures
+#
+# 8. MONITORING & ALERTING
+#    - Prometheus scrapes metrics from /metrics endpoints
+#    - Grafana dashboards visualize health & performance
+#    - AlertManager routes critical alerts to Slack/PagerDuty
+#    - See config/alertmanager/alertmanager.yml for alert routing
+#
+# 9. BACKUP & RECOVERY
+#    - PostgreSQL: WAL archiving + daily base backups via tron-backup
+#    - Redis: AOF persistence (appendonly=yes)
+#    - MinIO: Server-side encryption at rest
+#    - Retention: 30 days (configurable via BACKUP_RETENTION_DAYS)
+#    - Test restores regularly in staging environment
+#
+# 10. DEPLOYMENT CHECKLIST
+#     - Run scripts/preflight.sh before deploying
+#     - Verify all secrets loaded in KMac Vault
+#     - Check log aggregation working (Loki collecting logs)
+#     - Verify Prometheus scraping all targets
+#     - Load test: locust -f tests/load/locustfile.py --host=https://api.tron.example.com
+#     - Monitor error rates & latencies in Grafana during first hour
+#     - Have rollback plan ready (previous image tags)
+#
+# ==============================================================================

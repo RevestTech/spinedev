@@ -1,0 +1,16 @@
+---
+description: After Tron audits another repo, install handoff files there—not under Tron docs
+alwaysApply: true
+---
+
+# Scanned-application handoff (not inside Tron)
+
+When Tron finishes an audit of **another codebase** (FCNow, a service monorepo, etc.):
+
+1. **Do not** add app-specific triage markdown under Tron’s `docs/audit-reports/` for that app — the IDE agent for the app never opens the Tron repo.
+2. **Do** write handoff artifacts into the **scanned repository root** so **Cursor / Claude / Codex** (opened on that repo) load them automatically:
+   - **Automatic (best):** set **`agent_handoff_path`** on the Tron project (absolute path visible to **tron-worker**, usually a bind mount). Audits then refresh only the **managed** regions inside the four handoff files (see markers in **`tron/services/scan_handoff_export.py`**). Tron also **appends** to app-repo **`tron.md`** for **Tron activity** (disable with **`TRON_HANDOFF_APPEND_TRON_MD=false`**). Put durable notes outside managed markers or in **`tron.md`**. See **`tron/agent_handoff_templates/README.md`**.
+   - **Manual:** `python -m tron.cli audit handoff <AUDIT_ID> --dest /path/to/app-repo` or **`scripts/init_tron_scan_handoff.sh`**.
+3. **Commit** those files **in the application’s git repo** when the team should track triage in VCS.
+
+Optional: **`TRON_UI_BASE`** for links shown in breadcrumbs.

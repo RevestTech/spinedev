@@ -1,0 +1,664 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tron Audit Report — FCNow</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#f5f6f8;--card:#fff;--text:#1a1a2e;--muted:#5a6070;--border:#e0e3e8;--cyan:#00d4ff;--cyan-dim:#0099bb;--red:#e74c3c;--orange:#f39c12;--yellow:#f1c40f;--green:#27ae60;--blue:#3498db;--dark:#0a0e1a;--dark2:#141829}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);line-height:1.6}
+a{color:var(--cyan-dim);text-decoration:none}
+.header{background:linear-gradient(135deg,var(--dark),var(--dark2));border-bottom:2px solid var(--cyan);padding:24px 40px;display:flex;align-items:center;justify-content:space-between}
+.header-left{display:flex;align-items:center;gap:16px}
+.logo{font-size:28px;font-weight:800;letter-spacing:4px;color:var(--cyan);text-shadow:0 0 20px rgba(0,212,255,.4)}
+.header-meta{color:#a0b8d0;font-size:13px}
+.header-meta span{display:block}
+.header-badge{background:rgba(0,212,255,.15);border:1px solid var(--cyan);color:var(--cyan);padding:6px 16px;border-radius:4px;font-size:13px;font-weight:600}
+.scorecard{display:grid;grid-template-columns:repeat(5,1fr);gap:16px;max-width:1200px;margin:24px auto;padding:0 24px}
+.score-card{background:var(--card);border-radius:8px;padding:20px;text-align:center;border:1px solid var(--border);box-shadow:0 1px 4px rgba(0,0,0,.06)}
+.score-card .number{font-size:36px;font-weight:800}
+.score-card .label{font-size:12px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-top:4px}
+.score-card.critical .number{color:var(--red)}
+.score-card.high .number{color:var(--orange)}
+.score-card.medium .number{color:var(--yellow)}
+.score-card.low .number{color:var(--green)}
+.score-card.total .number{color:var(--text)}
+.container{max-width:1200px;margin:0 auto;padding:0 24px 60px}
+.section{margin-top:32px}
+.section-title{font-size:20px;font-weight:700;color:var(--text);padding-bottom:8px;border-bottom:2px solid var(--border);margin-bottom:16px;display:flex;align-items:center;gap:10px}
+.section-title .icon{width:28px;height:28px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:14px;color:#fff}
+.finding{background:var(--card);border-radius:8px;border:1px solid var(--border);margin-bottom:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.04)}
+.finding-header{display:flex;align-items:center;padding:14px 20px;gap:12px;cursor:pointer;user-select:none}
+.finding-header:hover{background:#f8f9fb}
+.severity{display:inline-block;padding:3px 10px;border-radius:4px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#fff;min-width:72px;text-align:center}
+.severity.critical{background:var(--red)}
+.severity.high{background:var(--orange)}
+.severity.medium{background:#d4a017}
+.severity.low{background:var(--green)}
+.finding-title{font-weight:600;font-size:14px;flex:1}
+.finding-file{font-size:12px;color:var(--muted);font-family:'SF Mono',Consolas,monospace}
+.confidence{font-size:11px;color:var(--muted);white-space:nowrap}
+.finding-body{padding:0 20px 16px;display:none;border-top:1px solid var(--border)}
+.finding-body.open{display:block;padding-top:14px}
+.finding-body p{margin-bottom:10px;font-size:13.5px;color:#3a3f50}
+.finding-body strong{color:var(--text)}
+.finding-body code{background:#f0f2f5;padding:2px 6px;border-radius:3px;font-size:12px;font-family:'SF Mono',Consolas,monospace}
+.finding-body .fix{background:#f0faf4;border-left:3px solid var(--green);padding:10px 14px;border-radius:0 6px 6px 0;margin-top:8px;font-size:13px}
+.positive{background:#f0faf4;border:1px solid #c8e6c9;border-radius:8px;padding:16px 20px;margin-bottom:12px}
+.positive h4{color:var(--green);margin-bottom:6px;font-size:14px}
+.positive p{font-size:13px;color:#3a5a3a}
+.summary-table{width:100%;border-collapse:collapse;font-size:13px}
+.summary-table th{background:#f0f2f5;padding:10px 14px;text-align:left;font-weight:600;border-bottom:2px solid var(--border)}
+.summary-table td{padding:10px 14px;border-bottom:1px solid var(--border)}
+.summary-table tr:hover{background:#f8f9fb}
+.tabs{display:flex;gap:0;border-bottom:2px solid var(--border);margin-bottom:20px}
+.tab{padding:10px 20px;font-size:14px;font-weight:600;color:var(--muted);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-2px;transition:all .2s}
+.tab:hover{color:var(--text)}
+.tab.active{color:var(--cyan-dim);border-bottom-color:var(--cyan-dim)}
+.tab-content{display:none}
+.tab-content.active{display:block}
+.footer{background:var(--dark);color:#a0b8d0;padding:24px 40px;text-align:center;font-size:13px;border-top:2px solid var(--cyan)}
+.footer strong{color:var(--cyan)}
+@media(max-width:768px){.scorecard{grid-template-columns:repeat(2,1fr)}.finding-header{flex-wrap:wrap}.finding-file{width:100%}}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-left">
+    <div class="logo">TRON</div>
+    <div class="header-meta">
+      <span><strong style="color:#e0e8f0">Audit Report</strong> — FCNow v8.4.0</span>
+      <span>Generated: April 13, 2026 &middot; Full Pipeline (Security + Quality + Performance + QA)</span>
+    </div>
+  </div>
+  <div class="header-badge">31 Findings</div>
+</div>
+
+<!-- Scorecard -->
+<div class="scorecard">
+  <div class="score-card critical"><div class="number">5</div><div class="label">Critical</div></div>
+  <div class="score-card high"><div class="number">10</div><div class="label">High</div></div>
+  <div class="score-card medium"><div class="number">12</div><div class="label">Medium</div></div>
+  <div class="score-card low"><div class="number">4</div><div class="label">Low</div></div>
+  <div class="score-card total"><div class="number">~85K</div><div class="label">Lines Scanned</div></div>
+</div>
+
+<div class="container">
+
+<!-- Tabs -->
+<div class="tabs">
+  <div class="tab active" onclick="showTab('security')">Security (9)</div>
+  <div class="tab" onclick="showTab('quality')">Code Quality (7)</div>
+  <div class="tab" onclick="showTab('performance')">Performance (8)</div>
+  <div class="tab" onclick="showTab('qa')">QA Coverage (7)</div>
+  <div class="tab" onclick="showTab('summary')">Summary</div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SECURITY TAB -->
+<!-- ============================================================ -->
+<div id="security" class="tab-content active">
+
+<div class="section">
+<div class="section-title"><div class="icon" style="background:var(--red)">!</div> Critical Security Findings</div>
+
+<div class="finding">
+  <div class="finding-header" onclick="toggle(this)">
+    <span class="severity critical">Critical</span>
+    <span class="finding-title">Hardcoded API Keys in .env and .env.backup</span>
+    <span class="finding-file">.env (lines 11, 16), .env.backup (lines 11, 16)</span>
+    <span class="confidence">0.99</span>
+  </div>
+  <div class="finding-body">
+    <p>Live OpenAI (<code>sk-proj-dve9Xz5...</code>) and Anthropic (<code>sk-ant-api03-atWO7...</code>) API keys are stored in plaintext in <code>.env</code> and <code>.env.backup</code>. While <code>.env</code> is gitignored, <code>.env.backup</code> is <strong>not explicitly ignored</strong> and could be committed.</p>
+    <p><strong>Impact:</strong> Unlimited unauthorized API usage; potential thousands of dollars in charges.</p>
+    <div class="fix"><strong>Fix:</strong> 1) Revoke and regenerate both API keys immediately. 2) Add <code>.env.backup</code> and <code>*.env.*</code> patterns to <code>.gitignore</code>. 3) Scan git history for past secret commits. 4) Store production secrets in Azure Key Vault only.</div>
+  </div>
+</div>
+
+<div class="finding">
+  <div class="finding-header" onclick="toggle(this)">
+    <span class="severity critical">Critical</span>
+    <span class="finding-title">Hardcoded Default Secrets in docker-compose.yaml</span>
+    <span class="finding-file">docker-compose.yaml (lines 102, 169, 16-18)</span>
+    <span class="confidence">0.95</span>
+  </div>
+  <div class="finding-body">
+    <p>Multiple services have hardcoded default credentials: Redis password <code>devRedisPassword123!</code>, JWT secret <code>FCNow-DevOnly-LocalKey-2026-NotForProduction-MinLength32!</code>, and PostgreSQL password <code>fcpassword</code>. While dev-only, these are visible in version control.</p>
+    <p><strong>Impact:</strong> If any dev environment is publicly accessible, all credentials are compromised. Weak defaults could be accidentally deployed to production.</p>
+    <div class="fix"><strong>Fix:</strong> Use <code>${VAR:?Error message}</code> syntax to require all secrets via env vars. Validate production secrets at startup in Program.cs (already partially done at lines 682-702).</div>
+  </div>
+</div>
+
+</div>
+
+<div class="section">
+<div class="section-title"><div class="icon" style="background:var(--orange)">H</div> High Security Findings</div>
+
+<div class="finding">
+  <div class="finding-header" onclick="toggle(this)">
+    <span class="severity high">High</span>
+    <span class="finding-title">CSRF Protection Exemptions for Chat Endpoints</span>
+    <span class="finding-file">backend/Middleware/CsrfProtectionMiddleware.cs (lines 31-34)</span>
+    <span class="confidence">0.95</span>
+  </div>
+  <div class="finding-body">
+    <p>Four chat endpoints (<code>/search/chat</code>, <code>/admin/chat</code>, <code>/advisor/chat</code>, <code>/client/chat</code>) are exempt from CSRF protection with comments like "TESTING ONLY" and "TASK 2.6: Remove before production!"</p>
+    <p><strong>Impact:</strong> CSRF attacks can trigger chat submissions for authenticated users, potentially querying financial data or running LLM operations on the victim's behalf.</p>
+    <div class="fix"><strong>Fix:</strong> Remove all four exemptions. Implement XSRF-TOKEN header injection in React chat components. If testing bypass is needed, gate it behind an env var that's disabled in production.</div>
+  </div>
+</div>
+
+<div class="finding">
+  <div class="finding-header" onclick="toggle(this)">
+    <span class="severity high">High</span>
+    <span class="finding-title">Chat Endpoints Missing Full Authorization Testing</span>
+    <span class="finding-file">backend/Controllers/ (chat endpoints)</span>
+    <span class="confidence">0.85</span>
+  </div>
+  <div class="finding-body">
+    <p>Chat endpoints added for "TASK 2.6: evaluation harness" may lack full RBAC and IDOR verification. No integration tests confirm that Advisor A cannot access Advisor B's chat sessions.</p>
+    <div class="fix"><strong>Fix:</strong> Verify all chat endpoints call <code>EnsureEntityAccess()</code> from BaseController. Add integration tests for cross-user access denial.</div>
+  </div>
+</div>
+
+<div class="finding">
+  <div class="finding-header" onclick="toggle(this)">
+    <span class="severity high">High</span>
+    <span class="finding-title">Swagger + DeveloperExceptionPage in Development</span>
+    <span class="finding-file">backend/Program.cs (lines 474-475)</span>
+    <span class="confidence">0.80</span>
+  </div>
+  <div class="finding-body">
+    <p><code>UseSwagger()</code>, <code>UseSwaggerUI()</code>, and <code>UseDeveloperExceptionPage()</code> are enabled when <code>IsDevelopment()</code> is true. Stack traces can expose table/column names, file paths, and internal API structure.</p>
+    <div class="fix"><strong>Fix:</strong> Ensure dev environments are NOT internet-accessible. Verify production flag is correctly set. Consider requiring authentication for Swagger even in dev.</div>
+  </div>
+</div>
+
+</div>
+
+<div class="section">
+<div class="section-title"><div class="icon" style="background:#d4a017">M</div> Medium Security Findings</div>
+
+<div class="finding">
+  <div class="finding-header" onclick="toggle(this)">
+    <span class="severity medium">Medium</span>
+    <span class="finding-title">Error Response May Leak Details via includeDetails Parameter</span>
+    <span class="finding-file">backend/Controllers/BaseController.cs (lines 157-167)</span>
+    <span class="confidence">0.75</span>
+  </div>
+  <div class="finding-body">
+    <p><code>HandleException()</code> accepts <code>includeDetails = false</code> by default, but if any controller passes <code>true</code>, exception messages leak to clients (e.g., foreign key constraints revealing schema).</p>
+    <div class="fix"><strong>Fix:</strong> Remove the <code>includeDetails</code> parameter entirely. Always return generic messages with a request ID for support correlation.</div>
+  </div>
+</div>
+
+<div class="finding">
+  <div class="finding-header" onclick="toggle(this)">
+    <span class="severity medium">Medium</span>
+    <span class="finding-title">Weak Redis Default Password Pattern</span>
+    <span class="finding-file">docker-compose.yaml (line 102)</span>
+    <span class="confidence">0.70</span>
+  </div>
+  <div class="finding-body">
+    <p>Redis default password <code>devRedisPassword123!</code> uses a predictable dictionary+number pattern. While dev-only, it sets a weak precedent.</p>
+    <div class="fix"><strong>Fix:</strong> Use <code>${REDIS_PASSWORD:?Required}</code> without default values. Document production password requirements (32+ chars, random).</div>
+  </div>
+</div>
+
+<div class="finding">
+  <div class="finding-header" onclick="toggle(this)">
+    <span class="severity medium">Medium</span>
+    <span class="finding-title">Rate Limiting Configuration Hardcoded</span>
+    <span class="finding-file">backend/Program.cs (lines 307-426)</span>
+    <span class="confidence">0.65</span>
+  </div>
+  <div class="finding-body">
+    <p>Rate limits (Auth: 30/15min, Search: 60/min, Chat: 30/min, Signup: 10/15min) are hardcoded instead of configurable via appsettings.json. No per-role customization.</p>
+    <div class="fix"><strong>Fix:</strong> Move limits to <code>appsettings.json</code> under a <code>RateLimiting</code> section. Allow env var overrides for production tuning.</div>
+  </div>
+</div>
+
+</div>
+
+<div class="section">
+<div class="section-title"><div class="icon" style="background:var(--green)">✓</div> Security Strengths</div>
+<div class="positive"><h4>JWT Authentication &amp; Authorization (Excellent)</h4><p>JWT bearer tokens with issuer/audience validation, ClockSkew=0, refresh tokens via httpOnly cookies. Secret required in production (Program.cs lines 682-691).</p></div>
+<div class="positive"><h4>AES-256-GCM SSN Encryption (Excellent)</h4><p>SsnEncryptionService uses AES-256-GCM with random IV per encryption and authentication tag. Key management requires env var, not hardcoded.</p></div>
+<div class="positive"><h4>IDOR Protection via EnsureEntityAccess() (Strong)</h4><p>BaseController enforces entity-level access control. Role-based checks for admin, operations, support, supervisor, bd_supervisor.</p></div>
+<div class="positive"><h4>Security Headers (Strong)</h4><p>X-Content-Type-Options: nosniff, HSTS (max-age 1yr), X-Frame-Options: DENY, strict CSP, Referrer-Policy, Permissions-Policy restricting camera/mic/geo.</p></div>
+<div class="positive"><h4>PII Redaction in Logging (Excellent)</h4><p>PiiRedactingEnricher masks SSNs, emails, IPs in Serilog before shipping to Azure Log Analytics. No PII in production logs.</p></div>
+<div class="positive"><h4>Input Validation (Strong)</h4><p>FluentValidation integration, EF Core parameterized queries, DOMPurify on frontend. No raw SQL concatenation found.</p></div>
+</div>
+
+</div>
+
+<!-- ============================================================ -->
+<!-- CODE QUALITY TAB -->
+<!-- ============================================================ -->
+<div id="quality" class="tab-content">
+
+<div class="section">
+<div class="section-title"><div class="icon" style="background:var(--orange)">H</div> High Quality Findings</div>
+
+<div class="finding">
+  <div class="finding-header" onclick="toggle(this)">
+    <span class="severity high">High</span>
+    <span class="finding-title">Inconsistent Error Handling Across Services</span>
+    <span class="finding-file">backend/Services/ClientService.cs, AdvisorService.cs, etc.</span>
+    <span class="confidence">0.90</span>
+  </div>
+  <div class="finding-body">
+    <p>Generic <code>catch (Exception ex)</code> blocks in 20+ service files without distinction between domain exceptions (user-facing) and system exceptions (unexpected). Some wrap in <code>DomainOperationException</code> inconsistently.</p>
+    <div class="fix"><strong>Fix:</strong> Create clear exception hierarchy: <code>DomainException</code> (400-level) vs <code>SystemException</code> (500-level). Use <code>catch (SpecificException)</code> before <code>catch (Exception)</code>. Log at appropriate levels.</div>
+  </div>
+</div>
+
+<div class="finding">
+  <div class="finding-header" onclick="toggle(this)">
+    <span class="severity high">High</span>
+    <span class="finding-title">14 of 18 Integration Test Files Are Broken/Disabled</span>
+    <span class="finding-file">backend/Tests/Integration/Controllers/ (18 files)</span>
+    <span class="confidence">0.98</span>
+  </div>
+  <div class="finding-body">
+    <p>Integration tests for Fund, Household, Plan, Notes, ChatCatalog, Kpi, ShadowInsight, Client, Fee, FundChange, PaymentMethod, DocumentWorkflow, Messaging, and Team controllers have <code>// TODO:</code> comments indicating they are outdated and won't compile due to model changes.</p>
+    <div class="fix"><strong>Fix:</strong> Audit each file against current models. Restore tests that still apply, delete tests for removed features, write new tests for changed models.</div>
+  </div>
+</div>
+
+</div>
+
+<div class="section">
+<div class="section-title"><div class="icon" style="background:#d4a017">M</div> Medium Quality Findings</div>
+
+<div class="finding">
+  <div class="finding-header" onclick="toggle(this)">
+    <span class="severity medium">Medium</span>
+    <span class="finding-title">Overly Broad Cache Invalidation Pattern</span>
+    <span class="finding-file">backend/Services/ClientService.cs (lines 169, 209, 249)</span>
+    <span class="confidence">0.85</span>
+  </div>
+  <div class="finding-body">
+    <p><code>RemovePatternAsync("client:*")</code> invalidates ALL client caches when updating a single client. With 10K+ clients this causes thundering herd on cache refresh.</p>
+    <div class="fix"><strong>Fix:</strong> Invalidate only affected keys: <code>client:{id}:details</code>, <code>client:{id}:funds</code>. Keep list caches separate; only invalidate on bulk operations.</div>
+  </div>
+</div>
+
+<div class="finding">
+  <div class="finding-header" onclick="toggle(this)">
+    <span class="severity medium">Medium</span>
+    <span class="finding-title">Schema Evolution Complexity (145 Migrations)</span>
+    <span class="finding-file">database/migrations/ (V001-V145)</span>
+    <span class="confidence">0.75</span>
+  </div>
+  <div class="finding-body">
+    <p>145 incremental Flyway migrations with frequent rework (V018-V019: rename participants→clients) and late-stage constraint additions (V095). No consolidated baseline schema.</p>
+    <div class="fix"><strong>Fix:</strong> Create a V_BASELINE schema snapshot reflecting current state. Archive pre-v100 migrations. Reference baseline for new features.</div>
+  </div>
+</div>
+
+<div class="finding">
+  <div class="finding-header" onclick="toggle(this)">
+    <span class="severity medium">Medium</span>
+    <span class="finding-title">Dead Code: Deprecated Fund Info Proxy Endpoint</span>
+    <span class="finding-file">backend/Controllers/AdminController.cs (line 475)</span>
+    <span class="confidence">0.65</span>
+  </div>
+  <div class="finding-body">
+    <p>Comment indicates deprecated endpoint: <code>Use GET /api/fund-info/proxy?ticker=XXX&amp;source=yahoo instead of /api/admin/fund-info-proxy</code>. Old route may still be accessible.</p>
+    <div class="fix"><strong>Fix:</strong> Search for <code>/api/admin/fund-info-proxy</code> route. If unused, remove the endpoint and associated code.</div>
+  </div>
+</div>
+
+</div>
+
+<div class="section">
+<div class="section-title"><div class="icon" style="background:var(--green)">L</div> Low Quality Findings</div>
+
+<div class="finding">
+  <div class="finding-header" onclick="toggle(this)">
+    <span class="severity low">Low</span>
+    <span class="finding-title">Test Duplication in Service Tests</span>
+    <span class="finding-file">backend/Tests/Unit/Services/ (33 files)</span>
+    <span class="confidence">0.60</span>
+  </div>
+  <div class="finding-body">
+    <p>Some test classes have 25+ methods with repeated setup patterns. <code>SsnEncryptionServiceTests</code> (19 tests) and <code>ValidationAgentTests</code> (30 tests) share similar boilerplate.</p>
+    <div class="fix"><strong>Fix:</strong> Extract shared test fixtures. Use <code>[Theory]</code> with <code>[InlineData]</code> for parametric variations.</div>
+  </div>
+</div>
+
+<div class="finding">
+  <div class="finding-header" onclick="toggle(this)">
+    <span class="severity low">Low</span>
+    <span class="finding-title">Unused Frontend Dependency: react-plaid-link</span>
+    <span class="finding-file">frontend/package.json</span>
+    <span class="confidence">0.70</span>
+  </div>
+  <div class="finding-body">
+    <p><code>react-plaid-link</code> is listed as a dependency but no usage found in the codebase. Adds ~50KB to the bundle.</p>
+    <div class="fix"><strong>Fix:</strong> Remove from <code>package.json</code> if Plaid integration is not yet implemented. Re-add when needed.</div>
+  </div>
+</div>
+
+</div>
+
+</div>
+
+<!-- ============================================================ -->
+<!-- PERFORMANCE TAB -->
+<!-- ============================================================ -->
+<div id="performance" class="tab-content">
+
+<div class="section">
+<div class="section-title"><div class="icon" style="background:var(--red)">!</div> Critical Performance Findings</div>
+
+<div class="finding">
+  <div class="finding-header" onclick="toggle(this)">
+    <span class="severity critical">Critical</span>
+    <span class="finding-title">N+1 Query Patterns in 40+ Service Methods</span>
+    <span class="finding-file">backend/Services/ClientService.cs (lines 78-131), AdvisorService.cs, PlanService.cs</span>
+    <span class="confidence">0.95</span>
+  </div>
+  <div class="finding-body">
+    <p><code>GetClientAsync</code> makes 4 separate DB roundtrips (client, relationship, balance, lifecycle) instead of a single query with <code>.Include()</code> chains. Similar pattern across 40+ service methods in AdvisorService, PlanService, etc. Caching masks this but doesn't fix it.</p>
+    <p><strong>Impact:</strong> 4x slower reads when cache is cold. Under load with cache expiry, performance degrades severely.</p>
+    <div class="fix"><strong>Fix:</strong> Consolidate into single queries: <code>.Include(c =&gt; c.Plan).Include(c =&gt; c.AdvisorClients).Include(c =&gt; c.AccountBalances).Include(c =&gt; c.Onboarding)</code>. Apply across all services.</div>
+  </div>
+</div>
+
+<div class="finding">
+  <div class="finding-header" onclick="toggle(this)">
+    <span class="severity critical">Critical</span>
+    <span class="finding-title">Unbounded List Queries — No Pagination in Service Layer</span>
+    <span class="finding-file">backend/Services/AdvisorService.cs (20+ occurrences), ClientService.cs, PlanService.cs</span>
+    <span class="confidence">0.95</span>
+  </div>
+  <div class="finding-body">
+    <p>Multiple service methods use <code>.ToListAsync()</code> without <code>.Skip().Take()</code> or any pagination. With 143 tables and thousands of rows per entity, this causes memory pressure and slow network transfers.</p>
+    <p><strong>Impact:</strong> Loading 10K+ records into memory; AG Grid client-side pagination makes initial page load 3-5 seconds.</p>
+    <div class="fix"><strong>Fix:</strong> Create <code>PaginationRequest</code>/<code>PaginatedResponse&lt;T&gt;</code> DTOs. Add <code>.Skip().Take()</code> to all list queries. Update frontend hooks to pass pagination state from AG Grid to API.</div>
+  </div>
+</div>
+
+</div>
+
+<div class="section">
+<div class="section-title"><div class="icon" style="background:var(--orange)">H</div> High Performance Findings</div>
+
+<div class="finding">
+  <div class="finding-header" onclick="toggle(this)">
+    <span class="severity high">High</span>
+    <span class="finding-title">Missing Foreign Key Indexes (~50 FK Columns)</span>
+    <span class="finding-file">database/migrations/V031__add_performance_indexes.sql</span>
+    <span class="confidence">0.90</span>
+  </div>
+  <div class="finding-body">
+    <p>Only 10 indexes created but 143 tables with 5-10 FK columns each = 500+ FK columns. Missing indexes on: <code>advisor_id</code> joins, <code>organization_id</code> lookups, <code>plan_id</code> relationships.</p>
+    <div class="fix"><strong>Fix:</strong> Create migration V146 with indexes for all high-traffic FK columns: <code>idx_advisors_org_id</code>, <code>idx_accounts_advisor_id</code>, <code>idx_accounts_plan_id</code>, <code>idx_contributions_client_id</code>, etc.</div>
+  </div>
+</div>
+
+<div class="finding">
+  <div class="finding-header" onclick="toggle(this)">
+    <span class="severity high">High</span>
+    <span class="finding-title">Cache Stampede Risk on TTL Expiry</span>
+    <span class="finding-file">backend/Services/ClientService.cs, AdvisorService.cs</span>
+    <span class="confidence">0.85</span>
+  </div>
+  <div class="finding-body">
+    <p>Standard 5-minute cache TTL without probabilistic early refresh. When cache expires, 100+ simultaneous requests all hit the database (thundering herd). <code>RemovePatternAsync("client:*")</code> performs O(N) Redis SCAN.</p>
+    <div class="fix"><strong>Fix:</strong> Implement probabilistic early expiration (refresh at 80% TTL with p=0.1). Use explicit cache keys instead of pattern matching. Reduce TTL for financial data to 30-60s.</div>
+  </div>
+</div>
+
+<div class="finding">
+  <div class="finding-header" onclick="toggle(this)">
+    <span class="severity high">High</span>
+    <span class="finding-title">No PostgreSQL Slow Query Logging</span>
+    <span class="finding-file">docker-compose.yaml (postgres config)</span>
+    <span class="confidence">0.90</span>
+  </div>
+  <div class="finding-body">
+    <p>No <code>log_min_duration_statement</code> configured. Slow queries run undetected; N+1 bugs are hidden behind caching until cache fails.</p>
+    <div class="fix"><strong>Fix:</strong> Add <code>log_min_duration_statement = 500</code> to PostgreSQL config. Ship slow query logs to Application Insights. Alert on average query time &gt; 100ms.</div>
+  </div>
+</div>
+
+</div>
+
+<div class="section">
+<div class="section-title"><div class="icon" style="background:#d4a017">M</div> Medium Performance Findings</div>
+
+<div class="finding">
+  <div class="finding-header" onclick="toggle(this)">
+    <span class="severity medium">Medium</span>
+    <span class="finding-title">Frontend Hooks Fetch All Data Without Pagination</span>
+    <span class="finding-file">frontend/src/hooks/useClients.ts, useFunds.ts</span>
+    <span class="confidence">0.85</span>
+  </div>
+  <div class="finding-body">
+    <p>React Query hooks call <code>clientService.getAll()</code> which fetches all records. AG Grid must paginate/virtualize client-side, adding 500ms+ to initial load.</p>
+    <div class="fix"><strong>Fix:</strong> Update service methods to accept <code>pageSize</code>/<code>pageIndex</code> params. Pass AG Grid pagination state through React Query to the API.</div>
+  </div>
+</div>
+
+<div class="finding">
+  <div class="finding-header" onclick="toggle(this)">
+    <span class="severity medium">Medium</span>
+    <span class="finding-title">Incomplete Frontend Code Splitting</span>
+    <span class="finding-file">frontend/vite.config.ts (lines 37-44)</span>
+    <span class="confidence">0.80</span>
+  </div>
+  <div class="finding-body">
+    <p>Only 3 manual chunks (vendor, charts, grid) defined. 30+ pages not lazy-loaded. D3 (7.9MB) not split into its own chunk. Main bundle likely 500KB+.</p>
+    <div class="fix"><strong>Fix:</strong> Lazy-load page components: <code>const Dashboard = lazy(() =&gt; import('./pages/Dashboard'))</code>. Split D3 into separate chunk. Use dynamic imports for optional features.</div>
+  </div>
+</div>
+
+<div class="finding">
+  <div class="finding-header" onclick="toggle(this)">
+    <span class="severity medium">Medium</span>
+    <span class="finding-title">Missing Redis Connection Pooling Evidence</span>
+    <span class="finding-file">backend/Program.cs (Redis config)</span>
+    <span class="confidence">0.70</span>
+  </div>
+  <div class="finding-body">
+    <p>No evidence of <code>IConnectionMultiplexer</code> registered as singleton for Redis connection reuse. Per-request connections add 5-10ms overhead per cache hit.</p>
+    <div class="fix"><strong>Fix:</strong> Register <code>IConnectionMultiplexer</code> as singleton in DI container. Reuse the same connection for all Redis operations.</div>
+  </div>
+</div>
+
+</div>
+
+</div>
+
+<!-- ============================================================ -->
+<!-- QA TAB -->
+<!-- ============================================================ -->
+<div id="qa" class="tab-content">
+
+<div class="section">
+<div class="section-title"><div class="icon" style="background:var(--red)">!</div> Critical QA Findings</div>
+
+<div class="finding">
+  <div class="finding-header" onclick="toggle(this)">
+    <span class="severity critical">Critical</span>
+    <span class="finding-title">78% of Integration Tests Are Broken/Disabled</span>
+    <span class="finding-file">backend/Tests/Integration/Controllers/ (14 of 18 files)</span>
+    <span class="confidence">0.98</span>
+  </div>
+  <div class="finding-body">
+    <p>14 of 18 integration test files have <code>// TODO:</code> comments indicating they are outdated. Only Health, Fund, Navigation, and Stress tests are runnable. Coverage for HouseholdController, PlanController, ClientController, FeeController, PaymentMethodController, etc. is zero.</p>
+    <div class="fix"><strong>Fix:</strong> Restore disabled integration tests. Update model references. Prioritize: ClientController, PlanController, AdvisorController (financial data paths).</div>
+  </div>
+</div>
+
+</div>
+
+<div class="section">
+<div class="section-title"><div class="icon" style="background:var(--orange)">H</div> High QA Findings</div>
+
+<div class="finding">
+  <div class="finding-header" onclick="toggle(this)">
+    <span class="severity high">High</span>
+    <span class="finding-title">No IDOR Protection Integration Tests</span>
+    <span class="finding-file">backend/Tests/Integration/ (missing)</span>
+    <span class="confidence">0.95</span>
+  </div>
+  <div class="finding-body">
+    <p><code>EnsureEntityAccess()</code> in BaseController enforces IDOR protection, but no integration tests verify that Advisor A cannot access Advisor B's clients, or that a client cannot access admin endpoints.</p>
+    <div class="fix"><strong>Fix:</strong> Add cross-user access denial tests for all entity endpoints. Test role escalation scenarios. Verify entity_id scoping in JWT claims.</div>
+  </div>
+</div>
+
+<div class="finding">
+  <div class="finding-header" onclick="toggle(this)">
+    <span class="severity high">High</span>
+    <span class="finding-title">No End-to-End Financial Workflow Tests</span>
+    <span class="finding-file">backend/Tests/ (missing), e2e/ (5 minimal files)</span>
+    <span class="confidence">0.90</span>
+  </div>
+  <div class="finding-body">
+    <p>No integration test covers a complete financial workflow: Create Plan → Add Clients → Fund Allocations → Rebalance Request → Execution. The 5 E2E Playwright tests cover only health, navigation, auth, and stress — no business logic.</p>
+    <div class="fix"><strong>Fix:</strong> Add workflow integration tests for: client onboarding, fund lineup update, rebalance request→approval→execution. Add Playwright tests for key user journeys.</div>
+  </div>
+</div>
+
+</div>
+
+<div class="section">
+<div class="section-title"><div class="icon" style="background:#d4a017">M</div> Medium QA Findings</div>
+
+<div class="finding">
+  <div class="finding-header" onclick="toggle(this)">
+    <span class="severity medium">Medium</span>
+    <span class="finding-title">Frontend Component Tests Missing (30+ Components)</span>
+    <span class="finding-file">frontend/src/ (~75 tests across 10 files)</span>
+    <span class="confidence">0.85</span>
+  </div>
+  <div class="finding-body">
+    <p>No component tests for Dashboard pages, AG Grid custom renderers, Chart.js integrations, forms with validation, or modal dialogs. Only hooks and services are tested.</p>
+    <div class="fix"><strong>Fix:</strong> Add React Testing Library tests for 10+ critical components. Add snapshot tests for Dashboard, Accounts, Portfolio. Consider jest-axe for accessibility validation.</div>
+  </div>
+</div>
+
+<div class="finding">
+  <div class="finding-header" onclick="toggle(this)">
+    <span class="severity medium">Medium</span>
+    <span class="finding-title">No Performance/Load Testing for Data Endpoints</span>
+    <span class="finding-file">loadtest/ directory, backend/Tests/Unit/Services/WorkQueueScalabilityTests.cs</span>
+    <span class="confidence">0.80</span>
+  </div>
+  <div class="finding-body">
+    <p>Only 1 scalability test exists. Missing: load tests for list endpoints with 10K+ rows, concurrent write tests, cache invalidation under concurrency, DB connection pool exhaustion.</p>
+    <div class="fix"><strong>Fix:</strong> Add K6 load tests: 1000 req/s for 60s against <code>/search</code>, <code>/fund-info</code>, <code>/clients</code>. Measure p95 latency, cache hit rate, DB connection count.</div>
+  </div>
+</div>
+
+<div class="finding">
+  <div class="finding-header" onclick="toggle(this)">
+    <span class="severity medium">Medium</span>
+    <span class="finding-title">Missing Accessibility Tests Despite Accessibility CSS</span>
+    <span class="finding-file">frontend/src/css/accessibility-enhancements.css, accessibility.ts</span>
+    <span class="confidence">0.75</span>
+  </div>
+  <div class="finding-body">
+    <p>Accessibility enhancements exist (CSS + utility file) but no automated tests validate WCAG 2.1 AA compliance. Features could break silently during refactoring.</p>
+    <div class="fix"><strong>Fix:</strong> Add <code>jest-axe</code> tests for critical pages. Run automated accessibility checks in CI pipeline.</div>
+  </div>
+</div>
+
+</div>
+
+<div class="section">
+<div class="section-title"><div class="icon" style="background:var(--green)">✓</div> QA Strengths</div>
+<div class="positive"><h4>260 Backend Unit Tests (Good)</h4><p>33 service test files with 5-30 tests each. Coverage includes SSN encryption (19 tests), validation agents (30 tests), and core business logic.</p></div>
+<div class="positive"><h4>Stress Testing (Good)</h4><p>5,000-user stress test validated. Load test infrastructure exists in <code>loadtest/</code> directory.</p></div>
+<div class="positive"><h4>Playwright E2E Framework (Foundation)</h4><p>5 E2E test files provide foundation for expansion. Health and navigation flows covered.</p></div>
+</div>
+
+</div>
+
+<!-- ============================================================ -->
+<!-- SUMMARY TAB -->
+<!-- ============================================================ -->
+<div id="summary" class="tab-content">
+
+<div class="section">
+<div class="section-title">Finding Summary by Category</div>
+<table class="summary-table">
+<thead>
+  <tr><th>Category</th><th>Critical</th><th>High</th><th>Medium</th><th>Low</th><th>Total</th></tr>
+</thead>
+<tbody>
+  <tr><td>Security</td><td style="color:var(--red);font-weight:700">2</td><td style="color:var(--orange);font-weight:700">3</td><td>3</td><td>1</td><td><strong>9</strong></td></tr>
+  <tr><td>Code Quality</td><td style="color:var(--red);font-weight:700">0</td><td style="color:var(--orange);font-weight:700">2</td><td>3</td><td>2</td><td><strong>7</strong></td></tr>
+  <tr><td>Performance</td><td style="color:var(--red);font-weight:700">2</td><td style="color:var(--orange);font-weight:700">3</td><td>3</td><td>0</td><td><strong>8</strong></td></tr>
+  <tr><td>QA Coverage</td><td style="color:var(--red);font-weight:700">1</td><td style="color:var(--orange);font-weight:700">2</td><td>3</td><td>1</td><td><strong>7</strong></td></tr>
+  <tr style="background:#f0f2f5;font-weight:700"><td>Total</td><td style="color:var(--red)">5</td><td style="color:var(--orange)">10</td><td>12</td><td>4</td><td><strong>31</strong></td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="section">
+<div class="section-title">Recommended Remediation Priority</div>
+<table class="summary-table">
+<thead>
+  <tr><th>#</th><th>Finding</th><th>Severity</th><th>Est. Effort</th></tr>
+</thead>
+<tbody>
+  <tr><td>1</td><td>Revoke &amp; regenerate API keys (OpenAI, Anthropic)</td><td><span class="severity critical">Critical</span></td><td>30 min</td></tr>
+  <tr><td>2</td><td>Add .env.backup to .gitignore, scan git history</td><td><span class="severity critical">Critical</span></td><td>1 hour</td></tr>
+  <tr><td>3</td><td>Remove CSRF exemptions for chat endpoints</td><td><span class="severity high">High</span></td><td>2 hours</td></tr>
+  <tr><td>4</td><td>Fix N+1 queries with .Include() chains</td><td><span class="severity critical">Critical</span></td><td>2-3 days</td></tr>
+  <tr><td>5</td><td>Add server-side pagination to list endpoints</td><td><span class="severity critical">Critical</span></td><td>3-5 days</td></tr>
+  <tr><td>6</td><td>Add missing FK indexes (new migration)</td><td><span class="severity high">High</span></td><td>1 day</td></tr>
+  <tr><td>7</td><td>Restore 14 broken integration tests</td><td><span class="severity critical">Critical</span></td><td>2 days</td></tr>
+  <tr><td>8</td><td>Add IDOR integration tests</td><td><span class="severity high">High</span></td><td>1 day</td></tr>
+  <tr><td>9</td><td>Implement slow query logging</td><td><span class="severity high">High</span></td><td>2 hours</td></tr>
+  <tr><td>10</td><td>Fix cache stampede with probabilistic expiry</td><td><span class="severity high">High</span></td><td>1 day</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="section">
+<div class="section-title">Platform Overview</div>
+<table class="summary-table">
+<thead><tr><th>Metric</th><th>Value</th></tr></thead>
+<tbody>
+  <tr><td>Stack</td><td>.NET 8 Web API + React 18 + TypeScript + PostgreSQL 16 + Redis 7</td></tr>
+  <tr><td>Database Tables</td><td>143</td></tr>
+  <tr><td>Flyway Migrations</td><td>145</td></tr>
+  <tr><td>Backend Unit Tests</td><td>260 methods / 33 files</td></tr>
+  <tr><td>Frontend Tests</td><td>~75 / 10 files</td></tr>
+  <tr><td>Integration Tests</td><td>4 active / 14 disabled</td></tr>
+  <tr><td>E2E Tests</td><td>5 Playwright files</td></tr>
+  <tr><td>NLP Pipeline</td><td>LangChain + Claude Haiku, pgvector cache (10,530+ pairs)</td></tr>
+  <tr><td>OWASP Compliance</td><td>Strong (7/10 categories fully addressed)</td></tr>
+</tbody>
+</table>
+</div>
+
+</div>
+
+</div><!-- /container -->
+
+<div class="footer">
+  Powered by <strong>TRON</strong> &mdash; Enterprise AI QA Audit Platform &middot; FCNow v8.4.0 &middot; April 13, 2026
+</div>
+
+<script>
+function toggle(el){el.nextElementSibling.classList.toggle('open')}
+function showTab(id){
+  document.querySelectorAll('.tab-content').forEach(t=>t.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  event.target.classList.add('active');
+}
+</script>
+</body>
+</html>

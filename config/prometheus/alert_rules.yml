@@ -1,0 +1,108 @@
+# Tron alert rules
+groups:
+  - name: tron-api
+    rules:
+      - alert: HighErrorRate
+        expr: rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High error rate on Tron API"
+          description: "Error rate is {{ $value | humanizePercentage }} over the last 5 minutes."
+
+      - alert: HighLatency
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High p95 latency on Tron API"
+          description: "p95 latency is {{ $value }}s over the last 5 minutes."
+
+  - name: tron-infrastructure
+    rules:
+      - alert: PostgresConnectionPoolExhausted
+        expr: pg_stat_activity_count > 180
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "PostgreSQL connection pool near exhaustion"
+
+      - alert: RedisMemoryHigh
+        expr: redis_memory_used_bytes / redis_memory_max_bytes > 0.9
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis memory usage above 90%"
+
+  - name: tron-slo
+    rules:
+      - alert: SLOAvailabilityBurn
+        expr: 1 - (sum(rate(http_requests_total{status=~"2.."}[1h])) / sum(rate(http_requests_total[1h]))) > 0.001
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "SLO availability error budget burning too fast"
+          description: "Error budget burn rate is {{ $value | humanizePercentage }} over the last hour. Immediate action required."
+
+      - alert: SLOLatencyBurn
+        expr: histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[1h])) by (le)) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "SLO latency error budget burning"
+          description: "p95 latency is {{ $value }}s over the last hour, exceeding SLO target of 500ms."
+
+  - name: tron-workflow
+    rules:
+      - alert: WorkflowFailureRate
+        expr: sum(rate(audit_runs_total{status="failed"}[1h])) / sum(rate(audit_runs_total[1h])) > 0.1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High workflow failure rate"
+          description: "Workflow failure rate is {{ $value | humanizePercentage }} over the last hour."
+
+      - alert: WorkflowStuck
+        expr: count(audit_runs{status="running", duration_seconds > 3600}) > 0
+        for: 15m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Workflows stuck for more than 1 hour"
+          description: "{{ $value }} workflow(s) have been running for more than 1 hour."
+
+  - name: tron-llm
+    rules:
+      - alert: LLMProviderDown
+        expr: up{job="llm-provider"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "LLM provider is down"
+          description: "LLM provider has been unavailable for 2 minutes."
+
+      - alert: LLMCostSpike
+        expr: sum(rate(llm_cost_usd_total[1h])) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "LLM cost spike detected"
+          description: "Hourly LLM cost rate is ${{ $value }} per hour, exceeding threshold of $10/hour."
+
+      - alert: LLMCircuitBreakerOpen
+        expr: llm_circuit_breaker_state == 1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "LLM circuit breaker is open"
+          description: "LLM circuit breaker has been open for 1 minute, preventing LLM API calls."

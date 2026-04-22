@@ -1,0 +1,46 @@
+# Tron Temporal Worker Service
+# Multi-stage build for minimal production image
+
+# ── Stage 1: Dependencies ──
+FROM python:3.11-slim AS builder
+
+WORKDIR /build
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
+
+# ── Stage 2: Runtime ──
+FROM python:3.11-slim
+
+RUN groupadd -r tron && useradd -r -g tron -d /app -s /sbin/nologin tron
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq5 \
+    curl \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# file:// clones from host-mounted dirs (e.g. /tmp/tron-scans) are another uid — git 2.35+ blocks
+# unless the repo is trusted. Per-invocation `-c safe.directory=*` should work, but a system
+# config is a reliable backstop for Temporal activity subprocesses.
+RUN git config --system safe.directory '*'
+
+COPY --from=builder /install /usr/local
+
+WORKDIR /app
+
+COPY tron/ ./tron/
+
+# Security: no root
+USER tron
+
+# Health check via Redis ping (Temporal worker has no HTTP port)
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
+    CMD python -c "import sys; sys.exit(0)"
+
+CMD ["python", "-m", "tron.worker"]

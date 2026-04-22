@@ -1,0 +1,19 @@
+{
+  "id": "hipaa_reference",
+  "title": "HIPAA Security Rule — reference themes (Tron built-in, not legal advice)",
+  "disclaimer": "Heuristic mapping for engineering review. Not a HIPAA risk analysis or BA agreement.",
+  "themes": [
+    {
+      "id": "164.312(a)(1)",
+      "summary": "Access control — minimum necessary exposure of PHI in APIs, databases, and logs."
+    },
+    {
+      "id": "164.312(b)",
+      "summary": "Audit controls — who accessed what, retention, and integrity of audit trails."
+    },
+    {
+      "id": "164.312(e)(1)",
+      "summary": "Transmission security — encryption in transit for PHI-bearing channels."
+    }
+  ]
+}

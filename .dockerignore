@@ -1,0 +1,31 @@
+# Git and local tooling
+.git
+.github
+.cursor
+**/.pytest_cache
+**/__pycache__
+*.pyc
+.venv
+venv
+.env
+.env.*
+
+# Large / non-image paths
+**/node_modules
+frontend/node_modules
+admin-ui/node_modules
+admin-ui/dist
+frontend/dist
+admin/dist
+htmlcov
+.coverage
+*.log
+data
+minio-data
+.venv-tmp
+.venv-tmp2
+.venv312
+
+# Tests and docs (not needed in API image)
+tests
+docs
