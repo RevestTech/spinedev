@@ -154,7 +154,7 @@ Remember: ONLY JSON. No preamble, no explanation, no markdown.
         """Run test quality analysis."""
 
         # Run deterministic pre-pass to gather test metadata
-        test_metadata = self._run_deterministic_tools(file_contents)
+        test_metadata = self._run_deterministic_tools(blueprint, file_contents, tool_results)
 
         # Filter to test files + relevant source files
         test_files = {
@@ -201,12 +201,16 @@ Remember: ONLY JSON. No preamble, no explanation, no markdown.
 
     def _run_deterministic_tools(
         self,
+        blueprint: Blueprint,
         file_contents: Dict[str, str],
+        tool_results: Dict[str, ToolResult],
     ) -> Dict[str, Any]:
         """Run deterministic test analysis (regex, parsing).
 
         Args:
+            blueprint: Task blueprint.
             file_contents: All project files.
+            tool_results: Deterministic tool outputs.
 
         Returns:
             Dict with test metadata:

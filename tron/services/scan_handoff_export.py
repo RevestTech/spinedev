@@ -180,83 +180,52 @@ def build_tron_post_scan_markdown(
     tron_ui_base: str,
     audit: dict[str, Any],
     findings: list[dict[str, Any]],
-    top_n: int = 25,
 ) -> str:
-    """Markdown for ``TRON_POST_SCAN.md`` (snapshot + top findings + checklist)."""
-    crit = audit.get("findings_critical", 0)
-    high = audit.get("findings_high", 0)
-    med = audit.get("findings_medium", 0)
-    low = audit.get("findings_low", 0)
-    total = audit.get("findings_total", len(findings))
-    dur = _duration_line(audit)
-    started = audit.get("started_at") or ""
-    completed = audit.get("completed_at") or ""
+    """Markdown for ``TRON_POST_SCAN.md`` (Agent Directives + Snapshot)."""
+    crit = int(audit.get("findings_critical") or 0)
+    high = int(audit.get("findings_high") or 0)
+    total = int(audit.get("findings_total") or len(findings))
+    
+    tdir = handoff_templates_dir()
+    template_path = tdir / "TRON_POST_SCAN.md.template"
+    if not template_path.is_file():
+        # Fallback to the legacy build logic if template missing
+        return f"# Audit {audit_id} - {app_name}\n\nTotal findings: {total}"
 
+    raw_template = template_path.read_text(encoding="utf-8")
+    
+    # Sort findings: Critical first, then High
     sorted_f = sorted(findings, key=lambda f: (_severity_rank(f.get("severity", "")), f.get("file_path", "")))
-    top = sorted_f[:top_n]
+    
+    directive_lines = []
+    for f in sorted_f:
+        sev = (f.get("severity") or "low").upper()
+        if sev not in ("CRITICAL", "HIGH", "MEDIUM"): # Include medium too for coverage
+            continue
+            
+        fp = f.get("file_path", "unknown")
+        line = f.get("line_start") or f.get("line_number") or "?"
+        title = f.get("title") or "Unnamed Finding"
+        desc = f.get("description") or "No description provided."
+        fix = f.get("fix_suggestion") or f.get("suggested_fix") or "No specific fix suggested. Investigate root cause."
+        
+        directive_lines.append(f"### 🔴 {sev}: {title}")
+        directive_lines.append(f"- **Location:** `{fp}:{line}`")
+        directive_lines.append(f"- **Issue:** {desc}")
+        directive_lines.append(f"- **Directive:** {fix}")
+        directive_lines.append("")
 
-    lines: list[str] = [
-        f"# Tron post-scan — {app_name}",
-        "",
-        f"**Tron UI / API base:** {tron_ui_base.rstrip('/')}",
-        f"**Audit id:** `{audit_id}`",
-        "",
-        "_Tron refreshes only the HTML-comment delimited block below on each handoff; add durable notes **outside** that block._",
-        "",
-        "**Local agent workflow:** Tron audited this repo (folder or Git remote, e.g. GitHub). Read your normal context files "
-        "(`AGENTS.md`, `CLAUDE.md`, `.cursor/rules/…`) — they point here. Then read **`tron.md`** for **Tron activity** "
-        "(append-only run log + space for team notes).",
-        "",
-        "## Snapshot (from Tron API)",
-        "",
-        "| Field | Value |",
-        "|--------|--------|",
-        f"| Status | {audit.get('status', '')} |",
-        f"| Progress | {audit.get('progress', '')}% |",
-        f"| Duration | {dur or '—'} |",
-        f"| Started | {started} |",
-        f"| Completed | {completed or '—'} |",
-        f"| Total findings | {total} |",
-        f"| Critical / High / Medium / Low | {crit} / {high} / {med} / {low} |",
-        "",
-        "## Top findings (by severity, then path)",
-        "",
-    ]
-    if not top:
-        lines.append("_No findings returned yet (audit may still be running)._")
-    else:
-        for i, f in enumerate(top, 1):
-            sev = f.get("severity", "")
-            fp = f.get("file_path", "")
-            ls = f.get("line_start")
-            loc = f"`{fp}:{ls}`" if ls is not None else f"`{fp}`"
-            title = (f.get("title") or "").replace("\n", " ").strip()
-            cat = f.get("category") or ""
-            tail = f" — _{cat}_" if cat else ""
-            lines.append(f"{i}. **{sev.upper()}** {loc} — {title}{tail}")
-    lines.extend(
-        [
-            "",
-            "Full list: Tron UI audit page → “View all findings”, or `GET /api/audits/{id}/findings` with pagination.",
-            "",
-            "## Triage checklist",
-            "",
-            "1. Open the audit in Tron; confirm id and counts match the table above.",
-            "2. Work **High** (then **Critical**) first: read description + suggested fix; open the cited file in **this** repo.",
-            "3. Label each item: **true positive** (fix here), **false positive / accepted risk** (brief rationale), or **needs design** (ticket).",
-            "4. Prefer one PR per root cause over many one-line edits.",
-            "5. Re-run Tron audit when ready; re-run `audit handoff` to refresh this file.",
-            "",
-            "## Done criteria",
-            "",
-            "- [ ] All **High** (and **Critical**) items triaged with fix, defer note, or FP rationale.",
-            "- [ ] **Medium** triaged or scheduled (link issue below).",
-            "",
-            "_Issues / PRs:_",
-            "",
-        ]
+    details = "\n".join(directive_lines) if directive_lines else "_No Critical or High severity findings detected._"
+
+    return (
+        raw_template.replace("{{APP_NAME}}", app_name)
+        .replace("{{TRON_AUDIT_ID}}", audit_id)
+        .replace("{{TRON_UI_BASE}}", tron_ui_base.rstrip("/"))
+        .replace("{{CRIT_COUNT}}", str(crit))
+        .replace("{{HIGH_COUNT}}", str(high))
+        .replace("{{TOTAL_COUNT}}", str(total))
+        .replace("{{FINDING_DETAILS}}", details)
     )
-    return "\n".join(lines)
 
 
 def write_audit_handoff_bundle(

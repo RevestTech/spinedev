@@ -1,43 +1,40 @@
-# Tron post-scan — {{APP_NAME}}
+# Tron Security Directives — {{APP_NAME}}
 
-**Tron UI / API base:** {{TRON_UI_BASE}}  
-**Audit id (fill):** {{TRON_AUDIT_ID}}
+**Audit System:** [Tron Enterprise]({{TRON_UI_BASE}})  
+**Audit ID:** `{{TRON_AUDIT_ID}}`
 
-This file lives in **this application’s** repository so local agents (Cursor, Claude, Codex) load it automatically with the codebase.
+---
 
-**Workflow:** read **`AGENTS.md`** / **`CLAUDE.md`** / **`.cursor/rules/`** first, then this file for the finding snapshot, then **`tron.md`** for **Tron activity** (append-only handoff log + team notes).
+## 🤖 INSTRUCTIONS FOR AI AGENTS (Cursor / Claude / Copilot)
+You are being tasked to **remediate vulnerabilities** found by Tron. 
+1. **Priority:** Address **CRITICAL** and **HIGH** findings first.
+2. **Context:** Read the `Agent Directives` section below for exact file paths and line numbers.
+3. **Execution:** For each finding, analyze the suggested fix, then apply a permanent, idiomatic fix to the codebase. 
+4. **Verification:** Once fixed, run the project's test suite to ensure no regressions were introduced.
 
-## Snapshot (paste from Tron audit page after each run)
+---
 
-| Field | Value |
-|--------|--------|
-| Status | |
-| Duration | |
-| Started | |
-| Completed | |
-| Total findings | |
-| Critical / High / Medium / Low | / / / |
+## 📊 AUDIT SNAPSHOT
+| Severity | Count |
+|----------|-------|
+| CRITICAL | {{CRIT_COUNT}} |
+| HIGH     | {{HIGH_COUNT}} |
+| TOTAL    | {{TOTAL_COUNT}} |
 
-## Top paths or themes (examples)
+---
 
-_List 5–10 rows from Tron “Top findings” or export._
+## 🎯 AGENT DIRECTIVES
+These are the specific issues that need to be "buttoned up" immediately.
 
-1.
-2.
-3.
+{{FINDING_DETAILS}}
 
-## Triage checklist
+---
 
-1. Open the audit in Tron; confirm id and status match the table above.
-2. Work **High** first: open each finding, read description + suggested fix, open the cited file at the line in **this** repo.
-3. Label each item: **true positive** (fix here), **false positive / accepted risk** (one-line rationale), or **needs design** (ticket).
-4. Prefer one PR per root cause (e.g. repeated Dockerfile pattern) over dozens of one-line edits.
-5. Re-run Tron audit when ready; update this file’s snapshot table.
+## ✅ TRIAGE CHECKLIST
+- [ ] Analyze each directive in the codebase.
+- [ ] Apply the suggested remediation or equivalent robust fix.
+- [ ] Verify that the root cause (e.g. string formatting in SQL) is eliminated.
+- [ ] Mark the item as [FIXED] in your local dev notes.
 
-## Done criteria
-
-- [ ] All **High** items triaged with fix, defer note, or FP rationale.
-- [ ] **Medium** triaged or scheduled (link issue below).
-- [ ] Optional: link FCNow PRs:
-
-_Issues / PRs:_
+---
+_Tron v5.4.0 — Zero-Drift Verification Engine_
