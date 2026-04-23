@@ -62,6 +62,44 @@ interface EvolveArtifact {
   findings?: any[]
 }
 
+function LiveAuditStatus({ auditId }: { auditId: string }) {
+  const [events, setEvents] = useState<any[]>([])
+  
+  useEffect(() => {
+    const ws = api.connectAuditWs(auditId, (msg: any) => {
+      setEvents(prev => [...prev.slice(-10), msg])
+    })
+    return () => ws.close()
+  }, [auditId])
+
+  if (events.length === 0) return null
+
+  return (
+    <Card className="border-accent/30 bg-accent/5">
+      <CardHeader className="flex items-center justify-between py-2 px-4">
+        <div className="flex items-center gap-2">
+          <RefreshCw className="w-3.5 h-3.5 text-accent-light animate-spin" />
+          <span className="text-[10px] font-black text-white uppercase tracking-widest">Live Audit Feed</span>
+        </div>
+        <span className="text-[9px] font-mono text-tron-500 uppercase">{auditId.slice(0, 8)}</span>
+      </CardHeader>
+      <CardBody className="p-4 pt-0">
+        <div className="space-y-1.5 font-mono text-[10px]">
+          {events.slice().reverse().map((ev, i) => (
+            <div key={i} className="flex gap-3 text-tron-400">
+               <span className="text-tron-600 shrink-0">[{new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}]</span>
+               <span className="text-accent-light shrink-0 uppercase tracking-tighter">{ev.event || 'LOG'}</span>
+               <span className="text-tron-200 truncate">
+                 {ev.data?.message || ev.data?.agent || JSON.stringify(ev.data).slice(0, 80)}
+               </span>
+            </div>
+          ))}
+        </div>
+      </CardBody>
+    </Card>
+  )
+}
+
 function DependencyGraph({ projectId }: { projectId: string }) {
   const [graphData, setGraphData] = useState<api.ProjectGraphResponse | null>(null)
   const [loading, setLoading] = useState(true)
@@ -564,8 +602,15 @@ export default function ProjectDetail() {
         </div>
       </div>
 
-      {(planArtifact || lastBuild || evolveArtifact) && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      {/* Live Feed during scan */}
+      {isRunning && latestAudit && (
+        <div className="animate-in slide-in-from-top-4 duration-500">
+          <LiveAuditStatus auditId={latestAudit.id} />
+        </div>
+      )}
+
+      {/* Stats Row */}
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
           {planArtifact && (
             <Card>
               <CardHeader>
