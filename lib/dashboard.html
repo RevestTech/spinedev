@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Agent Team Dashboard</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --fg: #e6edf3;
+    --muted: #8b949e;
+    --accent: #58a6ff;
+    --success: #3fb950;
+    --warning: #d29922;
+    --error: #f85149;
+    --border: #30363d;
+    --panel: #161b22;
+  }
+  body {
+    margin: 0; padding: 16px;
+    background: var(--bg); color: var(--fg);
+    font-family: ui-sans-serif, system-ui, sans-serif;
+    font-size: 14px;
+  }
+  h1 { margin: 0 0 16px; font-size: 18px; font-weight: 650; }
+  .meta { color: var(--muted); font-size: 12px; margin-bottom: 16px; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { padding: 8px 12px; border-bottom: 1px solid var(--border); text-align: left; }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
+  td.role { font-weight: 650; }
+  td.state-idle { color: var(--muted); }
+  td.state-directive, td.state-plan { color: var(--accent); }
+  td.state-report { color: var(--success); }
+  td.workers { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .pill {
+    display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 11px;
+    background: rgba(255,255,255,0.08); color: var(--muted);
+  }
+  .pill.up { background: rgba(63,185,80,0.15); color: var(--success); }
+  .pill.down { background: rgba(248,81,73,0.15); color: var(--error); }
+</style>
+</head>
+<body>
+<h1>Agent Team Dashboard</h1>
+<div class="meta">
+  Reads <code>.planning/orchestration/agent-handoff/teams/&lt;role&gt;/directive.md</code> via fetch().
+  Auto-refreshes every 8 seconds. Configure source in <code>SOURCE_BASE</code> below.
+</div>
+<table id="t">
+  <thead>
+    <tr>
+      <th>Role</th><th>State</th><th>Current</th><th>Workers</th><th>Last activity</th>
+    </tr>
+  </thead>
+  <tbody></tbody>
+</table>
+<script>
+  const SOURCE_BASE = '.planning/orchestration/agent-handoff/teams';
+  const ROLES = ['planner','researcher','engineer','operator','datawright','seer','auditor','memory'];
+  const tbody = document.querySelector('#t tbody');
+
+  function classifyHeader(h) {
+    if (!h) return 'missing';
+    if (h.startsWith('# Directive')) return 'directive';
+    if (h.startsWith('# Worker Directive')) return 'worker-directive';
+    if (h.startsWith('# Plan')) return 'plan';
+    if (h.startsWith('# Report')) return 'report';
+    if (h.startsWith('# Worker Report')) return 'worker-report';
+    if (h.startsWith('# Status')) return 'report';
+    if (h.startsWith('# (idle')) return 'idle';
+    return 'other';
+  }
+
+  async function refresh() {
+    const rows = await Promise.all(ROLES.map(async (role) => {
+      try {
+        const res = await fetch(`${SOURCE_BASE}/${role}/directive.md`, { cache: 'no-store' });
+        if (!res.ok) return { role, state: 'missing', current: '(no file)', workers: '?' };
+        const text = await res.text();
+        const head = text.split('\n')[0] || '';
+        return { role, state: classifyHeader(head), current: head.slice(0, 80) };
+      } catch (e) {
+        return { role, state: 'error', current: e.message.slice(0, 80) };
+      }
+    }));
+    tbody.innerHTML = rows.map(r =>
+      `<tr>
+        <td class="role">${r.role}</td>
+        <td class="state-${r.state}">${r.state}</td>
+        <td>${r.current}</td>
+        <td class="workers">—</td>
+        <td class="meta">just now</td>
+      </tr>`
+    ).join('');
+  }
+
+  refresh();
+  setInterval(refresh, 8000);
+</script>
+</body>
+</html>
