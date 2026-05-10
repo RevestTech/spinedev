@@ -9,7 +9,7 @@ make team-up
 make team-status
 ```
 
-That starts **eight** manager daemons, **ten worker slots per manager** (80 workers), plus the watchdog — see `PROTOCOL.md` for the lifecycle.
+That starts **every manager role listed in `scripts/roles.sh`**, **ten worker slots per manager**, and the watchdog — see `PROTOCOL.md` §1 for the lifecycle model.
 
 ---
 
@@ -27,18 +27,19 @@ Use **knowledge-only** on mature projects whose `scripts/` you have patched loca
 
 ## What the full installer does
 
-1. Runs **preflight** (host deps) unless you use `--pull-knowledge-only`
-2. Creates `.planning/orchestration/agent-handoff/teams/<role>/` for all eight roles
-3. Installs **`role-prompt.md`** per role
-4. Places idle **`directive.md`** placeholders where missing
-5. Copies **`scripts/`** — daemon, team.sh, watchdog, executor, helpers
-6. Installs **`dashboard/index.html`**
-7. Copies **`PROTOCOL.md`** / **`REQUIREMENTS.md`** into orchestration paths
-8. Copies **`recipes/`** → `.planning/orchestration/recipes/`
-9. Copies **`docs/SPINE_PRACTICES.md`**, **`IMPROVEMENT_CHECKLIST.md`**, **`EXTENSIONS.md`** → `.planning/orchestration/docs/` (respects overwrite rules above)
-10. Copies **`templates/orchestration`** → `.planning/orchestration/` (`DECISIONS.md`, `ADR_TEMPLATE.md`)
-11. Seeds **`~/.spine-development/playbook/`** (never clobbers existing `lessons.md`)
-12. Optionally appends **`CLAUDE.md`**
+1. Runs **preflight** (unless `--pull-knowledge-only`) using host requirements.
+2. Creates `.planning/orchestration/agent-handoff/teams/<role>/` for **every role** in `scripts/roles.sh`.
+3. Installs **`role-prompt.md`** per role.
+4. Places idle **`directive.md`** placeholders where missing.
+5. Copies **`scripts/*.sh`** (includes `roles.sh`, daemon, `team.sh`, watchdog, helpers).
+6. Installs **`dashboard/index.html`**.
+7. Copies **`PROTOCOL.md`** / **`REQUIREMENTS.md`** into orchestration paths.
+8. Copies **`recipes/`** → `.planning/orchestration/recipes/`.
+9. Copies **`docs/`** snippets (`SPINE_PRACTICES.md`, `IMPROVEMENT_CHECKLIST.md`, `EXTENSIONS.md`, **`PROGRAM_DELIVERY.md`**) respecting overwrite rules.
+10. Copies **`templates/orchestration/`** + **`templates/program/`** (REQ ledger, POLICY stub, phases).
+11. Seeds **`~/.spine-development/playbook/`** (never clobbers lessons).
+12. Wires **`Makefile`** team targets when needed.
+13. Optionally appends **`CLAUDE.md`** guidance.
 
 Install is **idempotent**: existing files stay unless **`--force`** applies to that artifact class.
 

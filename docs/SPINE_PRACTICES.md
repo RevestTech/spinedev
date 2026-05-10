@@ -1,11 +1,11 @@
 # Spine practices — multi-agent development without drift
 
-This document explains **what the SpineDevelopment pattern is for** and how to use it so software stays coherent when many agents and humans work in parallel.
+This document explains **what the SpineDevelopment pattern is for** and how to use it so software stays coherent when many agents and humans work in parallel. For **phase gates, REQs, conductor vs planner, and SDLC layering**, read **`docs/PROGRAM_DELIVERY.md`** (also installed under `.planning/orchestration/docs/`).
 
 ## Goals
 
-1. **Multi-agentic development** — Specialized roles (planner, researcher, engineer, operator, datawright, seer, auditor, memory) run in parallel where safe, coordinated through a **file bus** instead of one overloaded chat.
-2. **Less drift** — Single protocol, structured reports, ADRs, session handoff, and per-role memory so context does not live only in one model turn.
+1. **Multi-agentic program delivery** — Specialized roles (product, architect, conductor, engineering squads, UX, QA, plus core operators) coordinate through the same **file bus** and worker fan-out rules.
+2. **Less drift** — Single protocol, structured reports, ADRs, REQ linkage, session handoff, and per-role memory so context does not live only in one model turn.
 3. **Durable documentation** — Protocol, requirements, recipes in-repo, and optional `DECISIONS.md` / `SESSION_HANDOFF.md` / `MASTER_TODO.md` at `.planning/orchestration/` give every new session the same baseline.
 
 ## How drift shows up (and how the spine counters it)

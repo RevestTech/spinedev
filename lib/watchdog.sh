@@ -16,7 +16,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT" || exit 1
 
-ROLES=(planner researcher engineer operator datawright seer auditor memory)
+if [[ -f "$SCRIPT_DIR/roles.sh" ]]; then
+  # shellcheck source=/dev/null
+  source "$SCRIPT_DIR/roles.sh"
+  ROLES=("${SPINE_TEAM_ROLES[@]}")
+else
+  echo "✗ scripts/roles.sh missing — re-run SpineDevelopment installer." >&2
+  exit 1
+fi
+
 TEAM_BASE=".planning/orchestration/agent-handoff/teams"
 HANDOFF_BASE=".planning/orchestration/agent-handoff"
 DAEMON_PATH="scripts/team-agent-daemon.sh"

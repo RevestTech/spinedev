@@ -28,7 +28,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT" || exit 1
 
-TEAM_ROLES=(planner researcher engineer operator datawright seer auditor memory)
+if [[ -f "$SCRIPT_DIR/roles.sh" ]]; then
+  # shellcheck source=/dev/null
+  source "$SCRIPT_DIR/roles.sh"
+  TEAM_ROLES=("${SPINE_TEAM_ROLES[@]}")
+else
+  TEAM_ROLES=(product planner architect conductor researcher engineer engineering-backend engineering-frontend ux qa operator datawright seer auditor memory)
+fi
+
 TEAM_BASE=".planning/orchestration/agent-handoff/teams"
 
 LOG_MAX_BYTES="${LOG_MAX_BYTES:-5242880}"     # 5 MB per log

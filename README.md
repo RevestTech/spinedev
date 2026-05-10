@@ -22,7 +22,8 @@ your-project/
 │   ├── docs/
 │   │   ├── SPINE_PRACTICES.md     ← drift prevention & context habits
 │   │   └── …
-│   ├── recipes/                   ← pasted templates from this package (on install)
+│   ├── program/               ← REQ templates, phase ledger, policy stub
+│   ├── docs/PROGRAM_DELIVERY.md
 │   ├── dashboard/index.html
 │   └── agent-handoff/teams/
 │       ├── planner/      ← high-level goals, orchestration
@@ -34,7 +35,8 @@ your-project/
 │       ├── auditor/      ← verification of other roles' reports
 │       └── memory/       ← spine docs + per-role learning
 ├── scripts/
-│   ├── team-agent-daemon.sh    ← the daemon (parameterized)
+│   ├── roles.sh                 ← canonical role ID list (single source of truth)
+│   ├── team-agent-daemon.sh
 │   ├── team.sh                  ← entry point: up / down / status / budget / learn
 │   ├── seer-tick.sh             ← periodic observability nudge
 │   └── file-lock.sh             ← atomic locks for shared-file edits
@@ -276,6 +278,9 @@ The daemon is defensive bash — it never exits on inner failures. The agent inv
 | `docs/SPINE_PRACTICES.md` | Multi-agent habits, context stack, drift avoidance |
 | `docs/IMPROVEMENT_CHECKLIST.md` | Maintainer checklist |
 | `templates/orchestration/` | `DECISIONS.md` + `ADR_TEMPLATE.md` scaffolds |
+| `docs/PROGRAM_DELIVERY.md` | SDLC orchestration: phases, gates, conductor |
+| `templates/program/` | REQ / phase ledger / policy stub scaffolds |
+| `lib/roles.sh` | `SPINE_TEAM_ROLES` canonical list (installed to `scripts/roles.sh`) |
 | `install.sh` | Bootstrap; supports `--pull-knowledge-only` |
 | `lib/team-agent-daemon.sh` | Daemon (manager + worker); tiers, memory, timeouts, costs |
 | `lib/team.sh` | up / down / status / budget / learn / clean / doctor |
@@ -283,7 +288,7 @@ The daemon is defensive bash — it never exits on inner failures. The agent inv
 | `lib/seer-tick.sh` | Periodic seer nudge |
 | `lib/file-lock.sh` | Atomic locks for parallel edits |
 | `lib/dashboard.html` | Static dashboard → `dashboard/index.html` |
-| `lib/role-prompts/<role>.md` | Eight role system prompts |
+| `lib/role-prompts/<role>.md` | System prompts for every `SPINE_TEAM_ROLES` entry |
 | `lib/playbook-defaults/*.md` | Seeds for `~/.spine-development/playbook/` |
 | `recipes/*.md` | Directive templates → `.planning/orchestration/recipes/` |
 | `docs/EXTENSIONS.md` | Optional future work |
@@ -292,6 +297,6 @@ The daemon is defensive bash — it never exits on inner failures. The agent inv
 
 ## Lineage
 
-Early versions centered on five execution roles; current releases add meta roles (seer, auditor, memory), cost hygiene, watchdog supervision, and safe knowledge refresh (`--pull-knowledge-only`). See `CHANGELOG.md` for timelines.
+Early versions centered on five execution roles; **v1.4+** adds explicit program-delivery roles (**product, architect, conductor, engineering squads, UX, QA**) with `scripts/roles.sh` as the single source of truth. See **`CHANGELOG.md`**.
 
 The **orchestration spine** (`DECISIONS.md`, `MASTER_TODO.md`, `SESSION_HANDOFF.md`) lives under `.planning/orchestration/`. The agent team sits on top so parallel work stays tied to documented decisions.

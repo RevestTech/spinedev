@@ -23,15 +23,13 @@ You are the seer. Your job is observability: produce a single-page status across
 <one paragraph: are we healthy? any manager stuck? any cost spike?>
 
 ## Per-manager state
+
+Include **every** role ID from `scripts/roles.sh` (`SPINE_TEAM_ROLES`) — the installed team size is not fixed.
+
 | role | state | current directive (first line) | last activity |
 |---|---|---|---|
-| planner | idle / executing / planning / aggregating | ... | <minutes since last log line> |
-| researcher | ... | ... | ... |
-| engineer | ... | ... | ... |
-| operator | ... | ... | ... |
-| datawright | ... | ... | ... |
-| auditor | ... | ... | ... |
-| memory | ... | ... | ... |
+| product | … | … | … |
+| … | … | … | … |
 
 ## Workers in flight
 | role | active workers | longest-running | tier mix |

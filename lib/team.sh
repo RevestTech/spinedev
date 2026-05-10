@@ -17,7 +17,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT" || exit 1
 
-TEAM_ROLES=(planner researcher engineer operator datawright seer auditor memory)
+if [[ -f "$SCRIPT_DIR/roles.sh" ]]; then
+  # shellcheck source=/dev/null
+  source "$SCRIPT_DIR/roles.sh"
+  TEAM_ROLES=("${SPINE_TEAM_ROLES[@]}")
+else
+  echo "✗ scripts/roles.sh missing — re-run SpineDevelopment installer." >&2
+  exit 1
+fi
+
 TEAM_DAEMON="scripts/team-agent-daemon.sh"
 TEAM_BASE=".planning/orchestration/agent-handoff/teams"
 
@@ -103,7 +111,9 @@ cmd_up() {
     return 1
   fi
   ensure_scaffold
-  step "Starting agent team (8 managers + 80 worker slots + watchdog)"
+  local nm=${#TEAM_ROLES[@]}
+  local nw=$((nm * 10))
+  step "Starting agent team (${nm} managers + ${nw} worker slots + watchdog)"
   for role in "${TEAM_ROLES[@]}"; do
     echo
     dim "  $role:"
@@ -259,8 +269,8 @@ cmd_rollback() {
   shift  # consume "rollback"
   local role="${1:-engineer}"
   local stack="$TEAM_BASE/$role/state/rollback-stack.csv"
-  if [[ "$role" != "engineer" ]]; then
-    err "Rollback is only supported for the engineer role (other roles don't modify code)"
+  if [[ "$role" != "engineer" && "$role" != "engineering-backend" && "$role" != "engineering-frontend" ]]; then
+    err "Rollback targets code squads only: engineer | engineering-backend | engineering-frontend"
     return 1
   fi
   if [[ ! -f "$stack" ]]; then
@@ -482,7 +492,7 @@ case "${1:-help}" in
     cat <<EOF
 Usage: bash scripts/team.sh <command>
 
-  up         Start manager daemons + 80 worker slots (idempotent)
+  up         Start manager daemons + worker slots (see scripts/roles.sh) + watchdog
   down       Stop all team daemons
   status     Show what each manager + worker is doing
   restart    down + up
@@ -497,8 +507,8 @@ Usage: bash scripts/team.sh <command>
                clean footprint  — show disk usage per role
                clean nuclear    — destroy everything except current directives
   doctor     Health check: cursor-agent on PATH, daemons alive, heartbeats fresh, watchdog up
-  rollback   Roll back engineer changes to a prior snapshot
-             Usage: team.sh rollback engineer
+  rollback   Roll back code-squad changes (git snapshot)
+             Usage: team.sh rollback engineer|engineering-backend|engineering-frontend
   notify-test Fire a test notification through every configured channel.
              Channels are env-var driven — see "How am I going to get pinged?" below.
 
@@ -513,9 +523,8 @@ How am I going to get pinged?
   Then verify: bash scripts/team.sh notify-test
 
 Drop directives at:
-  $TEAM_BASE/{planner,researcher,engineer,operator,datawright,seer,auditor,memory}/directive.md
-
-See PROTOCOL.md for the full contract.
+  See scripts/roles.sh (`SPINE_TEAM_ROLES`)
+  Paths: .planning/orchestration/agent-handoff/teams/<role>/directive.md
 EOF
     ;;
   *)

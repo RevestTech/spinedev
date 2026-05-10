@@ -1,5 +1,37 @@
 # Changelog
 
+## v1.4.0 — 2026-05-11
+
+Program-delivery orchestration framework: expanded role roster, single-source role list, SDLC gates, squad fan-out parity, conductor vs planner separation.
+
+### Roles (`lib/roles.sh` → `scripts/roles.sh`)
+
+- Added managers: **`product`**, **`architect`**, **`conductor`**, **`engineering-backend`**, **`engineering-frontend`**, **`ux`**, **`qa`** (retains existing planner/researcher/engineer/operator/datawright/meta roles).
+- **15 managers × 10 workers = 150 worker slots** per repo (+ watchdog).
+- Daemon + watchdog + cleaner + installer all **source `roles.sh`** — no duplicated role arrays.
+
+### Protocol
+
+- **`PROTOCOL.md`** §1 rewritten for lifecycle ladder + squad recursion doctrine; **`planner` + `conductor` cross-writing** clarified (§5); **§§21–26** cover SDLC linkage, REQ blocks, conductor mandate, QA/auditor pairing.
+- **`## Linked REQ`** contract for implementation directives (**§22**).
+
+### Prompts & docs
+
+- New role prompts under `lib/role-prompts/` for delivery squads / product / architecture / QA / UX / conductor.
+- **`docs/PROGRAM_DELIVERY.md`** + **`templates/program/`** (`REQ_TEMPLATE.md`, `PROGRAM_PHASES.md`, `POLICY.stub.md`) shipped via installer into `.planning/orchestration/`.
+- Planner + memory + seer prompts updated for expanded roster.
+
+### Mechanics
+
+- Git rollback snapshots now cover **`engineering-backend`** & **`engineering-frontend`** alongside `engineer`.
+- **`lib/dashboard.html`** lists all canonical roles.
+
+### Operational note
+
+ Larger idle footprint — ensure hosts can tolerate `15` polling managers or trim unused roles in a fork **only after** adjusting `roles.sh` consistently.
+
+---
+
 ## v1.3.4 — 2026-05-10
 
 The **documentation, context, and portable template** pass: align multi-agent practice with how teams actually avoid drift, make the installer support **knowledge refresh** without touching daemons, and generalize role prompts for any project.

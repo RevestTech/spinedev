@@ -1,6 +1,6 @@
 # Improvement checklist (maintainers)
 
-> **v1.3.4 (2026-05-10):** Installer `--pull-knowledge-only`, orchestration docs + ADR templates on install, `docs/SPINE_PRACTICES.md`, portable operator/datawright prompts, PROTOCOL/README alignment. Remaining unchecked items below are still valid follow-ups.
+> **v1.4.0:** Program-delivery framework (`product`, `architect`, `conductor`, squad roles, `roles.sh` SSOT, PROTOCOL §§21–26, `program/` templates, `PROGRAM_DELIVERY.md`). **v1.3.4:** knowledge-only install + ADR scaffolding. Remaining checklist rows still apply for future hardening.
 
 Actionable items to keep the template healthy. Completion is optional; use as a roadmap.
 

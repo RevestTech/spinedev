@@ -52,6 +52,14 @@ fi
 TARGET="$(cd "$TARGET" && pwd)" || { err "FATAL: target does not exist or is not a directory"; exit 1; }
 SOURCE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+if [[ ! -f "$SOURCE/lib/roles.sh" ]]; then
+  err "FATAL: missing $SOURCE/lib/roles.sh"
+  exit 1
+fi
+# shellcheck source=/dev/null
+source "$SOURCE/lib/roles.sh"
+ROLES=("${SPINE_TEAM_ROLES[@]}")
+
 if [[ -t 1 ]]; then
   C_BLUE='\033[0;34m'; C_GREEN='\033[0;32m'; C_YELLOW='\033[0;33m'; C_DIM='\033[2m'; C_RESET='\033[0m'
 else
@@ -63,7 +71,6 @@ ok()   { printf "${C_GREEN}✓${C_RESET} %s\n" "$*"; }
 warn() { printf "${C_YELLOW}!${C_RESET} %s\n" "$*"; }
 dim()  { printf "${C_DIM}%s${C_RESET}\n" "$*"; }
 
-ROLES=(planner researcher engineer operator datawright seer auditor memory)
 TEAM_BASE="$TARGET/.planning/orchestration/agent-handoff/teams"
 ORCHESTRATION="$TARGET/.planning/orchestration"
 
@@ -121,7 +128,7 @@ install_practice_docs() {
   local destd="$ORCHESTRATION/docs"
   mkdir -p "$destd"
   local f
-  for f in SPINE_PRACTICES.md IMPROVEMENT_CHECKLIST.md EXTENSIONS.md; do
+  for f in SPINE_PRACTICES.md IMPROVEMENT_CHECKLIST.md EXTENSIONS.md PROGRAM_DELIVERY.md; do
     [[ -f "$SOURCE/docs/$f" ]] || continue
     local dst="$destd/$f"
     if [[ -f "$dst" && "$FORCE" == false ]]; then
@@ -131,6 +138,28 @@ install_practice_docs() {
       ok "  $dst"
     fi
   done
+}
+
+install_program_templates() {
+  local pdir="$SOURCE/templates/program"
+  [[ -d "$pdir" ]] || return 0
+  local dest="$ORCHESTRATION/program"
+  mkdir -p "$dest/ux" "$dest/qa"
+  local pf
+  shopt -s nullglob
+  for pf in "$pdir"/*; do
+    [[ -f "$pf" ]] || continue
+    local bn dst
+    bn=$(basename "$pf")
+    dst="$dest/$bn"
+    if [[ -f "$dst" && "$FORCE" == false ]]; then
+      warn "  $dst exists — keeping (pass --force to overwrite)"
+    else
+      cp "$pf" "$dst"
+      ok "  $dst"
+    fi
+  done
+  shopt -u nullglob
 }
 
 install_role_prompts() {
@@ -227,6 +256,7 @@ if [[ "$KNOWLEDGE_ONLY" == true ]]; then
 
   step "Orchestration templates + practice docs"
   install_templates
+  install_program_templates
   install_practice_docs
   echo
 
@@ -291,7 +321,7 @@ echo
 
 step "Installing scripts"
 mkdir -p "$TARGET/scripts"
-for f in team-agent-daemon.sh team.sh seer-tick.sh file-lock.sh team-clean.sh watchdog.sh executor.sh preflight.sh; do
+for f in roles.sh team-agent-daemon.sh team.sh seer-tick.sh file-lock.sh team-clean.sh watchdog.sh executor.sh preflight.sh; do
   cp "$SOURCE/lib/$f" "$TARGET/scripts/$f"
   chmod +x "$TARGET/scripts/$f"
   ok "  $TARGET/scripts/$f"
@@ -328,6 +358,7 @@ echo
 
 step "Orchestration templates + practice docs"
 install_templates
+install_program_templates
 install_practice_docs
 echo
 
@@ -338,7 +369,7 @@ MAKE_SNIPPET=$(cat <<'EOF'
 # ── Agent team (added by SpineDevelopment installer) ────────────────
 .PHONY: team-up team-down team-status team-restart team-budget team-clean team-footprint team-doctor team-rollback team-preflight
 
-team-up: ## Start the 8-manager + 80-worker agent team + watchdog
+team-up: ## Start agent team (all roles in scripts/roles.sh + watchdog)
 	bash scripts/team.sh up
 
 team-down: ## Stop all agent-team daemons + watchdog
@@ -395,24 +426,30 @@ if [[ -f "$CLAUDE_MD" ]] && ! grep -q "agent-team-template\|AGENT_TEAM_PROTOCOL"
 
 ## Agent team (parallelizable work)
 
-This repo has the agent-team pattern installed. **Eight** manager roles (five execution + three meta: seer, auditor, memory), each with up to **10 worker** daemons — file-based message bus under `.planning/orchestration/agent-handoff/teams/`.
+This repo has the SpineDevelopment agent-team installed. Manager count and IDs are defined in **`scripts/roles.sh`** (each role uses up to **10 worker** daemons — file-based bus under `.planning/orchestration/agent-handoff/teams/`).
 
-To assign work: drop a directive into the appropriate manager `directive.md` (first line `# Directive — ...`). The daemon polls about every 8 seconds.
+To assign work: replace a role's `directive.md` with `# Directive — ...`. Daemons poll about every 8 seconds.
 
-| Need | Manager |
+| Need | Role directory |
 |---|---|
-| Multi-step goal across specialists | `teams/planner/directive.md` |
+| Requirements / PRD narrative | `teams/product/directive.md` |
+| Broad multi-phase orchestration | `teams/planner/directive.md` |
+| Technical architecture | `teams/architect/directive.md` |
+| Approved-build coordination | `teams/conductor/directive.md` |
 | Read-only investigation | `teams/researcher/directive.md` |
-| Code/config edits + tests | `teams/engineer/directive.md` |
+| Full-stack edits (small teams) | `teams/engineer/directive.md` |
+| Backend squad | `teams/engineering-backend/directive.md` |
+| Frontend squad | `teams/engineering-frontend/directive.md` |
+| UX / design-system artefacts | `teams/ux/directive.md` |
+| QA narratives + verification | `teams/qa/directive.md` |
 | Docker / deploy / env | `teams/operator/directive.md` |
-| Inference / training / batch data | `teams/datawright/directive.md` |
-| Cross-team observability digest | `teams/seer/directive.md` |
-| Verify another role’s claims | `teams/auditor/directive.md` |
-| Spine docs + per-role memory | `teams/memory/directive.md` |
+| Inference / ML batch | `teams/datawright/directive.md` |
+| Portfolio observability digest | `teams/seer/directive.md` |
+| Claim verification | `teams/auditor/directive.md` |
+| Spine + playbook hygiene | `teams/memory/directive.md` |
 
-Full contract: `.planning/orchestration/AGENT_TEAM_PROTOCOL.md`  
-Practice guide: `.planning/orchestration/docs/SPINE_PRACTICES.md`  
-Bring up: `make team-up`. Status: `make team-status`. Stop: `make team-down`.
+Docs: `.planning/orchestration/AGENT_TEAM_PROTOCOL.md`, `docs/SPINE_PRACTICES.md`, `docs/PROGRAM_DELIVERY.md`  
+Bring up / status / stop: `make team-up`, `make team-status`, `make team-down`.
 EOF
   ok "  Appended team section to $CLAUDE_MD"
 else
@@ -430,7 +467,7 @@ cat <<EOF
 Next steps:
 
   cd $TARGET
-  make team-up          # start the 8 manager daemons + 80 worker slots + watchdog
+  make team-up          # start managers (see scripts/roles.sh) + workers + watchdog
   make team-status      # confirm everything's running
 
 Drop your first directive at one of:

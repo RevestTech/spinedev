@@ -117,7 +117,7 @@ The temp prompt file is deleted after the invocation completes (success or failu
 
 ## Resource footprint (idle and active)
 
-- **Idle (8 daemons + 80 worker slots polling):** ~80 MB total RAM, < 1% CPU. Each daemon is a bash process running an 8-second poll loop.
+- **Idle (`N` manager daemons + `10×N` worker slots polling):** scales with `scripts/roles.sh` (~low tens of MB RAM baseline, \< 2% CPU on modern laptops).
 - **Per active agent invocation:** depends entirely on the AI CLI you use (Cursor uses ~200 MB, Claude Code uses < 100 MB, Aider uses ~50 MB).
 - **Disk:** logs are auto-rotated at 5 MB each; total team footprint stays under 200 MB unless `clean archive` is overdue.
 

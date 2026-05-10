@@ -5,27 +5,37 @@
 #   bash scripts/team-agent-daemon.sh <role> manager
 #   bash scripts/team-agent-daemon.sh <role> worker <slot-NN>
 #
-# Roles: planner researcher engineer operator datawright seer auditor memory
+# Valid roles listed in scripts/roles.sh (`SPINE_TEAM_ROLES`).
 #
+ROLE="${1:?role required}"
 MODE="${2:?mode required (manager|worker)}"
 SLOT="${3:-}"
 
-case "$ROLE" in
-  planner|researcher|engineer|operator|datawright|seer|auditor|memory) ;;
-  *) echo "FATAL: unknown role '$ROLE'" >&2; exit 1 ;;
-esac
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROLES_SH="$SCRIPT_DIR/roles.sh"
+if [[ ! -f "$ROLES_SH" ]]; then
+  echo "FATAL: missing $ROLES_SH — reinstall SpineDevelopment bundle" >&2
+  exit 1
+fi
+# shellcheck source=/dev/null
+source "$ROLES_SH"
+
+if ! spine_role_valid "$ROLE"; then
+  echo "FATAL: unknown role '$ROLE'. Expected one of: $(spine_roles_csv)" >&2
+  exit 1
+fi
 
 case "$MODE" in
   manager) ;;
   worker)
     if [[ -z "$SLOT" || ! "$SLOT" =~ ^[0-9]{2}$ ]]; then
-      echo "FATAL: worker mode requires 2-digit slot arg (01..10)" >&2; exit 1
+      echo "FATAL: worker mode requires 2-digit slot arg (01..10)" >&2
+      exit 1
     fi
     ;;
   *) echo "FATAL: unknown mode '$MODE'" >&2; exit 1 ;;
 esac
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT" || exit 1
 
@@ -196,7 +206,9 @@ notify() {
 # (snapshot without touching the stash list) so it doesn't interfere with
 # the architect's own stashes.
 snapshot_for_rollback() {
-  [[ "$ROLE" == "engineer" ]] || return 0
+  case "$ROLE" in engineer|engineering-backend|engineering-frontend) ;;
+  *) return 0 ;;
+  esac
   command -v git >/dev/null 2>&1 || return 0
   git rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
 
