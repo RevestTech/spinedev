@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.4.1 — 2026-05-10
+
+### Dashboard
+
+- **`lib/dashboard.html`** is now **Spine Control Center**: tabbed UI (Overview, costs & tiers, program templates, docs, help), role cards with filters, detail drawer (manager text, workers 01–10, per-role costs CSV, rollback stack), path presets + custom base (stored in `localStorage`), and safer polling (no per-role worker Slot fan-out on every refresh).
+- **Doc fix:** serve **`.planning/orchestration`** (not only `dashboard/`) when using the default preset, so browser `fetch("../agent-handoff/...")` resolves to `/agent-handoff/...`.
+- **`scripts/serve-dashboard.sh`** + **`make dashboard`** — start Python’s static server from orchestration so the UI is not mistaken for your app’s `/dashboard` API route (Fastify/Express JSON 404).
+
+---
+
 ## v1.4.0 — 2026-05-11
 
 Program-delivery orchestration framework: expanded role roster, single-source role list, SDLC gates, squad fan-out parity, conductor vs planner separation.

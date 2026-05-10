@@ -244,12 +244,20 @@ make team-status
 # Live log tail of a single role
 tail -f .planning/orchestration/agent-handoff/teams/engineer/log/manager.log
 
-# Visual dashboard (browser)
-open .planning/orchestration/dashboard/index.html
-# OR serve it: cd .planning/orchestration/dashboard && python3 -m http.server 60005
+# Visual dashboard (browser) — Spine Control Center
+make dashboard
+# → http://127.0.0.1:60005/dashboard/
+# Or: bash scripts/serve-dashboard.sh   (SPINE_DASH_PORT to change port)
+
+# Manual equivalent:
+cd .planning/orchestration && python3 -m http.server 60005
+# Open http://127.0.0.1:60005/dashboard/
+
+# If your *app API* returns JSON { "Route GET:/dashboard/ not found" } — that server
+# does not host Spine static files; use make dashboard instead (different port/path).
 ```
 
-The dashboard reads each manager's `directive.md` directly via fetch, classifies its state (idle / directive / plan / report / worker-directive / etc), and refreshes every 8 seconds.
+The control center aggregates all manager `directive.md` files plus `state/costs.csv` per role, optional program and docs previews, rollback stacks, and a worker-slot grid (opened per role). Serve **`.planning/orchestration`** (not `dashboard/` alone) so the UI can reach `agent-handoff/`. Path presets, search/state chips, refresh interval, Help tab — see `.planning/orchestration/dashboard/`.
 
 ---
 

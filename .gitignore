@@ -2,3 +2,9 @@
 *.swp
 *.swo
 *~
+
+# Local Spine install onto this repo (regenerate with: bash install.sh .)
+.planning/
+
+# Copies of lib/*.sh — created by install.sh into scripts/
+scripts/

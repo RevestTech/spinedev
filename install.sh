@@ -321,7 +321,7 @@ echo
 
 step "Installing scripts"
 mkdir -p "$TARGET/scripts"
-for f in roles.sh team-agent-daemon.sh team.sh seer-tick.sh file-lock.sh team-clean.sh watchdog.sh executor.sh preflight.sh; do
+for f in roles.sh team-agent-daemon.sh team.sh seer-tick.sh file-lock.sh team-clean.sh watchdog.sh executor.sh preflight.sh serve-dashboard.sh; do
   cp "$SOURCE/lib/$f" "$TARGET/scripts/$f"
   chmod +x "$TARGET/scripts/$f"
   ok "  $TARGET/scripts/$f"
@@ -367,7 +367,7 @@ MAKEFILE="$TARGET/Makefile"
 MAKE_SNIPPET=$(cat <<'EOF'
 
 # ── Agent team (added by SpineDevelopment installer) ────────────────
-.PHONY: team-up team-down team-status team-restart team-budget team-clean team-footprint team-doctor team-rollback team-preflight
+.PHONY: team-up team-down team-status team-restart team-budget team-clean team-footprint team-doctor team-rollback team-preflight dashboard
 
 team-up: ## Start agent team (all roles in scripts/roles.sh + watchdog)
 	bash scripts/team.sh up
@@ -398,6 +398,9 @@ team-rollback: ## Roll back engineer changes to a prior snapshot (interactive)
 
 team-preflight: ## Verify host has the tools the team needs (run before first 'team-up')
 	bash scripts/team.sh preflight
+
+dashboard: ## Serve Control Center (python http.server on .planning/orchestration)
+	bash scripts/serve-dashboard.sh
 EOF
 )
 
@@ -449,7 +452,8 @@ To assign work: replace a role's `directive.md` with `# Directive — ...`. Daem
 | Spine + playbook hygiene | `teams/memory/directive.md` |
 
 Docs: `.planning/orchestration/AGENT_TEAM_PROTOCOL.md`, `docs/SPINE_PRACTICES.md`, `docs/PROGRAM_DELIVERY.md`  
-Bring up / status / stop: `make team-up`, `make team-status`, `make team-down`.
+Bring up / status / stop: `make team-up`, `make team-status`, `make team-down`.  
+Control Center: `make dashboard` → http://127.0.0.1:60005/dashboard/ (not your app API’s `/dashboard` route).
 EOF
   ok "  Appended team section to $CLAUDE_MD"
 else
