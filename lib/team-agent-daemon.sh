@@ -25,6 +25,13 @@ if ! spine_role_valid "$ROLE"; then
   exit 1
 fi
 
+if [[ -f "$SCRIPT_DIR/costs-csv.sh" ]]; then
+  # shellcheck source=/dev/null
+  source "$SCRIPT_DIR/costs-csv.sh"
+else
+  spine_migrate_costs_csv_if_needed() { return 0; }
+fi
+
 case "$MODE" in
   manager) ;;
   worker)
@@ -69,8 +76,7 @@ fi
 ROLLBACK_STACK="$TEAM_DIR/state/rollback-stack.csv"
 
 mkdir -p "$(dirname "$DAEMON_LOG")" "$(dirname "$HASH_FILE")" "$SCRATCH_DIR" "$OS_TEMP_DIR"
-
-# Log rotation safety net: cap each log at LOG_MAX_BYTES on each daemon start.
+touch "$AGENT_LOG" "$DAEMON_LOG" 2>/dev/null || true
 LOG_MAX_BYTES="${LOG_MAX_BYTES:-5242880}"   # 5 MB
 rotate_log_if_huge() {
   local f="$1"
@@ -155,6 +161,34 @@ parse_tier_hint() {
   esac
 }
 
+# Parse `## Long job:` — optional *extension* beyond INVOCATION_TIMEOUT_S only.
+# Values below default are ignored (never shorten the daemon budget). Bare number =
+# minutes. Suffixes: s, m (default when omitted), h, d. Optional yes/true → 90 minutes.
+parse_long_job_seconds() {
+  [[ -f "$DIRECTIVE_FILE" ]] || { echo ""; return 0; }
+  local rest val
+  rest=$(grep -iE '^## *Long job[[:space:]]*:' "$DIRECTIVE_FILE" 2>/dev/null | head -1 \
+    | sed -E 's/^## *Long job[[:space:]]*:[[:space:]]*//I' \
+    | tr '[:upper:]' '[:lower:]')
+  rest="${rest%%#*}"
+  val="$(echo "$rest" | awk '{print $1}')"
+  [[ -z "$val" ]] && { echo ""; return 0; }
+  case "$val" in
+    yes|true) echo $((90 * 60)); return 0 ;;
+  esac
+  if [[ "$val" =~ ^([0-9]+)([smhd]?)$ ]]; then
+    local n="${BASH_REMATCH[1]}" u="${BASH_REMATCH[2]:-m}"
+    case "$u" in
+      s) echo "$n" ;;
+      m) echo $((n * 60)) ;;
+      h) echo $((n * 3600)) ;;
+      d) echo $((n * 86400)) ;;
+    esac
+    return 0
+  fi
+  echo ""
+}
+
 all_workers_done() {
   [[ -n "$WORKERS_DIR" ]] || return 1
   [[ -d "$WORKERS_DIR" ]] || return 1
@@ -185,11 +219,12 @@ else
 fi
 
 log_cost() {
-  local phase="$1" tier="$2" wall_s="$3" rc="$4"
+  local phase="$1" tier="$2" wall_s="$3" rc="$4" outcome="$5"
+  spine_migrate_costs_csv_if_needed "$COSTS_FILE"
   if [[ ! -f "$COSTS_FILE" ]]; then
-    echo "timestamp,role,mode,slot,phase,tier,wall_s,rc" > "$COSTS_FILE"
+    echo "timestamp,role,mode,slot,phase,tier,wall_s,rc,outcome" > "$COSTS_FILE"
   fi
-  echo "$(date -u +%FT%TZ),$ROLE,$MODE,${SLOT:--},$phase,$tier,$wall_s,$rc" >> "$COSTS_FILE"
+  echo "$(date -u +%FT%TZ),$ROLE,$MODE,${SLOT:--},$phase,$tier,$wall_s,$rc,$outcome" >> "$COSTS_FILE"
 }
 
 # Notification hook — best-effort, never blocks the daemon.
@@ -379,20 +414,38 @@ EOF
 
 invoke_cursor() {
   local prompt="$1" phase="$2" tier
+  export DIRECTIVE_FILE
   tier="$(parse_tier_hint)"
-  local started rc wall_s
+  local started rc wall_s lj_hint_sec inv_to stall_to
   started=$(date +%s)
+  lj_hint_sec="$(parse_long_job_seconds)"
+  inv_to="$INVOCATION_TIMEOUT_S"
+  stall_to="$STALL_THRESHOLD_S"
+  local lj_extended=0
+  if [[ -n "$lj_hint_sec" ]] && (( lj_hint_sec > inv_to )); then
+    inv_to="$lj_hint_sec"
+    stall_to=$((inv_to / 3))
+    local stall_cap=$((30 * 60))
+    (( stall_to > stall_cap )) && stall_to=$stall_cap
+    (( stall_to < 60 )) && stall_to=60
+    lj_extended=1
+  fi
+
   local agent_log_size_before
   agent_log_size_before=$(wc -c < "$AGENT_LOG" 2>/dev/null || echo 0)
 
-  echo "----- $(date -u +%FT%TZ) invoke ($IDENTITY, phase=$phase, tier=$tier) -----" >> "$AGENT_LOG"
+  local lj_note=""
+  [[ "$lj_extended" -eq 1 ]] && lj_note=", long_job_extended"
+  echo "----- $(date -u +%FT%TZ) invoke ($IDENTITY, phase=$phase, tier=$tier, timeout=${inv_to}s, stall=${stall_to}s${lj_note}) -----" >> "$AGENT_LOG"
 
   local TIMEOUT_BIN=
+  local timeout_wrapper_used=0
   if command -v gtimeout >/dev/null 2>&1; then
     TIMEOUT_BIN=gtimeout
   elif command -v timeout >/dev/null 2>&1; then
     TIMEOUT_BIN=timeout
   fi
+  [[ -n "$TIMEOUT_BIN" ]] && timeout_wrapper_used=1
 
   # Write prompt to a temp file so we can pass it cleanly to the executor.
   local prompt_file
@@ -407,15 +460,16 @@ invoke_cursor() {
     cmd=(bash "$EXECUTOR_PATH" "$prompt_file")
   fi
 
+  local stall_kill=0
   if [[ -n "$TIMEOUT_BIN" ]]; then
-    "$TIMEOUT_BIN" --kill-after=30 "$INVOCATION_TIMEOUT_S" \
+    "$TIMEOUT_BIN" --kill-after=30 "$inv_to" \
       "${cmd[@]}" </dev/null >> "$AGENT_LOG" 2>&1 &
   else
     "${cmd[@]}" </dev/null >> "$AGENT_LOG" 2>&1 &
   fi
   local agent_pid=$!
 
-  # Stall watcher: if AGENT_LOG hasn't grown in STALL_THRESHOLD_S seconds, kill.
+  # Stall watcher: if AGENT_LOG hasn't grown in stall_to seconds, kill.
   local last_size=$agent_log_size_before
   local last_grow_at=$started
   while kill -0 "$agent_pid" 2>/dev/null; do
@@ -426,8 +480,9 @@ invoke_cursor() {
     if (( sz > last_size )); then
       last_size=$sz
       last_grow_at=$now
-    elif (( now - last_grow_at > STALL_THRESHOLD_S )); then
-      log "STALL: no agent output for ${STALL_THRESHOLD_S}s, killing pid=$agent_pid"
+    elif (( now - last_grow_at > stall_to )); then
+      log "STALL: no agent output for ${stall_to}s, killing pid=$agent_pid"
+      stall_kill=1
       kill "$agent_pid" 2>/dev/null
       sleep 5
       kill -9 "$agent_pid" 2>/dev/null
@@ -441,8 +496,17 @@ invoke_cursor() {
 
   rm -f "$prompt_file" 2>/dev/null
 
-  echo "----- exit rc=$rc wall=${wall_s}s -----" >> "$AGENT_LOG"
-  log_cost "$phase" "$tier" "$wall_s" "$rc"
+  local outcome=completed
+  if (( stall_kill )); then
+    outcome=stall
+  elif (( timeout_wrapper_used )) && { [[ "$rc" -eq 124 ]] || [[ "$rc" -eq 137 ]]; }; then
+    outcome=timeout
+  elif (( rc > 128 )); then
+    outcome=killed
+  fi
+
+  echo "----- exit rc=$rc wall=${wall_s}s outcome=$outcome -----" >> "$AGENT_LOG"
+  log_cost "$phase" "$tier" "$wall_s" "$rc" "$outcome"
   return $rc
 }
 

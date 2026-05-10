@@ -1,5 +1,78 @@
 # Changelog
 
+## v1.4.4 — 2026-05-10
+
+### Selftests
+
+- **`make selftest`** — discovers and runs **`lib/tests/test-*.sh`** (`$(wildcard …)` — no Makefile churn when adding tests).
+- **`lib/tests/test-costs-migrate.sh`** — **NF=9** check after **`costs-csv.sh`** migrate (sources **`lib/`** or **`scripts/`** helper per repo layout).
+- **`lib/tests/test-roles-sh.sh`** — asserts **`SPINE_TEAM_ROLES`**, **`spine_role_valid product`**, rejects **`notarole`** (explicit **`if`** for invalid role — **`set -e`**-safe).
+- **`lib/tests/test-daemon-stub-smoke.sh`** — end-to-end daemon path with **`EXECUTOR_KIND=generic`** (+ inline stub): **`long_job_extended`**, **`costs.csv`** **`pickup`** row with **`outcome`** (field **9**) exactly **`completed`**. When **`gtimeout`/GNU `timeout`** is on **`PATH`, field **9** exactly **`timeout`** (**`INVOCATION_TIMEOUT_S=5`,** stub sleeps past wall). Leaves daemon running until **`costs.csv`** is written (stall watcher may sleep **~30s** after the agent exits); see **§13** cost-row timing.
+
+### Daemon (stub executors + fresh logs)
+
+- **`invoke_cursor`** — **`export DIRECTIVE_FILE`** so generic executor commands see the active directive path.
+- After **`mkdir`** for logs — **`touch`** **`agent.log`** / **`daemon.log`** when missing so **`wc`** and first **`>>`** never fail on a fresh team tree.
+
+### Installer
+
+- Full **`install.sh`** copies **`lib/tests/*.sh`** → **`$TARGET/lib/tests/`** alongside **`scripts/`**.
+- **`install.sh --help`** — documents skipped **`lib/tests/`** and selftest wiring; points to **PROTOCOL §10b**.
+
+### Docs
+
+- **`docs/EXTENSIONS.md`** §1 — design rationale for leaving planner manifest automation unshipped.
+- **`PROTOCOL.md`** §10b — **`--pull-knowledge-only`** does not ship **`lib/tests/`** or **`make selftest`**; full install vs knowledge refresh; maintainer vs consumer expectations.
+- **`PROTOCOL.md`** §13 — **`costs.csv`** append can lag agent exit by up to **~30s** (stall-watcher poll); poll, do not assume immediacy.
+
+---
+
+## v1.4.3 — 2026-05-10
+
+### Logging / migration hygiene
+
+- **`scripts/costs-csv.sh`** — legacy 8-column **`costs.csv`** migration rewritten for **same-directory atomic `tmp` + `mv`** (no mixed-column append). **`make selftest`** (**v1.4.4**) runs **`lib/tests/test-costs-migrate.sh`** covering NF=9 post-migrate.
+
+### Polish (pre-tag)
+
+- **`## Long job:`** only **extends** **`INVOCATION_TIMEOUT_S`**; smaller hints are ignored (never stricter).
+- **`outcome=timeout`** only when the daemon actually launched **`timeout`/`gtimeout`** *and* wait status **124/137**. Exit **137** without wrapper classifies **`killed`** (e.g. OOM). **`§13b`** documents residual ambiguity with wrapper vs OOM SIGKILL.
+
+### Daemon & costs
+
+- **`lib/team-agent-daemon.sh`** — **`## Long job:`** only when parsed wall budget **exceeds `INVOCATION_TIMEOUT_S`** (never stricter); stall scales **only** when that ceiling is raised; sources **`costs-csv.sh`**. **`outcome=timeout`** iff **`timeout`/`gtimeout`** wrapped the child **and** wait status is **124** or **137**; otherwise **`exit_code > 128` → `killed`**.
+- **`costs.csv`** — trailing **`outcome`**; legacy eight-column logs are **fully rewritten atomically** (temp file next to the CSV + **`mv`**) **before** the next append; migrated data rows get **`outcome=unknown`**.
+- **`lib/team.sh`** — **`budget` / `status` / `doctor`** flag reap outcomes and tolerate pre-migrate row widths.
+
+### UX & docs
+
+- **`lib/dashboard.html`** — recent cost table **`outcome`** column + KPI **`Daemon-reaped rows`** + highlighted reap rows.
+- **`PROTOCOL.md`** — §§3e, **6**, **11 (logging)** — **`outcome`**, **`costs-csv.sh`**, extension-only **`## Long job:`**, **`§13` / §13b** limitations.
+
+### Meta
+
+- **`install.sh`** — ships **`costs-csv.sh`** beside other **`scripts/`** helpers.
+- **`recipes/batch-process-data.md`** — example **`## Long job: 120`**.
+- **`lib/role-prompts`** — **`## Long job default`** for **`datawright`**, **`operator`**, **`engineer`**, **`engineering-backend`**, **`engineering-frontend`**.
+- **`docs/EXTENSIONS.md`** §5 / summary refreshed for shipped long-job behavior.
+- **`docs/IMPROVEMENT_CHECKLIST.md`** — product-runtime rows for long-job hint + rc/outcome visibility closed.
+
+---
+
+## v1.4.2 — 2026-05-10
+
+### Documentation
+
+- **`README.md`** — aligned intro, team tree, **Manager roles** tables, install steps, and `make team-up` line with **`scripts/roles.sh`** (15 × 10 workers + watchdog).
+- **`INSTALL.md`** — verifying-the-install now quotes the real **`Starting agent team (N managers + …)`** line from `lib/team.sh`.
+- **`lib/watchdog.sh`** — header comment matches **SPINE_TEAM_ROLES** iteration.
+- **`PROTOCOL.md` §10** — explicit **manual** versioning note for maintainers (no auto-sync from `CHANGELOG`); **`CHANGELOG.md`** is not bundled in installed projects.
+- **`docs/EXTENSIONS.md`** — reframed as **shipped vs partial vs not shipped** (Control Center, costs, stall/timeout, seer/auditor/memory, playbook, recipes); planner aggregation stays **not shipped**.
+- **`docs/IMPROVEMENT_CHECKLIST.md`** — closed documentation/dashboard rows touched by this pass.
+- **Release dates:** **`v1.4.0` → `2026-05-09`** fixes calendar ordering versus **`v1.4.1` (`2026-05-10`)**. If your **git tag** wall-clock says both minor releases landed the same local day, treat the dates as **ordering + documentation** — do not “fix” them back without checking tags.
+
+---
+
 ## v1.4.1 — 2026-05-10
 
 ### Dashboard
@@ -7,10 +80,11 @@
 - **`lib/dashboard.html`** is now **Spine Control Center**: tabbed UI (Overview, costs & tiers, program templates, docs, help), role cards with filters, detail drawer (manager text, workers 01–10, per-role costs CSV, rollback stack), path presets + custom base (stored in `localStorage`), and safer polling (no per-role worker Slot fan-out on every refresh).
 - **Doc fix:** serve **`.planning/orchestration`** (not only `dashboard/`) when using the default preset, so browser `fetch("../agent-handoff/...")` resolves to `/agent-handoff/...`.
 - **`scripts/serve-dashboard.sh`** + **`make dashboard`** — start Python’s static server from orchestration so the UI is not mistaken for your app’s `/dashboard` API route (Fastify/Express JSON 404).
+- Further **Control Center** tweaks: sticky header + tabs; sort roles (A–Z / state / cost rows); failure count KPI; approval hint on cards; **`memory.md`** in drawer + copy paths; refresh overlap guard + busy state; main-tab click handler scoped so drawer subtabs no longer steal clicks.
 
 ---
 
-## v1.4.0 — 2026-05-11
+## v1.4.0 — 2026-05-09
 
 Program-delivery orchestration framework: expanded role roster, single-source role list, SDLC gates, squad fan-out parity, conductor vs planner separation.
 

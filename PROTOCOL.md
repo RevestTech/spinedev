@@ -51,7 +51,7 @@ A squad such as `engineering-frontend` **orchestrates sub-work only through work
 ├── state/
 │   ├── manager-LAST_HASH
 │   ├── 01-LAST_HASH ... up to 10
-│   └── costs.csv         ← cost log (timestamp, role, mode, slot, phase, tier, wall_s, rc)
+│   └── costs.csv         ← cost log (timestamp, role, mode, slot, phase, tier, wall_s, rc, outcome)
 ├── scratch/              ← ephemeral per-invocation workspace (wiped on each new directive)
 │   ├── manager/
 │   └── 01/ ... up to 10
@@ -103,8 +103,8 @@ The manager's daemon, while polling `directive.md`, also watches `workers/*.md`.
 After aggregation, the manager is idle until the next directive lands.
 
 ### 3e. Failure modes
-- **Worker hangs** (>20 min default): manager's aggregate phase forcibly replaces stuck worker file with `# Worker Report` marking timeout
-- **Worker crashes** (cursor-agent rc≠0): daemon retries up to 2 times before marking failed
+- **Daemon wall-clock timeout / stall** (defaults in **§13**; overridable with **`## Long job:`** on that directive/worker — **extension only**, never shorter than **`INVOCATION_TIMEOUT_S`**): the daemon may kill `cursor-agent` while the Markdown file still shows `# Directive` or `# Worker Directive`. Rows in `costs.csv` record **`outcome`** (`completed`, `timeout`, `stall`, `killed`) — treat **`timeout`** / **`stall`** as incomplete work even when **`rc=0`**.
+- **Worker crashes** (**`rc≠0`**) from a normal agent exit: the human re-issues or edits the directive manually. *(Automatic multi-attempt retries are **not implemented** in the stock daemon.)*
 - **Manager itself crashes**: daemon survives (defensive bash); next directive picked up cleanly
 - **Stale state**: `team status` shows current state; `team down && team up` is the nuclear reset
 
@@ -168,6 +168,7 @@ When a manager fans out:
 - **Roughly balanced** — similar slice sizes
 - **Independently reportable** — each worker's output makes sense alone
 - **Bounded I/O** — if a service can't handle 10 concurrent calls, serialize or spawn fewer
+- **Long-running slices** — the daemon **does not** copy a manager's **`## Long job:`** hint into worker files. Put **`## Long job:`** explicitly on **each worker directive** whose slice exceeds the default wall-clock budget (**§13**).
 
 Default cap: 10 workers. Override only with explicit architect approval.
 
@@ -224,7 +225,9 @@ tail -f .planning/orchestration/agent-handoff/teams/datawright/log/{daemon,agent
 
 ## 10. Versioning
 
-This document revision tracks the SpineDevelopment bundle (**v1.4 program-delivery extension** — see SpineDevelopment `CHANGELOG.md`).
+This revision is maintained **manually**: keep it aligned with the **SpineDevelopment bundle version** you installed from (see **`CHANGELOG.md`** in the SpineDevelopment template repository). As of the **v1.4.x** program-delivery line this means `scripts/roles.sh` is the role SSOT, §§21–26 cover SDLC linkage, and **§8** describes bring-up. When you ship a SpineDevelopment release that changes role count, bring-up wording, or major sections, update **§8**/this section and any numeric examples **in the same commit** — nothing here auto-syncs from `CHANGELOG`.
+
+Installed copies of this file under `.planning/orchestration/` **do not** bundle `CHANGELOG.md`; consult the template repo or your internal release notes when bumping protocol text.
 
 Changes **go through ADR** for project-specific adaptations. Agents should also read `.planning/orchestration/DECISIONS.md` when it exists — any ADR there may narrow or supersede generic protocol text **for this repository only**.
 
@@ -239,6 +242,10 @@ bash install.sh . --pull-knowledge-only
 ```
 
 Use `--force` with that flag if you intentionally want to overwrite in-repo recipes or role prompts already customized on disk.
+
+**What `--pull-knowledge-only` skips (by design):** it does **not** install **`lib/tests/`**, does **not** add or refresh **`make selftest`** (the installer’s Makefile snippet is only applied during a **full** install), and does **not** replace **`scripts/`**, the Control Center **`dashboard`**, **`Makefile`** wiring beyond what you already have, or other runtime files listed in **`install.sh --help`. Selftests are **maintainer infrastructure** for the SpineDevelopment package repo — not consumer-facing artifacts. After editing **`lib/*.sh`** in the bundle, run **`make selftest`** from a clone of SpineDevelopment itself; consuming projects normally do **not** need that harness.
+
+**Footgun:** the **CHANGELOG** may say “v1.4.4 ships **`make selftest`**,” but a project upgraded from **v1.4.3** via **`--pull-knowledge-only** still has an older **`Makefile`** and no **`lib/tests/`** — that’s correct. Consumers who want the test harness should run a **full** install; **`--pull-knowledge-only`** intentionally leaves Makefile targets and **`lib/tests/`** alone.
 
 ---
 
@@ -274,7 +281,7 @@ Every agent invocation has a tier hint. The daemon parses it from the directive'
 When you write a directive, set `## Tier hint: low/medium/high` explicitly if the work is non-default for the role. **Planners** and **conductors** must propagate or override tiers for every sub-directive they emit.
 
 ### Logging
-Every invocation appends to `teams/<role>/state/costs.csv`: timestamp, role, mode, slot, phase, tier, wall_seconds, exit_code. Run `bash scripts/team.sh budget` to see totals + per-tier breakdown.
+Every invocation appends to `teams/<role>/state/costs.csv`: timestamp, role, mode, slot, phase, tier, **`wall_seconds`**, **`exit_code`**, **`outcome`** (`completed` | `timeout` | `stall` | `killed`). **`outcome`** reflects how the daemon ended the run; **`exit_code`** is the process wait status and may be `0` even after a timeout if the agent masks signals — trust **`outcome`** for “did the daemon reap this?” Run `bash scripts/team.sh budget` / `status` / `doctor` to surface **`timeout`** / **`stall`** / **`killed`** rows. Eight-column **`costs.csv`** logs are rewritten **atomically** (`scripts/costs-csv.sh`, temp file next to the CSV + rename) on the daemon’s next append; historical rows receive **`outcome=unknown`**.
 
 ---
 
@@ -303,12 +310,42 @@ This is loaded INTO `teams/<role>/memory.md` on `team up` (the install hook conc
 
 ## 13. Timeouts and stall detection
 
-The daemon enforces two safety limits per invocation:
+The daemon enforces two safety limits per invocation (manager or worker):
 
-- **Hard timeout**: 25 minutes (configurable via `INVOCATION_TIMEOUT_S` env var). After this, the daemon kills the cursor-agent process. The directive file is left in whatever state it was in; you'll see a partial report or a lingering `# Plan` if it was decomposing.
-- **Stall detection**: 8 minutes (configurable via `STALL_THRESHOLD_S`). If the agent's stdout log doesn't grow for this long, the daemon assumes the agent hung and kills it.
+- **Hard timeout** (defaults **25 minutes** wall clock, configurable **`INVOCATION_TIMEOUT_S`** in the shell environment).
 
-Either way, the daemon survives. Next directive picks up cleanly.
+  Optional **`## Long job:`** directive line may **raise** wall clock for **this Markdown file only** vs **`INVOCATION_TIMEOUT_S`** (does not propagate to spawned worker files unless each worker directive repeats it):
+
+  ```markdown
+  ## Long job: 120
+  ```
+
+  Parsing rules:
+  - A **bare number** is **minutes** (e.g. `120` ⇒ two hours).
+  - Suffixes: **`s`**, **`m`**, **`h`**, **`d`** (`6h`, `90m`, `2d`).
+  - **`yes`** / **`true`** ⇒ **90 minutes** (shortcut only — prefer an explicit duration for batch work).
+
+  **`## Long job:` never tightens policy:** hints at or below the effective **`INVOCATION_TIMEOUT_S`** are ignored — you cannot shorten wall clock or stall thresholds via Markdown.
+
+  Per-invocation wall budget drives the **`timeout`/GNU `timeout` wrapper** when that binary is available (`--kill-after=30`). **`INVOCATION_TIMEOUT_S`** remains the fallback when **`## Long job:`** is omitted or ineffective.
+
+- **Stall detection**: if combined agent **`log/agent`** output hasn't grown for **N** seconds, the daemon kills the process (**`STALL_THRESHOLD_S`**, default **8 minutes**).
+
+  When **`## Long job:`** extends the hard timeout, **N is scaled** to **`min(wall_budget_s / 3, 1800)`** (integer division; cap **30 minutes**, floor **60 seconds**) so legitimately silent long batches are not clipped at the idle default.
+
+`costs.csv` **`outcome`**: **`completed`** (normal process exit — use **`exit_code`** for agent-reported failures). **`timeout`** is set **only when** the daemon wrapped the invocation in **`timeout`/`gtimeout`** *and* the wait status is **124** or **137** (wrapper kill path). **`stall`** means the stall watcher killed the process. **`killed`** applies to **`exit_code > 128`** outcomes that did **not** match that timeout classification (includes **OOM SIGKILL**, **SIGINT**/Ctrl+C, **SIGHUP**, etc.). When **`timeout`/`gtimeout` is missing from `PATH`, there is **no timeout outcome** — long runs rely on stall detection only. Atomic migration from eight-column histories is summarized under **§11 (Logging)**.
+
+**Cost-row timing:** **`log_cost`** appends after the daemon's stall-watcher loop observes the child is gone; that can lag the agent process exit by up to **one poll tick** (**~30s** with the stock inner **`sleep`**). Tooling that watches **`costs.csv`** should **poll**, not assume the row appears as soon as the agent stops.
+
+Either way, the daemon survives; the next directive or worker pickup continues normally.
+
+---
+
+## 13b. Limitations (`outcome` heuristics, long job vs tier)
+
+- **`## Long job:`** and **`## Tier hint:`** are orthogonal — tier governs model spend; long job adjusts wall-clock/stall budgets for **this file's** daemon invocation (**extension only**, **§13**).
+
+- **`outcome`** is emitted by daemon heuristics, not kernel forensics: without **`timeout`/`gtimeout`**, **`outcome=timeout` will not appear**, and **`exit_code=137`** is classified as **`killed`** — it may reflect **OOM** or other SIGKILL paths, **not** a daemon wall-clock limit. Conversely, **`outcome=timeout`** with the wrapper enabled still means **“the timeout binary reported 124/137”** rather than distinguishing OOM-vs-timeout for every launcher.
 
 ---
 
