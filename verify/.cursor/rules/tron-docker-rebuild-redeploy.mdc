@@ -1,0 +1,35 @@
+---
+description: When to rebuild images / static UI and restart compose services after Tron code changes
+alwaysApply: true
+---
+
+# Docker rebuild and redeploy (proactive)
+
+Assume the stack from repo root: `docker compose` (see `docker-compose.yml`). Nginx serves `frontend/dist` on host port **13080**; API is **13000** on localhost.
+
+## When to run commands (once per completed task)
+
+After your change **ships through Docker or nginx-mounted static files**, rebuild/restart **without waiting for the user to ask**, unless they said they are not using Docker or only use local `uvicorn`/Vite.
+
+**Skip** for docs-only, traceability-only, or changes confined to `tests/` with no runtime code change.
+
+## Mapping: what changed → what to run
+
+| Touched paths | Action |
+|---------------|--------|
+| `frontend/src/**`, `frontend/index.html`, `frontend/vite.config.*` | `cd frontend && npm run build` (updates `frontend/dist` for nginx; no image rebuild). |
+| `tron/**` (Python app), `pyproject.toml`, `docker/Dockerfile.api`, deps affecting API | `docker compose build tron-api && docker compose up -d --force-recreate tron-api` |
+| Worker code/workflows under `tron/` used by worker image, `docker/Dockerfile.worker` | `docker compose build tron-worker && docker compose up -d --force-recreate tron-worker` |
+| Sandbox service code, `docker/Dockerfile.sandbox` | `docker compose build tron-sandbox && docker compose up -d --force-recreate tron-sandbox` |
+| `config/nginx/nginx.conf` | `docker compose up -d --force-recreate nginx` |
+| `docker-compose.yml` env/services the user relies on | `docker compose up -d` for the affected services (or full stack if unsure). |
+
+## Convenience target
+
+From repo root, **full UI + API refresh** (matches `Makefile` intent): `make prod-up` — runs `prod-static` then `docker compose up -d nginx tron-api`. Use when both SPA and API changed.
+
+## Notes
+
+- Do not commit secrets; `.env` / vault patterns unchanged.
+- If a build fails, fix forward or report the error; do not assume deploy succeeded.
+- Prefer **one** rebuild per task slice, not after every intermediate save in the same conversation turn.

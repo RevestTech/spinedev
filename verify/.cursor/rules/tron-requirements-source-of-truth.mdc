@@ -1,0 +1,27 @@
+---
+description: Tron — requirements truth source; no drift from PROPOSAL checklist
+alwaysApply: true
+---
+
+# Requirements source of truth
+
+## Authoritative docs (read before claiming “done”)
+
+- **`docs/project/MASTER_PROPOSAL_TODO.md`** — living checklist vs `docs/archive/PROPOSAL.md` (section **“Current snapshot (where we left off)”** for the latest delivery summary + evidence pointers)
+- **`docs/REQUIREMENTS_TRACEABILITY.md`** — definitions of Done / Partial / Deferred
+
+Do **not** treat informal summaries, old status markdown, or chat as the contract.
+
+## Language to avoid
+
+- Do not describe delivery as “enough,” “mostly,” “good enough,” or “essentially complete.”
+- Use the vocabulary in **`REQUIREMENTS_TRACEABILITY.md`**: **Done**, **Partial** (with documented limitation), **Not started**, **Deferred** (with ADR or explicit backlog row).
+
+## When you close or change a requirement
+
+- Update **`MASTER_PROPOSAL_TODO.md`** in the **same** change (checkboxes, `[x]` / `[~]` / `[ ]`, backlog table).
+- Add a short **evidence** pointer (file path, route, or workflow name), not vague claims.
+
+## Out-of-scope / deferred
+
+- If work is intentionally **not** implementing a PROPOSAL item, say so and add or update a row in **`MASTER_PROPOSAL_TODO.md`** or an ADR under `docs/project/` so scope does not silently drift.

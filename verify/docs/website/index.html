@@ -1,0 +1,695 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tron — Enterprise AI QA Platform</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#f0f2f5;
+  --surface:#ffffff;
+  --surface2:#f7f8fa;
+  --border:#dfe3e8;
+  --border-strong:#c4cdd5;
+  --text:#1a1a2e;
+  --text-secondary:#4a4a68;
+  --text-dim:#6b7280;
+  --accent:#0077ff;
+  --accent-dark:#0059bf;
+  --accent-light:#e6f0ff;
+  --accent-glow:rgba(0,119,255,0.08);
+  --green:#0d9f6e;
+  --green-bg:#e6f7f1;
+  --amber:#b45309;
+  --amber-bg:#fef3c7;
+  --red:#dc2626;
+  --red-bg:#fee2e2;
+  --purple:#7c3aed;
+  --purple-bg:#ede9fe;
+  --mono:'SF Mono',Consolas,'Liberation Mono',monospace;
+  --sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  --shadow-sm:0 1px 2px rgba(0,0,0,0.05);
+  --shadow:0 1px 3px rgba(0,0,0,0.08),0 1px 2px rgba(0,0,0,0.04);
+  --shadow-md:0 4px 6px rgba(0,0,0,0.06),0 2px 4px rgba(0,0,0,0.04);
+}
+html{scroll-behavior:smooth;font-size:15px}
+body{font-family:var(--sans);background:var(--bg);color:var(--text);line-height:1.6;-webkit-font-smoothing:antialiased}
+a{color:var(--accent);text-decoration:none}
+a:hover{color:var(--accent-dark);text-decoration:underline}
+code,pre{font-family:var(--mono);font-size:.875rem}
+code{background:var(--accent-light);padding:2px 6px;border-radius:3px;color:var(--accent-dark)}
+pre{background:var(--text);color:#e2e8f0;border:none;border-radius:6px;padding:16px;overflow-x:auto;line-height:1.5;box-shadow:var(--shadow-md)}
+pre code{background:none;color:inherit;padding:0}
+
+/* Layout */
+.wrap{max-width:1120px;margin:0 auto;padding:0 24px}
+
+/* ── TRON HEADER ── */
+header{
+  background:#0c1021;
+  position:sticky;top:0;z-index:50;
+  border-bottom:2px solid #00d4ff;
+  box-shadow:0 2px 20px rgba(0,212,255,0.15);
+  /* Circuit grid pattern */
+  background-image:
+    linear-gradient(rgba(0,212,255,0.04) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(0,212,255,0.04) 1px,transparent 1px);
+  background-size:20px 20px;
+}
+header .wrap{display:flex;align-items:center;justify-content:space-between;height:56px}
+.logo{font-size:1.4rem;font-weight:700;letter-spacing:.06em;color:#ffffff;text-transform:uppercase}
+.logo span{
+  color:#00d4ff;
+  text-shadow:0 0 8px rgba(0,212,255,0.6),0 0 20px rgba(0,212,255,0.3);
+}
+.logo .dash{color:#3a4a5c;font-weight:400}
+nav{display:flex;gap:2px}
+nav a{padding:6px 12px;border-radius:4px;font-size:.8125rem;color:#c0d0e0;font-weight:500;transition:all .2s;border:1px solid transparent}
+nav a:hover{color:#00d4ff;background:rgba(0,212,255,0.08);border-color:rgba(0,212,255,0.2);text-decoration:none;text-shadow:0 0 6px rgba(0,212,255,0.3)}
+
+/* ── TRON HERO ── */
+.hero{
+  padding:0;border-bottom:none;position:relative;overflow:hidden;
+  background:#0c1021;
+  /* Perspective grid floor effect */
+  background-image:
+    linear-gradient(rgba(0,212,255,0.06) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(0,212,255,0.06) 1px,transparent 1px);
+  background-size:40px 40px;
+}
+.hero-inner{padding:56px 0 48px;position:relative;z-index:2}
+/* Horizon glow */
+.hero::after{
+  content:'';position:absolute;bottom:0;left:0;right:0;height:120px;
+  background:linear-gradient(to top,rgba(0,212,255,0.06) 0%,transparent 100%);
+  pointer-events:none;
+}
+/* Animated scan line */
+.hero::before{
+  content:'';position:absolute;top:0;left:0;right:0;height:1px;
+  background:linear-gradient(90deg,transparent 0%,#00d4ff 20%,#00d4ff 80%,transparent 100%);
+  opacity:0.4;
+  animation:scanline 4s ease-in-out infinite;
+}
+@keyframes scanline{
+  0%{top:0;opacity:0}
+  10%{opacity:0.4}
+  90%{opacity:0.4}
+  100%{top:100%;opacity:0}
+}
+/* Light trails on sides */
+.hero-trail-l,.hero-trail-r{position:absolute;top:0;bottom:0;width:1px;z-index:1}
+.hero-trail-l{left:10%;background:linear-gradient(to bottom,transparent,rgba(0,212,255,0.15) 30%,rgba(0,212,255,0.15) 70%,transparent)}
+.hero-trail-r{right:10%;background:linear-gradient(to bottom,transparent,rgba(0,212,255,0.1) 40%,rgba(0,212,255,0.1) 60%,transparent)}
+
+.hero h1{font-size:2rem;font-weight:700;letter-spacing:-.02em;margin-bottom:8px;color:#ffffff}
+.hero .sub{color:#c8d6e5;font-size:1.05rem;margin-bottom:32px;max-width:640px}
+.kpi-row{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}
+.kpi{
+  background:rgba(12,16,33,0.8);
+  border:1px solid rgba(0,212,255,0.2);
+  border-radius:6px;padding:16px 20px;
+  backdrop-filter:blur(4px);
+  transition:border-color .2s,box-shadow .2s;
+}
+.kpi:hover{border-color:rgba(0,212,255,0.5);box-shadow:0 0 12px rgba(0,212,255,0.1)}
+.kpi .val{font-size:1.5rem;font-weight:700;color:#00d4ff;text-shadow:0 0 8px rgba(0,212,255,0.3)}
+.kpi .lbl{font-size:.75rem;color:#a0b8d0;text-transform:uppercase;letter-spacing:.04em;margin-top:2px}
+
+/* Transition strip from hero to content */
+.hero-fade{height:4px;background:linear-gradient(90deg,transparent,#00d4ff 30%,#00d4ff 70%,transparent);opacity:0.5}
+
+/* Sections */
+section{padding:48px 0;border-bottom:1px solid var(--border)}
+section:last-child{border-bottom:none}
+h2{font-size:1.35rem;font-weight:700;margin-bottom:24px;letter-spacing:-.02em;color:var(--text);padding-left:14px;border-left:3px solid #00b4d8;position:relative}
+h2::after{content:'';position:absolute;left:-1px;top:0;bottom:0;width:3px;background:#00d4ff;filter:blur(4px);opacity:0.5}
+h3{font-size:1.05rem;font-weight:600;margin-bottom:12px;color:var(--text)}
+h4{font-size:.9rem;font-weight:600;margin-bottom:8px;color:var(--text-secondary)}
+p+p{margin-top:12px}
+p{color:var(--text-secondary)}
+
+/* Cards */
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:20px;box-shadow:var(--shadow-sm);transition:all .2s}
+.card:hover{box-shadow:var(--shadow);border-color:rgba(0,212,255,0.25)}
+.card h3{margin-bottom:8px;color:var(--text)}
+.card h4{color:var(--text)}
+.card p{color:var(--text-secondary);font-size:.9rem}
+
+/* Tables */
+table{width:100%;border-collapse:collapse;font-size:.875rem;margin:16px 0}
+th,td{padding:8px 12px;text-align:left;border-bottom:1px solid var(--border)}
+th{color:var(--text-dim);font-weight:600;font-size:.75rem;text-transform:uppercase;letter-spacing:.04em;background:var(--surface2)}
+td{color:var(--text-secondary)}
+td code{font-size:.8125rem}
+table{background:var(--surface);border-radius:6px;overflow:hidden;box-shadow:var(--shadow-sm)}
+
+/* Tags */
+.tag{display:inline-block;padding:2px 8px;border-radius:3px;font-size:.7rem;font-weight:600;text-transform:uppercase;letter-spacing:.03em}
+.tag-blue{background:var(--accent-light);color:var(--accent-dark)}
+.tag-green{background:var(--green-bg);color:var(--green)}
+.tag-amber{background:var(--amber-bg);color:var(--amber)}
+.tag-red{background:var(--red-bg);color:var(--red)}
+.tag-purple{background:var(--purple-bg);color:var(--purple)}
+
+/* Pipeline — Tron light-trail connectors */
+.pipeline{display:flex;gap:6px;margin:16px 0}
+.pipe-step{
+  flex:1;background:var(--surface);border:1px solid var(--border);
+  padding:12px;border-radius:6px;text-align:center;position:relative;
+  box-shadow:var(--shadow-sm);
+  transition:border-color .2s,box-shadow .2s,transform .2s;
+}
+.pipe-step:hover{
+  border-color:#00d4ff;
+  box-shadow:0 0 12px rgba(0,212,255,0.15),0 0 0 1px rgba(0,212,255,0.3);
+  transform:translateY(-1px);
+}
+.pipe-step .num{font-size:1.25rem;font-weight:700;color:#00a0d4}
+.pipe-step .name{font-size:.75rem;color:var(--text-dim);margin-top:2px}
+.pipe-step+.pipe-step::before{
+  content:'';position:absolute;left:-10px;top:50%;width:10px;height:2px;
+  background:linear-gradient(90deg,#00d4ff,rgba(0,212,255,0.2));
+}
+
+/* Steps */
+.steps{counter-reset:step}
+.step{counter-increment:step;padding:12px 0 12px 40px;position:relative;border-left:2px solid var(--border);margin-left:12px}
+.step::before{content:counter(step);position:absolute;left:-13px;top:12px;width:24px;height:24px;background:linear-gradient(135deg,#0077ff,#00b4d8);color:#fff;border-radius:50%;font-size:.75rem;font-weight:700;display:flex;align-items:center;justify-content:center;box-shadow:0 0 8px rgba(0,180,216,0.3),0 0 0 3px rgba(0,180,216,0.1)}
+.step:last-child{border-left:2px solid transparent}
+.step h4{color:var(--text);margin-bottom:4px}
+.step p{color:var(--text-secondary);font-size:.875rem}
+
+/* Port table */
+.port-grid{display:grid;grid-template-columns:auto 1fr auto;gap:0;font-size:.875rem}
+.port-grid>div{padding:6px 12px;border-bottom:1px solid var(--border)}
+.port-grid .ph{font-weight:600;color:var(--text-dim);font-size:.75rem;text-transform:uppercase}
+
+/* Alert boxes */
+.alert{padding:12px 16px;border-radius:6px;font-size:.875rem;margin:16px 0}
+.alert-info{background:var(--accent-light);border:1px solid #b3d4ff;color:var(--accent-dark)}
+.alert-warn{background:var(--amber-bg);border:1px solid #fcd34d;color:var(--amber)}
+
+/* Footer — Tron styled */
+footer{
+  padding:32px 0;font-size:.8125rem;text-align:center;
+  background:#0c1021;color:#a0b8d0;
+  border-top:2px solid rgba(0,212,255,0.3);
+  background-image:
+    linear-gradient(rgba(0,212,255,0.03) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(0,212,255,0.03) 1px,transparent 1px);
+  background-size:20px 20px;
+}
+footer .tron-word{color:#00d4ff;font-weight:700;letter-spacing:.06em;text-shadow:0 0 6px rgba(0,212,255,0.4)}
+
+/* Responsive */
+@media(max-width:768px){
+  .kpi-row,.grid2,.grid3{grid-template-columns:1fr}
+  .pipeline{flex-direction:column}
+  nav{display:none}
+  .hero h1{font-size:1.5rem}
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <div class="logo"><span>TRON</span> <span class="dash">&mdash;</span> AI QA Platform</div>
+    <nav>
+      <a href="#overview">Overview</a>
+      <a href="#business">Business</a>
+      <a href="#architecture">Architecture</a>
+      <a href="#pipeline">Pipeline</a>
+      <a href="#stack">Stack</a>
+      <a href="#deploy">Deploy</a>
+      <a href="#api">API</a>
+      <a href="#usage">Usage</a>
+    </nav>
+  </div>
+</header>
+
+<!-- Hero -->
+<div class="hero">
+  <div class="hero-trail-l"></div>
+  <div class="hero-trail-r"></div>
+  <div class="hero-inner wrap">
+    <h1>Enterprise AI QA Platform</h1>
+    <p class="sub">Verify everything. Trust nothing. Tron runs a 7-layer verification pipeline that establishes deterministic ground truth before any LLM analysis, validates every finding against actual code, and delivers calibrated confidence scores.</p>
+    <div class="kpi-row">
+      <div class="kpi"><div class="val">7</div><div class="lbl">Verification Layers</div></div>
+      <div class="kpi"><div class="val">4</div><div class="lbl">Specialized Agents</div></div>
+      <div class="kpi"><div class="val">98%+</div><div class="lbl">Verified Confidence</div></div>
+      <div class="kpi"><div class="val">&lt;60s</div><div class="lbl">Full Audit Cycle</div></div>
+    </div>
+  </div>
+</div>
+<div class="hero-fade"></div>
+
+<!-- Overview -->
+<section id="overview">
+  <div class="wrap">
+    <h2>Platform Overview</h2>
+    <div class="grid2">
+      <div class="card">
+        <h3>The Problem</h3>
+        <p>AI coding tools generate plausible-looking output nobody can fully trust. Developers spend as much time reviewing AI suggestions as writing code themselves. Agents drift off-task, hallucinate findings, and report false confidence in unverified results.</p>
+      </div>
+      <div class="card">
+        <h3>Tron's Solution</h3>
+        <p>Deterministic tools establish ground truth before the LLM runs. Schema validation catches hallucinations. Multi-agent cross-validation requires 2-of-3 consensus on critical findings. An execution sandbox verifies fixes actually work. Every result carries a calibrated confidence score.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Business -->
+<section id="business">
+  <div class="wrap">
+    <h2>Business Value</h2>
+    <div class="grid3">
+      <div class="card">
+        <h3>Target Market</h3>
+        <p>Enterprise development teams (100-500 developers) with strong QA culture. Security-conscious organizations in fintech, healthcare, and regulated industries.</p>
+      </div>
+      <div class="card">
+        <h3>Revenue Model</h3>
+        <p>Hybrid subscription + usage-based pricing. Land with security auditing, expand to full platform. Per-seat tiers: Starter ($50/dev/mo), Professional ($75), Enterprise ($100).</p>
+      </div>
+      <div class="card">
+        <h3>Competitive Edge</h3>
+        <p>Unlike raw AI output tools, Tron delivers verified results with deterministic confirmation. Zero-drift guarantees, calibrated confidence, and full audit trails for compliance.</p>
+      </div>
+    </div>
+
+    <h3 style="margin-top:32px">Core Capabilities</h3>
+    <table>
+      <thead><tr><th>Capability</th><th>Description</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td>Security Auditing</td><td>Automated vulnerability detection with Bandit, Semgrep, and LLM cross-validation</td><td><span class="tag tag-green">Live</span></td></tr>
+        <tr><td>Code Quality</td><td>Architecture, performance, and maintainability analysis via specialized ISO agents</td><td><span class="tag tag-green">Live</span></td></tr>
+        <tr><td>Sandbox Verification</td><td>Isolated Docker containers verify that proposed fixes actually compile and pass tests</td><td><span class="tag tag-green">Live</span></td></tr>
+        <tr><td>Durable Workflows</td><td>Temporal-powered execution survives crashes and resumes from last checkpoint</td><td><span class="tag tag-green">Live</span></td></tr>
+        <tr><td>Real-time Updates</td><td>Socket.IO push for audit progress, findings, and agent status</td><td><span class="tag tag-green">Live</span></td></tr>
+        <tr><td>Cost Controls</td><td>6-layer cost protection: per-audit caps, daily limits, circuit breakers, budget alerts</td><td><span class="tag tag-green">Live</span></td></tr>
+        <tr><td>GDPR Compliance</td><td>Data subject access/deletion rights, audit trails, data retention policies</td><td><span class="tag tag-green">Live</span></td></tr>
+        <tr><td>Agent Memory</td><td>5-type cognitive memory system with pgvector semantic recall across audits</td><td><span class="tag tag-green">Live</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- Architecture -->
+<section id="architecture">
+  <div class="wrap">
+    <h2>Architecture</h2>
+    <p style="color:var(--text-dim);margin-bottom:24px">Tron follows a layered architecture: API gateway &rarr; Temporal workflow orchestration &rarr; ISO agent framework &rarr; verification pipeline &rarr; persistence layer. All secrets are loaded from keyvault at runtime; nothing is stored in env files or config.</p>
+
+    <h3>ISO Agent Framework</h3>
+    <p style="margin-bottom:16px">Four specialized agents, each scoped to a Blueprint that defines exactly what they can analyze. Cross-validation uses different LLM providers to prevent correlated failures.</p>
+    <div class="grid2" style="margin-bottom:32px">
+      <div class="card">
+        <h4>SecurityISO</h4>
+        <p>Vulnerability detection. Runs Bandit + Semgrep first, then LLM analysis against OWASP Top 10, CWE database. Provider: Anthropic.</p>
+      </div>
+      <div class="card">
+        <h4>BuilderISO</h4>
+        <p>Code quality and architecture analysis. Checks design patterns, error handling, dependency health. Provider: OpenAI.</p>
+      </div>
+      <div class="card">
+        <h4>PerformanceISO</h4>
+        <p>Performance bottleneck detection. N+1 queries, memory leaks, algorithmic complexity. Provider: Anthropic.</p>
+      </div>
+      <div class="card">
+        <h4>QAISO</h4>
+        <p>Test coverage and quality analysis. Missing edge cases, test isolation, flaky test detection. Provider: OpenAI.</p>
+      </div>
+    </div>
+
+    <h3>Agent Memory System</h3>
+    <p style="margin-bottom:16px">Five cognitive memory types backed by pgvector (3072-dim embeddings) for semantic recall across audit runs.</p>
+    <table>
+      <thead><tr><th>Type</th><th>Purpose</th><th>TTL</th></tr></thead>
+      <tbody>
+        <tr><td><code>episodic</code></td><td>Records of past audit executions and outcomes</td><td>Permanent</td></tr>
+        <tr><td><code>semantic</code></td><td>Learned facts about code patterns, vulnerabilities, standards</td><td>Permanent</td></tr>
+        <tr><td><code>procedural</code></td><td>Successful analysis strategies and procedures</td><td>Permanent</td></tr>
+        <tr><td><code>working</code></td><td>Short-lived per-execution scratchpad for intermediate reasoning</td><td>4 hours</td></tr>
+        <tr><td><code>meta</code></td><td>Self-reflective notes on accuracy and confidence calibration</td><td>Permanent</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- Pipeline -->
+<section id="pipeline">
+  <div class="wrap">
+    <h2>7-Layer Verification Pipeline</h2>
+    <p style="color:var(--text-dim);margin-bottom:20px">Every finding passes through all 7 layers before being reported. This is what separates Tron from raw LLM output.</p>
+    <div class="pipeline">
+      <div class="pipe-step"><div class="num">1</div><div class="name">Deterministic<br>Tools</div></div>
+      <div class="pipe-step"><div class="num">2</div><div class="name">Schema<br>Validation</div></div>
+      <div class="pipe-step"><div class="num">3</div><div class="name">Multi-Agent<br>Consensus</div></div>
+      <div class="pipe-step"><div class="num">4</div><div class="name">Sandbox<br>Execution</div></div>
+      <div class="pipe-step"><div class="num">5</div><div class="name">Confidence<br>Calibration</div></div>
+      <div class="pipe-step"><div class="num">6</div><div class="name">Blueprint<br>Scope Check</div></div>
+      <div class="pipe-step"><div class="num">7</div><div class="name">NOT_IN_SCOPE<br>Boundaries</div></div>
+    </div>
+    <table style="margin-top:24px">
+      <thead><tr><th>Layer</th><th>What It Does</th><th>Catches</th></tr></thead>
+      <tbody>
+        <tr><td>1. Deterministic Tools</td><td>Bandit, Semgrep, Safety run before LLM — establish ground truth</td><td>Known vulnerability patterns</td></tr>
+        <tr><td>2. Schema Validation</td><td>Pydantic v2 enforces output structure: file exists, line number valid, code matches</td><td>Hallucinated findings</td></tr>
+        <tr><td>3. Multi-Agent Consensus</td><td>2-of-3 agreement required for critical/high findings; cross-provider (Anthropic vs OpenAI)</td><td>Single-model blind spots</td></tr>
+        <tr><td>4. Sandbox Execution</td><td>Isolated Docker container compiles, runs tests, verifies proposed fixes work</td><td>Suggestions that break code</td></tr>
+        <tr><td>5. Confidence Calibration</td><td>Platt scaling + isotonic regression against known vulnerability benchmarks</td><td>Over/under-confident scores</td></tr>
+        <tr><td>6. Blueprint Scope</td><td>Each agent can only analyze files and checks defined in its Blueprint</td><td>Agent drift / scope creep</td></tr>
+        <tr><td>7. NOT_IN_SCOPE</td><td>Explicit exclusion boundaries prevent agents from touching what they shouldn't</td><td>Unauthorized analysis</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- Tech Stack -->
+<section id="stack">
+  <div class="wrap">
+    <h2>Technology Stack</h2>
+    <div class="grid2">
+      <div>
+        <h3>Application</h3>
+        <table>
+          <tr><td>API</td><td>FastAPI + Uvicorn (Python 3.11)</td></tr>
+          <tr><td>Workflow</td><td>Temporal 1.22</td></tr>
+          <tr><td>Real-time</td><td>Socket.IO (python-socketio + Redis adapter)</td></tr>
+          <tr><td>Schemas</td><td>Pydantic v2 (950+ lines of models)</td></tr>
+          <tr><td>Admin UI</td><td>React + TypeScript + Vite</td></tr>
+          <tr><td>Sandbox</td><td>gVisor-isolated Docker containers</td></tr>
+        </table>
+      </div>
+      <div>
+        <h3>Infrastructure</h3>
+        <table>
+          <tr><td>Database</td><td>PostgreSQL 15 + pgvector + ltree + pgcrypto</td></tr>
+          <tr><td>Pooling</td><td>PgBouncer (500 &rarr; 25 connections)</td></tr>
+          <tr><td>Cache</td><td>Redis 7 (AOF persistence)</td></tr>
+          <tr><td>Storage</td><td>MinIO (S3-compatible, TLS, KMS)</td></tr>
+          <tr><td>Proxy</td><td>Nginx (TLS termination, load balancing)</td></tr>
+          <tr><td>Secrets</td><td>KMac Vault (rotation, audit logging)</td></tr>
+        </table>
+      </div>
+    </div>
+    <div class="grid2" style="margin-top:16px">
+      <div>
+        <h3>Observability</h3>
+        <table>
+          <tr><td>Metrics</td><td>Prometheus + Grafana (3 dashboards)</td></tr>
+          <tr><td>Logs</td><td>Loki (structured JSON)</td></tr>
+          <tr><td>Traces</td><td>Tempo + OpenTelemetry Collector</td></tr>
+          <tr><td>Alerts</td><td>Alertmanager (severity-based routing)</td></tr>
+        </table>
+      </div>
+      <div>
+        <h3>AI / LLM</h3>
+        <table>
+          <tr><td>Primary</td><td>Anthropic Claude (Security, Performance)</td></tr>
+          <tr><td>Secondary</td><td>OpenAI GPT-4 (Builder, QA)</td></tr>
+          <tr><td>Embeddings</td><td>text-embedding-3-large (3072-dim)</td></tr>
+          <tr><td>Protection</td><td>Circuit breakers, cost caps, rate limits</td></tr>
+        </table>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Deployment -->
+<section id="deploy">
+  <div class="wrap">
+    <h2>Local Deployment</h2>
+
+    <h3>Prerequisites</h3>
+    <table>
+      <tr><td>Docker &amp; Docker Compose</td><td>v20+ with Compose V2</td></tr>
+      <tr><td>Python</td><td>3.11+ (for development / running tests)</td></tr>
+      <tr><td>RAM</td><td>8 GB minimum (16 GB recommended for full stack)</td></tr>
+      <tr><td>Disk</td><td>10 GB free for images and volumes</td></tr>
+    </table>
+
+    <h3 style="margin-top:24px">Setup Steps</h3>
+    <div class="steps">
+      <div class="step">
+        <h4>Configure Environment</h4>
+        <p>Copy the example file and set passwords. In production these come from keyvault; locally you set them directly.</p>
+        <pre>cp .env.example .env
+
+# Edit .env — set at minimum:
+POSTGRES_PASSWORD=your-secure-password
+REDIS_PASSWORD=your-redis-password
+MINIO_USER=minioadmin
+MINIO_PASSWORD=minioadmin123
+GRAFANA_PASSWORD=admin</pre>
+      </div>
+      <div class="step">
+        <h4>Start Infrastructure</h4>
+        <p>Bring up all 18 services. First run pulls images (~5 min). Subsequent starts take ~30 seconds.</p>
+        <pre>docker compose up -d</pre>
+        <p style="margin-top:8px">Verify everything is healthy:</p>
+        <pre>docker compose ps
+# All services should show "healthy" or "running"</pre>
+      </div>
+      <div class="step">
+        <h4>Run Database Migrations</h4>
+        <p>Apply the schema, agent memory tables, and embedding indexes.</p>
+        <pre># Apply migrations via the API container
+docker compose exec tron-api python -m alembic upgrade head
+
+# Or apply raw SQL migrations directly:
+docker compose exec postgres psql -U tron -d tron \
+  -f /migrations/001_initial_schema.sql
+docker compose exec postgres psql -U tron -d tron \
+  -f /migrations/002_agent_memory.sql
+docker compose exec postgres psql -U tron -d tron \
+  -f /migrations/003_embeddings.sql</pre>
+      </div>
+      <div class="step">
+        <h4>Verify API</h4>
+        <p>The API runs on port 13000. Swagger docs are auto-generated.</p>
+        <pre># Health check
+curl http://localhost:13000/health
+
+# Swagger UI
+open http://localhost:13000/api/docs</pre>
+      </div>
+      <div class="step">
+        <h4>Access Dashboards</h4>
+        <pre># Grafana (metrics + SLO dashboards)
+open http://localhost:13010   # admin / $GRAFANA_PASSWORD
+
+# Temporal UI (workflow monitoring)
+open http://localhost:13008
+
+# MinIO Console (object storage)
+open http://localhost:13005
+
+# Prometheus (raw metrics)
+open http://localhost:13009
+
+# Alertmanager
+open http://localhost:13011</pre>
+      </div>
+    </div>
+
+    <h3 style="margin-top:32px">Service Port Reference</h3>
+    <table>
+      <thead><tr><th>Service</th><th>Port</th><th>Purpose</th></tr></thead>
+      <tbody>
+        <tr><td>Tron API</td><td><code>13000</code></td><td>REST API + WebSocket endpoint</td></tr>
+        <tr><td>PostgreSQL</td><td><code>13002</code></td><td>Database (localhost only)</td></tr>
+        <tr><td>Redis</td><td><code>13003</code></td><td>Cache + queue (localhost only)</td></tr>
+        <tr><td>MinIO API</td><td><code>13004</code></td><td>S3-compatible object storage</td></tr>
+        <tr><td>MinIO Console</td><td><code>13005</code></td><td>Storage management UI</td></tr>
+        <tr><td>PgBouncer</td><td><code>13006</code></td><td>Connection pooler</td></tr>
+        <tr><td>Temporal</td><td><code>13007</code></td><td>Workflow engine gRPC</td></tr>
+        <tr><td>Temporal UI</td><td><code>13008</code></td><td>Workflow monitoring dashboard</td></tr>
+        <tr><td>Prometheus</td><td><code>13009</code></td><td>Metrics collection</td></tr>
+        <tr><td>Grafana</td><td><code>13010</code></td><td>Dashboards (SLO, LLM costs, overview)</td></tr>
+        <tr><td>Alertmanager</td><td><code>13011</code></td><td>Alert routing + silencing</td></tr>
+        <tr><td>Loki</td><td><code>13012</code></td><td>Log aggregation</td></tr>
+        <tr><td>Tempo</td><td><code>13013</code></td><td>Distributed tracing</td></tr>
+        <tr><td>Nginx</td><td><code>13080</code></td><td>Reverse proxy / load balancer</td></tr>
+      </tbody>
+    </table>
+
+    <h3 style="margin-top:32px">Scaling</h3>
+    <pre># Scale API instances (behind Nginx load balancer)
+docker compose up -d --scale tron-api=3
+
+# Scale Temporal workers
+docker compose up -d --scale tron-worker=5
+
+# Production deployment (resource limits, replicas, log rotation)
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d</pre>
+  </div>
+</section>
+
+<!-- API -->
+<section id="api">
+  <div class="wrap">
+    <h2>API Reference</h2>
+    <p style="color:var(--text-dim);margin-bottom:16px">Base URL: <code>http://localhost:13000/api</code> &mdash; Authentication: <code>X-API-Key</code> header required on all endpoints except health checks. Full interactive docs at <a href="http://localhost:13000/api/docs">/api/docs</a> (Swagger) and <a href="http://localhost:13000/api/redoc">/api/redoc</a> (ReDoc).</p>
+
+    <h3>Health &amp; System</h3>
+    <table>
+      <thead><tr><th>Method</th><th>Endpoint</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><span class="tag tag-green">GET</span></td><td><code>/health</code></td><td>Liveness probe</td></tr>
+        <tr><td><span class="tag tag-green">GET</span></td><td><code>/ready</code></td><td>Readiness probe (checks DB, Redis, Temporal)</td></tr>
+        <tr><td><span class="tag tag-green">GET</span></td><td><code>/api/docs</code></td><td>Swagger UI</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Projects</h3>
+    <table>
+      <thead><tr><th>Method</th><th>Endpoint</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><span class="tag tag-blue">POST</span></td><td><code>/api/projects</code></td><td>Create a project</td></tr>
+        <tr><td><span class="tag tag-green">GET</span></td><td><code>/api/projects</code></td><td>List all projects</td></tr>
+        <tr><td><span class="tag tag-green">GET</span></td><td><code>/api/projects/{id}</code></td><td>Get project details</td></tr>
+        <tr><td><span class="tag tag-amber">PUT</span></td><td><code>/api/projects/{id}</code></td><td>Update project</td></tr>
+        <tr><td><span class="tag tag-red">DELETE</span></td><td><code>/api/projects/{id}</code></td><td>Delete project</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Audits</h3>
+    <table>
+      <thead><tr><th>Method</th><th>Endpoint</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><span class="tag tag-blue">POST</span></td><td><code>/api/audits</code></td><td>Start a new audit run</td></tr>
+        <tr><td><span class="tag tag-green">GET</span></td><td><code>/api/audits/{id}</code></td><td>Get audit status and results</td></tr>
+        <tr><td><span class="tag tag-green">GET</span></td><td><code>/api/audits/{id}/findings</code></td><td>List findings for an audit</td></tr>
+        <tr><td><span class="tag tag-blue">POST</span></td><td><code>/api/audits/{id}/cancel</code></td><td>Cancel a running audit</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Findings &amp; Verification</h3>
+    <table>
+      <thead><tr><th>Method</th><th>Endpoint</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><span class="tag tag-green">GET</span></td><td><code>/api/findings/{id}</code></td><td>Get finding details with verification status</td></tr>
+        <tr><td><span class="tag tag-blue">POST</span></td><td><code>/api/findings/{id}/verify</code></td><td>Trigger sandbox verification</td></tr>
+        <tr><td><span class="tag tag-amber">PUT</span></td><td><code>/api/findings/{id}/status</code></td><td>Update finding status (confirm/dismiss)</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Cost &amp; Analytics</h3>
+    <table>
+      <thead><tr><th>Method</th><th>Endpoint</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><span class="tag tag-green">GET</span></td><td><code>/api/costs/dashboard</code></td><td>Cost dashboard (by provider, project, daily)</td></tr>
+        <tr><td><span class="tag tag-green">GET</span></td><td><code>/api/costs/summary</code></td><td>Aggregated cost summary</td></tr>
+      </tbody>
+    </table>
+
+    <h3>GDPR</h3>
+    <table>
+      <thead><tr><th>Method</th><th>Endpoint</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><span class="tag tag-blue">POST</span></td><td><code>/api/gdpr/export</code></td><td>Export all data for a user (DSAR)</td></tr>
+        <tr><td><span class="tag tag-red">DELETE</span></td><td><code>/api/gdpr/delete</code></td><td>Right to erasure — delete all user data</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- Usage -->
+<section id="usage">
+  <div class="wrap">
+    <h2>Usage Guide</h2>
+
+    <h3>Running Your First Audit</h3>
+    <div class="steps">
+      <div class="step">
+        <h4>Create a project</h4>
+        <pre>curl -X POST http://localhost:13000/api/projects \
+  -H "X-API-Key: YOUR_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "my-app",
+    "repository_url": "https://github.com/user/repo",
+    "languages": ["python", "javascript"]
+  }'</pre>
+      </div>
+      <div class="step">
+        <h4>Start an audit</h4>
+        <p>This clones the repo, runs deterministic tools, dispatches agents, and executes the full 7-layer pipeline.</p>
+        <pre>curl -X POST http://localhost:13000/api/audits \
+  -H "X-API-Key: YOUR_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "project_id": "PROJECT_UUID",
+    "check_types": ["security", "quality", "performance"],
+    "branch": "main"
+  }'</pre>
+      </div>
+      <div class="step">
+        <h4>Monitor progress</h4>
+        <p>Connect to the WebSocket for real-time updates, or poll the audit endpoint.</p>
+        <pre># Poll status
+curl http://localhost:13000/api/audits/AUDIT_UUID \
+  -H "X-API-Key: YOUR_KEY"
+
+# WebSocket (Socket.IO)
+# Connect to ws://localhost:13000/socket.io
+# Subscribe to room: "audit:AUDIT_UUID"</pre>
+      </div>
+      <div class="step">
+        <h4>Review findings</h4>
+        <pre>curl http://localhost:13000/api/audits/AUDIT_UUID/findings \
+  -H "X-API-Key: YOUR_KEY"</pre>
+        <p>Each finding includes: severity, confidence score, file/line location, code snippet, verification status, and which deterministic tools confirmed it.</p>
+      </div>
+    </div>
+
+    <h3 style="margin-top:32px">Running Tests</h3>
+    <pre># Full test suite (2,741 tests)
+python -m pytest tests/ --ignore=tests/load -q
+
+# Unit tests only
+python -m pytest tests/unit/ -q
+
+# Specific module
+python -m pytest tests/unit/test_agent_memory.py -v
+
+# Load testing (requires Locust)
+pip install locust
+locust -f tests/load/locust_config.py --host=http://localhost:13000</pre>
+
+    <h3 style="margin-top:32px">Development Workflow</h3>
+    <pre># Install dependencies
+pip install -r requirements.txt
+
+# Run API locally (without Docker)
+uvicorn tron.api.main:app --reload --port 8000
+
+# Run linting
+ruff check tron/ tests/
+
+# Run type checking
+mypy tron/ --ignore-missing-imports</pre>
+
+    <div class="alert alert-info" style="margin-top:24px">
+      <strong>Documentation:</strong> Full architecture docs are in <code>docs/architecture/</code>, implementation details in <code>docs/implementation/</code>, and operational runbooks in <code>docs/operations/</code>. The API auto-generates interactive docs at <code>/api/docs</code> (Swagger) and <code>/api/redoc</code>.
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <span class="tron-word">TRON</span> Enterprise AI QA Platform &mdash; Verify Everything. Trust Nothing.
+  </div>
+</footer>
+
+</body>
+</html>

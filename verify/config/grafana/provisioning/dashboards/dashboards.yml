@@ -1,0 +1,33 @@
+# Grafana dashboard provisioning for Tron
+apiVersion: 1
+
+providers:
+  - name: Tron
+    orgId: 1
+    type: file
+    disableDeletion: false
+    editable: true
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false
+
+  # Dashboard definitions
+dashboardDefinitions:
+  # SLO Dashboard
+  - name: tron-slo
+    uid: tron-slo
+    title: Tron SLO Dashboard
+    description: Service Level Objectives dashboard tracking API availability, latency, and error budgets
+
+  # LLM Costs Dashboard
+  - name: tron-llm-costs
+    uid: tron-llm-costs
+    title: Tron LLM Costs Dashboard
+    description: LLM provider costs, token usage, and budget tracking
+
+  # Workflow Dashboard
+  - name: tron-workflow
+    uid: tron-workflow
+    title: Tron Workflow Dashboard
+    description: Audit workflow execution metrics and failure analysis

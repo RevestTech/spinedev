@@ -1,0 +1,24 @@
+# {{APP_NAME}} — AI agent instructions (Tron scan follow-up)
+
+## Context
+
+Tron **audited this repository** (a checkout path or a Git remote such as GitHub, as configured in Tron). Handoff artifacts live **in this repository root** so Cursor, Claude Code, Codex, and other agents load them with the code.
+
+## What you should read (workflow)
+
+1. **This file**, **`.cursor/rules/tron-scan-followups.mdc`**, and any other repo rules you already load — they tell you Tron ran here and how to behave.
+2. **`TRON_POST_SCAN.md`** — latest finding counts, top paths, triage checklist, and links into Tron.
+3. **`tron.md`** (repo root) — **Tron activity**: append-only log of audit handoffs (what Tron did, when, counts) plus space for your team’s notes. Read it to orient before deep-diving into findings.
+
+## Tron reference
+
+- Base URL: **{{TRON_UI_BASE}}**
+- Audit id: **{{TRON_AUDIT_ID}}**
+
+Pull full finding lists from Tron (UI: “View all findings”, or authenticated API) before bulk edits.
+
+## Rules of engagement
+
+- Validate findings against this repo’s **actual** files (line numbers drift after edits).
+- Fix here; Tron is only the scanner.
+- Update **`TRON_POST_SCAN.md`** checkboxes when triage completes.

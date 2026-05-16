@@ -1,0 +1,17 @@
+# Temporal dynamic config for development
+system.forceSearchAttributesCacheRefreshOnRead:
+  - value: true
+    constraints: {}
+limit.maxIDLength:
+  - value: 255
+    constraints: {}
+# Increase payload size for large repo scans (default 4MB → 20MB)
+limit.blobSize.error:
+  - value: 20971520
+    constraints: {}
+limit.blobSize.warn:
+  - value: 10485760
+    constraints: {}
+frontend.maxPayloadSize:
+  - value: 20971520
+    constraints: {}

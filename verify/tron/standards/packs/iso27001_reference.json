@@ -1,0 +1,19 @@
+{
+  "id": "iso27001_reference",
+  "title": "ISO/IEC 27001:2022 — reference Annex A themes (Tron built-in, not certification)",
+  "disclaimer": "Annex-A style prompts for secure engineering. Not an ISO certification audit.",
+  "themes": [
+    {
+      "id": "A.8.2",
+      "summary": "Privileged access rights — admin paths, elevation, break-glass patterns in software."
+    },
+    {
+      "id": "A.8.15",
+      "summary": "Logging — centralised logging, log injection, sensitive data in logs."
+    },
+    {
+      "id": "A.8.26",
+      "summary": "Application security requirements — input validation, secure defaults, dependency risk."
+    }
+  ]
+}

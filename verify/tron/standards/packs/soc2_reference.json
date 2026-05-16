@@ -1,0 +1,19 @@
+{
+  "id": "soc2_reference",
+  "title": "SOC 2 — reference control themes (Tron built-in, not an attestation)",
+  "disclaimer": "Structured hints for code review only. This is not a CPA report or SOC 2 examination.",
+  "themes": [
+    {
+      "id": "CC6.1",
+      "summary": "Logical and physical access controls — authentication, authorization, session handling in application code."
+    },
+    {
+      "id": "CC7.2",
+      "summary": "System monitoring — logging, alerting, tamper-evidence for security-relevant events."
+    },
+    {
+      "id": "CC8.1",
+      "summary": "Change management — safe deployment, configuration drift, secrets in source control."
+    }
+  ]
+}

@@ -1,0 +1,128 @@
+# Tron Trivy Configuration
+# Container image scanning for vulnerabilities
+# Usage: trivy config trivy.yaml <target>
+
+severity:
+  - HIGH
+  - CRITICAL
+
+# Skip unfixed vulnerabilities (report only fixed CVEs)
+skip-unfixed: true
+
+# Output format: json, sarif, cyclonedx, table (default)
+format: table
+
+# Exit code on vulnerability found
+# 0: success, 1: vulnerability found
+exit-code: 0
+
+# Debug mode for troubleshooting
+debug: false
+
+# ──────────────────────────────────────────────────────────────────
+# Scan Target Configuration
+# ──────────────────────────────────────────────────────────────────
+
+scanners:
+  # Scan image OS packages
+  - vuln
+
+  # Scan image configuration issues
+  - config
+
+  # Scan for secrets in files
+  - secret
+
+# ──────────────────────────────────────────────────────────────────
+# Docker Image Configuration
+# ──────────────────────────────────────────────────────────────────
+
+image:
+  # Use Docker daemon instead of registry
+  input: ""
+
+  # Remove image after scanning
+  remove-unfixed: false
+
+# ──────────────────────────────────────────────────────────────────
+# Vulnerability Database
+# ──────────────────────────────────────────────────────────────────
+
+db:
+  # Download latest vulnerability database
+  skip-update: false
+
+  # Repository for DB (default: GitHub)
+  repository: "ghcr.io/aquasecurity/trivy-db"
+
+# ──────────────────────────────────────────────────────────────────
+# Reporting and Output
+# ──────────────────────────────────────────────────────────────────
+
+# Only report vulnerabilities in these packages
+# Leave empty to scan all packages
+package-types:
+  - ""  # All types
+
+# Ignore policy file
+# vulnerabilities in this file will be ignored
+ignorefile: .trivyignore
+
+# Generate SBOM (Software Bill of Materials)
+sbom:
+  enabled: false
+  format: "cyclonedx"
+
+# ──────────────────────────────────────────────────────────────────
+# Performance Tuning
+# ──────────────────────────────────────────────────────────────────
+
+# Number of parallel workers
+parallel: 4
+
+# Timeout for each scan
+timeout: 10m
+
+# Cache directory
+cache-dir: ~/.cache/trivy
+
+# ──────────────────────────────────────────────────────────────────
+# Special Cases
+# ──────────────────────────────────────────────────────────────────
+
+# Aqua custom policies
+compliance: ""
+
+# License scanning (detect SPDX licenses)
+license:
+  enabled: false
+  forbidden:
+    - GPL-3.0
+    - AGPL-3.0
+
+# Misconfiguration detection for IaC (Terraform, Kubernetes, etc.)
+misconfig:
+  enabled: true
+  select-checks:
+    - default  # All default checks
+
+# ──────────────────────────────────────────────────────────────────
+# Examples and Usage
+# ──────────────────────────────────────────────────────────────────
+#
+# Scan Docker image:
+#   trivy image --config trivy.yaml myimage:latest
+#
+# Scan Dockerfile:
+#   trivy config --config trivy.yaml Dockerfile
+#
+# Generate SBOM:
+#   trivy image --config trivy.yaml --format cyclonedx myimage:latest > sbom.json
+#
+# Output vulnerabilities as JSON:
+#   trivy image --config trivy.yaml --format json myimage:latest > vulns.json
+#
+# Check specific severity:
+#   trivy image --severity CRITICAL --config trivy.yaml myimage:latest
+#
+# ──────────────────────────────────────────────────────────────────

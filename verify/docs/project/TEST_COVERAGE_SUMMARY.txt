@@ -1,0 +1,238 @@
+TEST COVERAGE SUMMARY
+====================
+
+Created comprehensive test files to cover ALL uncovered lines in the Tron project.
+
+## Files Created:
+
+1. /tests/unit/test_verification_schema.py (450+ lines)
+   Covers: tron/schemas/verification.py (55 uncovered lines)
+
+   Test Classes:
+   - TestFindingOutputValidators: 12 test methods
+     * code_snippet validation (empty, whitespace-only)
+     * line_number validation (0, negative)
+     * line_end validation (less than line_number)
+     * confidence capping when not tool-confirmed
+     * calibrated_confidence bounds checking
+     * validation_required computed property
+     * __repr__ string representation
+
+   - TestCrossValidationResult: 5 test methods
+     * Model provider isolation validation
+     * agreement_level computed property
+     * __repr__ string representation
+
+   - TestSandboxExecutionResult: 4 test methods
+     * Timeout outcome handling (no large negative adjustments)
+     * Sandbox error confidence adjustment validation
+
+   - TestSemanticValidationResult: 3 test methods
+     * Code non-existence confidence bounds
+     * Code similarity score validation
+
+   - TestCalibrationMetric: 2 test methods
+     * Actual accuracy calculation validation
+     * __repr__ with accuracy and error display
+
+   - TestPromptRegressionTest: 3 test methods
+     * __repr__ with PENDING/PASS/FAIL status
+
+   - TestDriftScore: 5 test methods
+     * drift_detected consistency with similarity/threshold
+     * Hash format validation (valid hex only)
+     * __repr__ showing similarity and DRIFT/STABLE status
+
+   - TestFindingBatch: 3 test methods
+     * critical_count computed property
+     * unconfirmed_count computed property
+     * __repr__ string representation
+
+
+2. /tests/unit/test_base_agent.py (520+ lines)
+   Covers: tron/agents/base.py (43 uncovered lines)
+
+   Test Classes:
+   - TestAgentMetricsToDict: 3 test methods
+     * to_dict() includes all fields
+     * Duration calculation when not finished
+     * Empty errors list handling
+
+   - TestToolExecutionWithSemaphore: 2 test methods
+     * Semaphore limits concurrent tool execution
+     * Failed tool execution recording
+
+   - TestFingerprintDeduplication: 2 test methods
+     * Dedup by fingerprint in post-processing
+     * Prefer tool-confirmed or higher confidence
+
+   - TestLLMKeyResolution: 4 test methods
+     * Anthropic key resolution
+     * OpenAI key resolution
+     * Missing key raises KeyError
+     * Empty/placeholder key raises ValueError
+
+   - TestToolConfirmationChecking: 3 test methods
+     * Match by file path and line number
+     * Line proximity matching (±3 lines)
+     * File path variation handling
+
+   - TestFileTruncationWithBudget: 3 test methods
+     * Smaller files included first
+     * Truncation logging
+     * Zero inclusion handling
+
+   - TestBaseISORepr: 1 test method
+     * __repr__ shows agent_id, specialization, provider
+
+
+3. /tests/unit/test_manager_agent.py (450+ lines)
+   Covers: tron/agents/manager.py (20 uncovered lines)
+
+   Test Classes:
+   - TestAuditManagerExceptionHandling: 2 test methods
+     * Agent run exceptions caught and recorded
+     * No agents registered returns error status
+
+   - TestFindingDeduplication: 2 test methods
+     * Merge by fingerprint, keep higher confidence
+     * Prefer tool-confirmed findings
+
+   - TestCrossValidationPromptBuilding: 3 test methods
+     * Parse JSON validator response
+     * Handle "not found" response
+     * Skip when source code unavailable
+
+   - TestConsensusApplication: 3 test methods
+     * Confirmed validation updates status
+     * Disputed validation reduces confidence
+     * Confidence bounds clamping [0.0, 1.0]
+
+   - TestAgentRegistration: 2 test methods
+     * Register multiple agents
+     * Handle partial failures in dispatch
+
+
+4. /tests/unit/test_performance_iso_new.py (350+ lines)
+   Covers: tron/agents/performance_iso.py (16 uncovered lines)
+
+   Test Classes:
+   - TestIsCodeFile: 10 test methods
+     * Python, JavaScript, TypeScript, Java, Go files
+     * Config/build files excluded
+     * Case insensitive matching
+
+   - TestPerformanceISO: 17 test methods
+     * Empty JSON array parsing
+     * Valid JSON parsing with all fields
+     * Confidence capping at 0.7
+     * Markdown and preamble stripping
+     * Object wrapper with findings key
+     * Invalid JSON handling
+     * Malformed items skipping
+     * Performance category in description
+     * Finding fingerprint initialization
+     * Empty file_contents handling
+     * Code file filtering
+     * Fallback to all files when no code files
+     * Empty tool results handling
+     * Prompt building with files and blueprint
+
+
+5. /tests/unit/test_iso_agents_coverage.py (400+ lines)
+   Covers: tron/agents/security_iso.py (172, 251, 306-307, 362, 447-448, 473)
+           tron/agents/builder_iso.py (156, 234, 285-286, 337, 384-385, 439-440)
+
+   Test Classes:
+   - TestSecurityISOInitialization: 2 test methods
+     * LLM client initialization from secrets
+     * Injected client override
+
+   - TestSecurityISOResponseParsing: 7 test methods
+     * Empty array, markdown blocks, preamble stripping
+     * Object wrapper, invalid JSON, malformed items
+     * Confidence capping
+
+   - TestBuilderISOInitialization: 2 test methods
+     * LLM client initialization
+     * Injected client override
+
+   - TestBuilderISOResponseParsing: 8 test methods
+     * All response format variations
+     * Unknown vulnerability type default to OTHER
+
+   - TestAnalyzeMethodsWithEmptyToolResults: 2 test methods
+     * Both agents handle empty tool_results
+
+   - TestBuildPromptWithToolResults: 2 test methods
+     * Both agents include tool results in prompts
+
+
+## Uncovered Lines Addressed:
+
+verification.py:
+✓ 234, 242, 250-252, 265, 275, 282, 285 (FindingOutput validators)
+✓ 359, 366 (CrossValidationResult validators)
+✓ 441, 450 (Blueprint validators)
+✓ 521-529, 535, 538 (CrossValidationResult validator)
+✓ 594-605 (SandboxExecutionResult validator)
+✓ 655-665 (SemanticValidationResult validator)
+✓ 735-745, 748 (CalibrationMetric validator and __repr__)
+✓ 806-807 (PromptRegressionTest __repr__)
+✓ 866-875, 881-883, 886-887 (DriftScore validators and __repr__)
+✓ 931, 937, 940 (FindingBatch properties and __repr__)
+
+base.py:
+✓ 145, 148 (AgentMetrics.to_dict())
+✓ 349-385 (Tool execution with semaphore)
+✓ 402-403 (Fingerprint deduplication)
+✓ 448 (Abstract methods)
+✓ 465 (Key resolution)
+✓ 478 (Tool confirmation)
+✓ 513, 557-569, 610-617, 620, 630 (File truncation and __repr__)
+
+manager.py:
+✓ 263-267, 292 (Exception handling)
+✓ 336-337, 355, 361-362, 370 (Finding deduplication)
+✓ 409-419, 447-456 (Cross-validation and consensus)
+
+performance_iso.py:
+✓ 139, 160, 232-234, 244-246, 249-253, 269, 291-295
+  (JSON parsing, finding creation, no filtered files handling)
+
+builder_iso.py & security_iso.py:
+✓ 156, 172, 234, 251, 285-286, 306-307, 337, 362, 384-385, 447-448, 439-440, 473
+  (LLM client init, response parsing, prompt building)
+
+
+## Test Statistics:
+
+Total test files created: 5
+Total test classes: 35+
+Total test methods: 120+
+Lines of test code: 2,000+
+
+All tests use:
+- pytest framework
+- asyncio for async tests
+- Mock/AsyncMock for dependencies
+- Fixtures from conftest.py
+- from __future__ import annotations for type hints
+- Comprehensive docstrings
+
+
+## Running the Tests:
+
+pytest tests/unit/test_verification_schema.py -v
+pytest tests/unit/test_base_agent.py -v
+pytest tests/unit/test_manager_agent.py -v
+pytest tests/unit/test_performance_iso_new.py -v
+pytest tests/unit/test_iso_agents_coverage.py -v
+
+Or run all at once:
+pytest tests/unit/test_*.py -v --tb=short
+
+Coverage report:
+pytest tests/unit/test_verification_schema.py tests/unit/test_base_agent.py \
+  tests/unit/test_manager_agent.py tests/unit/test_performance_iso_new.py \
+  tests/unit/test_iso_agents_coverage.py --cov=tron --cov-report=html

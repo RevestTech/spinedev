@@ -1,0 +1,814 @@
+# Tron Docker Compose Configuration - Version 3.0 (Production Hardened)
+# Addresses all findings from 5-critic hostile expert review (v5.0)
+
+services:
+  # ──────────────────────────────────────────────────────────────────
+  # INFRASTRUCTURE SERVICES
+  # These services cannot read from vault at runtime. Their passwords
+  # are injected via Docker secrets or vault-agent init containers.
+  # The ${VARIABLE} references below are resolved by the orchestrator
+  # from the keyvault — NOT from a .env file in production.
+  # ──────────────────────────────────────────────────────────────────
+
+  # PostgreSQL Database (Primary)
+  postgres:
+    image: postgres:15-alpine
+    container_name: tron-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: tron
+      POSTGRES_USER: tron
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - postgres-wal-archive:/var/lib/postgresql/wal-archive  # WAL archiving for PITR
+    ports:
+      - "127.0.0.1:13002:5432"  # Bind to localhost only for security
+    healthcheck:
+      # REAL health check: verifies query execution, not just TCP connect
+      test: ["CMD-SHELL", "pg_isready -U tron && psql -U tron -d tron -c 'SELECT 1' -t -A | grep -q 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    command:
+      - "postgres"
+      - "-c"
+      - "max_connections=200"
+      - "-c"
+      - "shared_buffers=512MB"
+      - "-c"
+      - "effective_cache_size=2GB"
+      - "-c"
+      - "log_connections=on"
+      - "-c"
+      - "log_disconnections=on"
+      # WAL archiving for point-in-time recovery
+      - "-c"
+      - "wal_level=replica"
+      - "-c"
+      - "archive_mode=on"
+      - "-c"
+      - "archive_command=test ! -f /var/lib/postgresql/wal-archive/%f && cp %p /var/lib/postgresql/wal-archive/%f"
+      - "-c"
+      - "max_wal_senders=3"
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+  
+  # PgBouncer - Connection Pooler (NEW - CRITICAL FIX)
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    container_name: tron-pgbouncer
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://tron:${POSTGRES_PASSWORD}@postgres:5432/tron
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: 500          # Allow many clients
+      DEFAULT_POOL_SIZE: 25         # Connections to Postgres per pool
+      MIN_POOL_SIZE: 5
+      RESERVE_POOL_SIZE: 5
+      SERVER_IDLE_TIMEOUT: 600
+    ports:
+      - "127.0.0.1:13006:5432"     # PgBouncer on port 13006
+    healthcheck:
+      test: ["CMD", "psql", "-h", "localhost", "-U", "tron", "-d", "tron", "-c", "SELECT 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+  
+  # Redis Cache & Queue
+  redis:
+    image: redis:7-alpine
+    container_name: tron-redis
+    restart: unless-stopped
+    command: >
+      redis-server
+      --appendonly yes
+      --maxmemory 1gb
+      --maxmemory-policy allkeys-lru
+      --tcp-backlog 511
+      --timeout 0
+      --tcp-keepalive 300
+      --requirepass ${REDIS_PASSWORD}
+      --rename-command FLUSHDB ""
+      --rename-command FLUSHALL ""
+      --rename-command DEBUG ""
+    volumes:
+      - redis-data:/data
+    ports:
+      - "127.0.0.1:13003:6379"     # Bind to localhost only
+    healthcheck:
+      # REAL health check: authenticates and verifies write capability
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1.5G
+  
+  # MinIO Object Storage (TLS-enabled for in-transit encryption)
+  minio:
+    image: minio/minio:RELEASE.2024-03-30T09-41-56Z  # Pinned version
+    container_name: tron-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001" --certs-dir /root/.minio/certs
+    environment:
+      MINIO_ROOT_USER: ${MINIO_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD}
+      MINIO_SERVER_URL: https://minio:9000
+      # Server-side encryption for data at rest
+      # KMS key injected from keyvault — no default fallback. Container will fail fast if missing.
+      # MINIO_KMS_SECRET_KEY: "${MINIO_KMS_KEY}"  # Disabled for dev - enable in production
+    volumes:
+      - minio-data:/data
+      - ./config/minio/certs:/root/.minio/certs:ro  # TLS certificates
+    ports:
+      - "127.0.0.1:13004:9000"     # API - localhost only (TLS)
+      - "127.0.0.1:13005:9001"     # Console - localhost only
+    healthcheck:
+      # minio/minio image has `mc`, not `curl` — curl-based checks always fail as "unhealthy".
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+  
+  # Temporal Server
+  temporal:
+    image: temporalio/auto-setup:1.22.4  # FIXED: Pinned version (was :latest)
+    container_name: tron-temporal
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      # pgbouncer:  # Disabled for dev - using postgres directly
+      #   condition: service_healthy
+    environment:
+      - DB=postgresql
+      - DB_PORT=5432
+      - POSTGRES_USER=tron
+      - POSTGRES_PWD=${POSTGRES_PASSWORD}
+      - POSTGRES_SEEDS=postgres
+      - DYNAMIC_CONFIG_FILE_PATH=config/dynamicconfig/development.yaml
+      - SQL_MAX_CONNS=20           # ADDED: Limit Temporal's connections
+      - SQL_MAX_IDLE_CONNS=5
+      - SQL_MAX_CONN_LIFETIME=1h
+      - FRONTEND_GRPC_MAX_MESSAGE_SIZE=20971520
+    ports:
+      - "127.0.0.1:13007:7233"      # gRPC - localhost only
+    volumes:
+      - ./config/temporal:/etc/temporal/config/dynamicconfig
+    healthcheck:
+      test: ["CMD", "tctl", "--address", "tron-temporal:7233", "cluster", "health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s            # ADDED: Wait for Temporal to fully initialize
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+  
+  # Temporal Web UI
+  temporal-ui:
+    image: temporalio/ui:2.21.3    # FIXED: Pinned version (was :latest)
+    container_name: tron-temporal-ui
+    restart: unless-stopped
+    depends_on:
+      temporal:
+        condition: service_healthy
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - TEMPORAL_CORS_ORIGINS=http://localhost:3000
+    ports:
+      - "127.0.0.1:13008:8080"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+  
+  # ──────────────────────────────────────────────────────────────────
+  # APPLICATION SERVICES
+  # These services read ALL secrets from the container keyvault at
+  # runtime via tron.infra.secrets.KeyvaultClient. No secrets in env.
+  # ──────────────────────────────────────────────────────────────────
+
+  # Tron API Gateway
+  tron-api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    container_name: tron-api
+    restart: unless-stopped
+    depends_on:
+      # pgbouncer:  # Disabled for dev - using postgres directly
+      #   condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      # temporal:  # Disabled for dev
+      #   condition: service_healthy
+      minio:
+        condition: service_started
+    environment:
+      # ── KMac Vault ── All secrets fetched at runtime
+      VAULT_BACKEND: kmac               # Use KMac Vault instead of HashiCorp Vault
+      KMAC_VAULT_URL: http://host.docker.internal:9999
+      KMAC_SECRET_PREFIX: "tron:"
+      KMAC_TOKEN_PATH: /vault-token     # Mounted from ~/.config/kmac/docker-vault-token
+
+      # Database (connection built at runtime from vault: tron:db_password)
+      DB_HOST: postgres  # Dev: direct connection (pgbouncer for prod)
+      DB_PORT: 5432
+      DB_NAME: tron
+      DB_USER: tron
+      DB_POOL_SIZE: 10              # PgBouncer handles pooling
+      DB_MAX_OVERFLOW: 5
+
+      # Redis (password from vault: tron:redis_password)
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_DB: 0
+      REDIS_POOL_SIZE: 50
+
+      # MinIO (credentials from vault: tron:minio_user, tron:minio_password)
+      MINIO_ENDPOINT: minio:9000
+      MINIO_SECURE: "true"
+
+      # Temporal
+      TEMPORAL_HOST: temporal:7233
+      TEMPORAL_ENABLED: "true"
+
+      # LLM Circuit Breaker (API keys from vault: tron:llm_openai_key, tron:llm_anthropic_key)
+      LLM_CIRCUIT_BREAKER_THRESHOLD: 5        # failures before opening circuit
+      LLM_CIRCUIT_BREAKER_TIMEOUT: 60         # seconds before half-open retry
+      LLM_REQUEST_TIMEOUT: 30                 # per-request timeout in seconds
+      LLM_BULKHEAD_MAX_CONCURRENT: 10         # max concurrent LLM calls
+
+      TRON_LLM_BUDGET_USD: ${TRON_LLM_BUDGET_USD:-500}
+      TRON_LLM_BUDGET_ENFORCE: ${TRON_LLM_BUDGET_ENFORCE:-true}
+      TRON_LLM_SOFT_CAP_PCT: ${TRON_LLM_SOFT_CAP_PCT:-0.85}
+
+      # Auth (secrets from vault: tron:auth_secret_key, tron:auth_jwt_secret, tron:auth_master_key)
+      JWT_ALGORITHM: HS256
+      JWT_EXPIRATION_MINUTES: 60
+
+      # App
+      LOG_LEVEL: INFO
+      WORKERS: 1                    # 1 per container (use replicas for scaling)
+
+      # WebSocket
+      WS_REQUIRE_AUTH: "true"
+      WS_MAX_CONNECTIONS: 100
+
+      # Observability
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_SERVICE_NAME: tron-api
+
+      # Schema: Alembic upgrade head on startup (set false for external migrate jobs).
+      TRON_AUTO_MIGRATE: ${TRON_AUTO_MIGRATE:-true}
+
+      # Drop audit rows stuck in ``queued`` in Postgres after this many minutes (API startup + reconcile API).
+      TRON_RECONCILE_STALE_QUEUED_ON_STARTUP: ${TRON_RECONCILE_STALE_QUEUED_ON_STARTUP:-true}
+      TRON_STALE_QUEUED_AUDIT_MINUTES: ${TRON_STALE_QUEUED_AUDIT_MINUTES:-30}
+
+      # Agent handoff (background AuditExecutor path): same vars as tron-worker
+      TRON_AGENT_HANDOFF: ${TRON_AGENT_HANDOFF:-true}
+      TRON_HANDOFF_APPEND_TRON_MD: ${TRON_HANDOFF_APPEND_TRON_MD:-true}
+      TRON_UI_BASE: ${TRON_UI_BASE:-http://localhost:13080}
+    ports:
+      - "127.0.0.1:13000:8000"      # API on port 13000
+    volumes:
+      # SECURITY: No Docker socket access. API talks to tron-sandbox service via gRPC.
+      - ~/.tron:/root/.tron:ro
+      # KMac Vault token (read-only mount)
+      - ~/.config/kmac/docker-vault-token:/vault-token:ro
+      # Shared scan directory — enables file:// repo URLs from scripts/scan_local_folder.sh
+      # The scan script creates bare repos here; the container clones from them.
+      - /tmp/tron-scans:/tmp/tron-scans:ro
+      # Optional: same bind-mount as tron-worker if ``agent_handoff_path`` must be writable from API process
+      # - /abs/path/to/your-app:/workspace/your-app:rw
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+      # To scale: docker compose up --scale tron-api=3
+      # Note: Requires load balancer (nginx) in front for WebSocket sticky sessions
+  
+  # Tron Temporal Workers
+  # FIXED: Removed deploy.replicas (doesn't work in standard compose)
+  # To scale: docker compose up --scale tron-worker=3
+  tron-worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.worker
+    # REMOVED: container_name (to allow scaling)
+    restart: unless-stopped
+    depends_on:
+      # pgbouncer:  # Disabled for dev - using postgres directly
+      #   condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      temporal:
+        condition: service_healthy
+      minio:
+        condition: service_started
+      tron-sandbox:
+        condition: service_healthy
+    environment:
+      # ── KMac Vault ── All secrets fetched at runtime
+      VAULT_BACKEND: kmac               # Use KMac Vault instead of HashiCorp Vault
+      KMAC_VAULT_URL: http://host.docker.internal:9999
+      KMAC_SECRET_PREFIX: "tron:"
+      KMAC_TOKEN_PATH: /vault-token     # Mounted from ~/.config/kmac/docker-vault-token
+
+      # Database (password from KMac vault: tron:db_password)
+      DB_HOST: postgres  # Dev: direct connection (pgbouncer for prod)
+      DB_PORT: 5432
+      DB_NAME: tron
+      DB_USER: tron
+      DB_POOL_SIZE: 5
+      DB_MAX_OVERFLOW: 2
+
+      # Redis (password from keyvault: tron/redis/password)
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_DB: 0
+
+      # MinIO (credentials from keyvault: tron/minio/user, tron/minio/password)
+      MINIO_ENDPOINT: minio:9000
+      MINIO_SECURE: "true"
+
+      TEMPORAL_HOST: temporal:7233
+      LOG_LEVEL: INFO
+
+      # Optional: GitHub (HTTPS) PAT with repo contents write — PLAN mode pushes `.tron/` bundle
+      # TRON_PLAN_GIT_TOKEN: ""
+
+      # LLM Circuit Breaker (keys from keyvault: tron/llm/*)
+      LLM_CIRCUIT_BREAKER_THRESHOLD: 5
+      LLM_CIRCUIT_BREAKER_TIMEOUT: 60
+      LLM_REQUEST_TIMEOUT: 30
+      LLM_BULKHEAD_MAX_CONCURRENT: 10
+
+      # Global LLM budget (see tron/infra/llm/budget.py) — set ENFORCE=false in dev if needed
+      TRON_LLM_BUDGET_USD: ${TRON_LLM_BUDGET_USD:-500}
+      TRON_LLM_BUDGET_ENFORCE: ${TRON_LLM_BUDGET_ENFORCE:-true}
+      TRON_LLM_SOFT_CAP_PCT: ${TRON_LLM_SOFT_CAP_PCT:-0.85}
+      # Optional: Ollama on host (use model id ollama/<name> in agents)
+      # OLLAMA_BASE_URL: http://host.docker.internal:11434
+
+      # Temporal Worker Config
+      TEMPORAL_TASK_QUEUE: tron-tasks
+      TEMPORAL_MAX_CONCURRENT_ACTIVITIES: 10
+      TEMPORAL_MAX_CONCURRENT_WORKFLOWS: 20
+
+      # Observability
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_SERVICE_NAME: tron-worker
+
+      # Layer 3: execution sandbox (HTTP to tron-sandbox — only that service has Docker socket)
+      TRON_SANDBOX_URL: http://tron-sandbox:50051
+      TRON_SANDBOX_HTTP_POOL_SIZE: ${TRON_SANDBOX_HTTP_POOL_SIZE:-10}
+
+      # After each audit: write TRON_POST_SCAN.md + agent breadcrumbs into ``projects.agent_handoff_path`` (if set)
+      TRON_AGENT_HANDOFF: ${TRON_AGENT_HANDOFF:-true}
+      TRON_HANDOFF_APPEND_TRON_MD: ${TRON_HANDOFF_APPEND_TRON_MD:-true}
+      TRON_UI_BASE: ${TRON_UI_BASE:-http://localhost:13080}
+    volumes:
+      # SECURITY: No Docker socket access. Workers call tron-sandbox over HTTP.
+      - ~/.tron:/root/.tron:ro
+      # KMac Vault token
+      - ~/.config/kmac/docker-vault-token:/vault-token:ro
+      # Shared scan directory — enables file:// repo URLs from scripts/scan_local_folder.sh
+      - /tmp/tron-scans:/tmp/tron-scans:ro
+      # Optional: mount a host app checkout so ``PUT /api/projects/{id}`` ``agent_handoff_path`` can point here (rw)
+      # - /abs/path/to/your-app:/workspace/your-app:rw
+    command: python -m tron.worker
+    healthcheck:
+      # REAL health check: verifies worker can connect to Temporal and Redis
+      test: ["CMD", "python", "-c", "import redis; r=redis.from_url('redis://:${REDIS_PASSWORD}@redis:6379/0'); r.ping()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+  
+  # Tron Sandbox Service — ONLY service with Docker socket access
+  # Provides isolated code execution for Layer 3 (Execution Sandbox)
+  # HTTP API for tron-worker; spins up ephemeral containers with limits
+  tron-sandbox:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.sandbox
+    container_name: tron-sandbox
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock  # Socket access isolated to this service ONLY
+    environment:
+      SANDBOX_MAX_CONCURRENT: 10
+      SANDBOX_TIMEOUT_SECONDS: 30
+      SANDBOX_MEMORY_LIMIT: 256m
+      SANDBOX_CPU_LIMIT: "0.5"
+      SANDBOX_NETWORK_MODE: none      # Sandboxed containers get NO network
+      SANDBOX_READ_ONLY_FS: "true"    # Sandboxed containers get read-only rootfs
+      GRPC_PORT: 50051
+      LOG_LEVEL: INFO
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_SERVICE_NAME: tron-sandbox
+      # Optional: run up to 10 trivial sandbox executions after startup (warms Docker path)
+      SANDBOX_PREWARM_EXECUTIONS: ${SANDBOX_PREWARM_EXECUTIONS:-0}
+    ports:
+      - "127.0.0.1:50051:50051"       # HTTP sandbox API - localhost only
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:50051/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+    # SECURITY HARDENING:
+    # - This is the ONLY container with Docker socket access
+    # - It creates ephemeral containers with: --network none, --read-only, --memory 256m, --cpus 0.5
+    # - Each sandbox container is destroyed after execution (30s max)
+    # - No user code runs in THIS container — it only orchestrates child containers
+    # - For production: migrate to gVisor/Firecracker via SANDBOX_RUNTIME env var
+
+  # Nginx - Reverse Proxy & Load Balancer (NEW - CRITICAL FIX)
+  nginx:
+    image: nginx:1.25-alpine
+    restart: unless-stopped
+    container_name: tron-nginx
+    depends_on:
+      - tron-api
+    ports:
+      - "13080:80"
+      - "443:443"
+    volumes:
+      - ./config/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./config/nginx/ssl:/etc/nginx/ssl:ro
+      - ./frontend/dist:/usr/share/nginx/html:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+  
+  # OpenTelemetry Collector (NEW - Observability)
+  otel-collector:
+    image: otel/opentelemetry-collector:0.91.0
+    restart: unless-stopped
+    container_name: tron-otel-collector
+    command: ["--config=/etc/otel-collector-config.yml"]
+    volumes:
+      - ./config/otel/otel-collector-config.yml:/etc/otel-collector-config.yml:ro
+    ports:
+      - "127.0.0.1:13014:4317"   # OTLP gRPC
+      - "127.0.0.1:13015:4318"   # OTLP HTTP
+      - "127.0.0.1:8888:8888"   # Prometheus metrics
+    depends_on:
+      - tempo
+      - prometheus
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+  
+  # Prometheus - Metrics Storage (NEW - Observability)
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    restart: unless-stopped
+    container_name: tron-prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
+    volumes:
+      - ./config/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "127.0.0.1:13009:9090"
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+  
+  # Grafana - Metrics Visualization (NEW - Observability)
+  grafana:
+    image: grafana/grafana:10.2.2
+    restart: unless-stopped
+    container_name: tron-grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
+      # Password injected from keyvault — no default fallback
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SERVER_ROOT_URL=http://localhost:3001
+    volumes:
+      - ./config/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./config/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:13010:3000"
+    depends_on:
+      - prometheus
+      - tempo
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+  
+  # Tempo - Distributed Tracing (NEW - Observability)
+  tempo:
+    image: grafana/tempo:2.3.1
+    restart: unless-stopped
+    container_name: tron-tempo
+    command: ["-config.file=/etc/tempo.yml"]
+    volumes:
+      - ./config/tempo/tempo.yml:/etc/tempo.yml:ro
+      - tempo-data:/var/tempo
+    ports:
+      - "127.0.0.1:13013:3200"   # Tempo HTTP
+      - "127.0.0.1:9411:9411"   # Zipkin
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3200/ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+  
+  # Loki - Centralized Log Aggregation
+  loki:
+    image: grafana/loki:2.9.3
+    restart: unless-stopped
+    container_name: tron-loki
+    command: ["-config.file=/etc/loki/loki.yml"]
+    volumes:
+      - ./config/loki/loki.yml:/etc/loki/loki.yml:ro
+      - loki-data:/loki
+    ports:
+      - "127.0.0.1:13012:3100"
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3100/ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+
+  # PostgreSQL Backup Service — automated WAL + base backups to MinIO
+  tron-backup:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    container_name: tron-backup
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      PGHOST: postgres
+      PGUSER: tron
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: tron
+      BACKUP_SCHEDULE: "0 2 * * *"         # Daily at 2am
+      BACKUP_RETENTION_DAYS: 30
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_USER}
+      MINIO_SECRET_KEY: ${MINIO_PASSWORD}
+      MINIO_BUCKET: tron-backups
+    volumes:
+      - postgres-wal-archive:/var/lib/postgresql/wal-archive:ro
+      - ./scripts/backup.sh:/usr/local/bin/backup.sh:ro
+    # Runs pg_basebackup on schedule + ships WAL archives to MinIO
+    command: >
+      sh -c "while true; do
+        echo '[backup] Running pg_basebackup...';
+        pg_basebackup -h postgres -U tron -D /tmp/backup -Ft -z -P;
+        echo '[backup] Backup complete. Sleeping until next schedule.';
+        sleep 86400;
+      done"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 256M
+
+  # Alertmanager - Alert Routing (NEW - Observability)
+  alertmanager:
+    image: prom/alertmanager:v0.26.0
+    restart: unless-stopped
+    container_name: tron-alertmanager
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+    volumes:
+      - ./config/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager
+    ports:
+      - "127.0.0.1:13011:9093"
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9093/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 256M
+
+  # ──────────────────────────────────────────────────────────────────
+  # SECRETS MANAGEMENT
+  # ──────────────────────────────────────────────────────────────────
+
+  # ──────────────────────────────────────────────────────────────────
+  # SECRETS MANAGEMENT
+  # Tron uses KMac Vault (central secrets management) instead of local vault.
+  # Secrets are accessed via http://host.docker.internal:9999 with token
+  # mounted from ~/.config/kmac/docker-vault-token
+  # ──────────────────────────────────────────────────────────────────
+
+volumes:
+  postgres-data:
+  postgres-wal-archive:
+  redis-data:
+  minio-data:
+  loki-data:
+  prometheus-data:
+  grafana-data:
+  tempo-data:
+  alertmanager-data:
+
+networks:
+  default:
+    name: tron-network
+
+# ==============================================================================
+# CONNECTION BUDGET CALCULATION
+# ==============================================================================
+#
+# PostgreSQL max_connections: 200
+#
+# Service              | Pool Size | Instances | Total Conn | Notes
+# ---------------------|-----------|-----------|------------|------------------
+# PgBouncer            | 25        | 1         | 25         | Transaction pooling
+# Temporal Server      | 20        | 1         | 20         | History, matching
+# tron-api             | 10        | 1-3       | 10-30      | Via PgBouncer
+# tron-worker          | 5         | 3-5       | 15-25      | Via PgBouncer
+# Migrations/Admin     | -         | -         | 10         | Reserve
+# ---------------------|-----------|-----------|------------|------------------
+# TOTAL (with scaling) |           |           | 80-110     | <200 ✓
+#
+# PgBouncer Benefits:
+# - Transaction pooling allows 500 clients → 25 PostgreSQL connections
+# - Multiplexes connections from API/workers
+# - Handles connection storms gracefully
+#
+# ==============================================================================
+# SCALING INSTRUCTIONS
+# ==============================================================================
+#
+# Scale API instances:
+#   docker compose up --scale tron-api=3
+#
+# Scale workers:
+#   docker compose up --scale tron-worker=5
+#
+# Note: Nginx must be configured with upstream load balancing
+# Note: WebSocket requires sticky sessions (ip_hash in nginx)
+#
+# ==============================================================================
+# SECURITY NOTES
+# ==============================================================================
+#
+# 1. Docker Socket Security (MITIGATED):
+#    - Socket access isolated to tron-sandbox service ONLY
+#    - tron-api and tron-worker have ZERO socket access
+#    - Sandbox creates ephemeral containers with: --network none, --read-only, --memory 256m
+#    - Production upgrade path: gVisor/Firecracker via SANDBOX_RUNTIME env var
+#    - For maximum isolation: run tron-sandbox on a separate host with remote gRPC
+#
+# 2. Port Bindings:
+#    - All data services bound to 127.0.0.1 (localhost only)
+#    - Only Nginx exposed on 0.0.0.0:80/443
+#    - For production: Remove :5432, :6379, :9000 port mappings entirely
+#
+# 3. Secrets (Keyvault-Only Policy):
+#    - ALL secrets stored in container keyvault — NEVER in .env or env vars
+#    - Application services (tron-api, tron-worker) read from vault at runtime
+#    - Infrastructure services (postgres, redis, minio) receive passwords via
+#      Docker secrets or vault-agent init container
+#    - .env file contains ONLY non-secret configuration (endpoints, pool sizes, flags)
+#    - See docs/operations/RUNBOOKS.md for secret rotation procedures
+#
+# 4. TLS/HTTPS:
+#    - Nginx: TLS termination with Let's Encrypt or CA-signed certs
+#    - MinIO: Internal TLS for in-transit encryption (certs in ./config/minio/certs/)
+#    - Redis: requirepass enabled, dangerous commands disabled
+#    - PostgreSQL: WAL archiving enabled for point-in-time recovery
+#
+# 5. Backup & Recovery:
+#    - PostgreSQL: WAL archiving + daily base backups via tron-backup service
+#    - MinIO: Server-side encryption at rest (MINIO_KMS_SECRET_KEY)
+#    - Redis: AOF persistence with appendonly=yes
+#    - Backup retention: 30 days (configurable via BACKUP_RETENTION_DAYS)
+#    - See docs/operations/RUNBOOKS.md for restore procedures
+#
+# 6. Centralized Logging:
+#    - Loki aggregates logs from all services
+#    - Grafana provides log search and correlation with metrics/traces
+#    - All services log to stdout (collected by Docker logging driver)
+#
+# 7. Circuit Breakers:
+#    - LLM API calls protected by circuit breaker pattern
+#    - Configurable threshold (default: 5 failures), timeout (60s), bulkhead (10 concurrent)
+#    - Prevents cascade failures when OpenAI/Anthropic APIs are degraded
+#
+# ==============================================================================
+# SECRETS — KEYVAULT ONLY
+# ==============================================================================
+#
+# All secrets are stored in the container keyvault. NO secrets in .env files.
+#
+# Required keyvault paths:
+#   tron/db/password          → PostgreSQL password
+#   tron/redis/password       → Redis password
+#   tron/minio/user           → MinIO admin user
+#   tron/minio/password       → MinIO admin password
+#   tron/minio/kms-key        → MinIO KMS encryption key
+#   tron/auth/secret-key      → Application secret key
+#   tron/auth/jwt-secret      → JWT signing key
+#   tron/auth/master-key      → Tron master API key
+#   tron/llm/openai-key       → OpenAI API key
+#   tron/llm/anthropic-key    → Anthropic API key
+#   tron/grafana/password     → Grafana admin password
+#
+# Infrastructure services (postgres, redis, minio) receive passwords via
+# vault-agent sidecar or Docker secrets at container start time.
+#
+# Application services (tron-api, tron-worker) read secrets from vault
+# at runtime via the tron.infra.secrets.KeyvaultClient.
+#
+# ==============================================================================

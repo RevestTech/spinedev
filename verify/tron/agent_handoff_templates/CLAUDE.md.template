@@ -1,0 +1,16 @@
+# {{APP_NAME}} — agent context (Tron audit)
+
+Tron **audited this repository** (folder or Git-backed checkout, often GitHub). Post-scan breadcrumbs are written **here** so you load them with the codebase.
+
+## Required reading (order)
+
+- **This file** — high-level expectations after a Tron run.
+- **`TRON_POST_SCAN.md`** — snapshot, top paths, triage checklist, Done criteria.
+- **`tron.md`** — **Tron activity** (append-only handoff log + human notes); read it to see what Tron did on this repo before drilling into every finding.
+- **Tron audit:** id `{{TRON_AUDIT_ID}}` at `{{TRON_UI_BASE}}` (open the audit detail page or use the Tron API).
+
+## Your job
+
+1. Triage Tron findings starting at **High** severity.
+2. Fix true positives **in this repository**; record false positives or accepted risks briefly in `TRON_POST_SCAN.md` or linked issues.
+3. Do not modify the Tron product repo to silence findings that belong here.
