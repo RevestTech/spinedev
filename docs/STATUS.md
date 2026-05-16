@@ -199,6 +199,20 @@ All 5 Tier 1 fixes shipped + smoke harness automates the §5 sequence.
 
 **To verify:** `bash tools/smoke-test.sh` (after `make up` if not running). Tier 2 (F2/F4/F5/F6/F7) still pending — non-blocking.
 
+### Wave 9 verification run (2026-05-16, post-pgvector swap)
+
+After `docker compose down && docker compose up -d postgres` (image now `pgvector/pgvector:pg16`) + manual `psql -f db/flyway/sql/V2__spine_kg_schema.sql` + same for `V20__spine_memory_schema.sql`:
+
+```
+PASS=39  FAIL=0  WARN=1  SKIP=0  INFO=3   (43 total checks)
+```
+
+- The single WARN is `env.yq missing` — purely informational; the awk fallback (F10 wave 9 fix) handles the manifests.
+- All 3 INFO are correctly-reported optional deps (yq, fastapi, doctor's optional probe).
+- Two harness portability bugs surfaced + fixed in commit `2b7308d`: `declare -A` → parallel indexed arrays (bash 3.2 compatible), and the schema-loop `for sch in $schemas` was bitten by file-level `IFS=$'\n\t'` — converted to a real array.
+
+**F2 follow-up created by this run:** Flyway history is now further out-of-sync — V2 + V14-V21 are applied at the DB level but not in `flyway_schema_history`. `flyway repair` cleared V1-V13 checksums; pending work is to `INSERT` history rows for the manually-applied versions (or `flyway baseline -baselineVersion=21`) so the in-compose `flyway` service stops erroring and `docker compose up watcher` no longer needs `--no-deps`.
+
 ### Cleanup
 
 Smoke-test artifacts left in DB:
