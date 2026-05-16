@@ -1,0 +1,30 @@
+[sqlfluff]
+dialect = postgres
+# Excluded rule rationale (see also CHANGELOG / lint sweep notes):
+#   AM05/AM06/AM03 — ambiguity rules; auto-fixes can change query semantics
+#   RF04           — reserved-keyword identifiers (intentional in some migrations)
+#   ST05/ST06/ST09/ST11 — structural refactors that need hand-review
+#   AL09           — self-alias; rewrites could rename, risking dependent SQL
+#   LT05           — long lines remaining are all in `--` comments or wide
+#                    `ALTER TABLE ... DEFAULT 'default'` DDL where wrapping
+#                    obscures the intentional column-uniformity pattern
+exclude_rules = AM05, RF04, ST09, ST06, ST05, ST11, AL09, AM06, AM03, LT05
+
+[sqlfluff:rules:capitalisation.keywords]
+capitalisation_policy = upper
+
+[sqlfluff:rules:capitalisation.identifiers]
+capitalisation_policy = lower
+
+[sqlfluff:rules:capitalisation.functions]
+capitalisation_policy = upper
+
+[sqlfluff:rules:capitalisation.literals]
+capitalisation_policy = upper
+
+[sqlfluff:rules:capitalisation.types]
+capitalisation_policy = upper
+
+[sqlfluff:layout:type:comma]
+spacing_before = touch
+line_position = trailing

@@ -1,0 +1,17 @@
+// HTML Tidy config for SpineDevelopment.
+// Usage: tidy -config .tidyconfig -e -q --tidy-mark no <file.html>
+//
+// Notes:
+//   - tidy 5.8.0 predates ARIA 1.1, so it flags aria-current / aria-modal
+//     as "proprietary attribute". They are valid HTML5+ARIA, so we mute the
+//     PROPRIETARY_ATTRIBUTE message class.
+//   - db/dashboard/tech.html embeds a <style> inside an <svg>, which is
+//     valid SVG. Tidy treats it as a misplaced HTML <style> and warns; we
+//     disable fix-style-tags so it leaves the SVG-scoped style alone.
+
+doctype: html5
+mute: PROPRIETARY_ATTRIBUTE, FOUND_STYLE_IN_BODY
+fix-style-tags: no
+tidy-mark: no
+quiet: yes
+show-warnings: yes
