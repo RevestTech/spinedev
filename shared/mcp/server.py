@@ -120,20 +120,24 @@ class SpineMcpServer:
                 "Install it before starting."
             ) from exc
 
-        app = FastMCP(self.name)
+        # FastMCP takes host/port at construction (not at run-time) in
+        # current SDK versions; the run() method no longer accepts them.
+        # Transport key for HTTP is "streamable-http", not "http".
+        app = FastMCP(self.name, host=host, port=port)
         for spec in self._tools.values():
             self._register_one(app, spec)
 
         if transport == "stdio":
-            logger.info("mcp_serve_stdio", extra={"name": self.name, "version": self.version})
+            # Don't pass `name` in extra — it's a reserved LogRecord field and
+            # Python 3.14+ raises on overwrite. Use `server_name` instead.
+            logger.info("mcp_serve_stdio", extra={"server_name": self.name, "version": self.version})
             app.run()
         else:
             logger.info(
                 "mcp_serve_http",
-                extra={"name": self.name, "version": self.version, "host": host, "port": port},
+                extra={"server_name": self.name, "version": self.version, "host": host, "port": port},
             )
-            # FastMCP's HTTP transport signature may evolve upstream; wrapper isolates it.
-            app.run(transport="http", host=host, port=port)  # type: ignore[call-arg]
+            app.run(transport="streamable-http")
 
     @staticmethod
     def _register_one(app: Any, spec: ToolSpec) -> None:

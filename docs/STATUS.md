@@ -213,6 +213,45 @@ PASS=39  FAIL=0  WARN=1  SKIP=0  INFO=3   (43 total checks)
 
 **F2 follow-up created by this run:** Flyway history is now further out-of-sync — V2 + V14-V21 are applied at the DB level but not in `flyway_schema_history`. `flyway repair` cleared V1-V13 checksums; pending work is to `INSERT` history rows for the manually-applied versions (or `flyway baseline -baselineVersion=21`) so the in-compose `flyway` service stops erroring and `docker compose up watcher` no longer needs `--no-deps`.
 
+## 6. First dogfood — 2026-05-16
+
+**Target:** drive a fresh project ("downloads-organizer") through `spine project new` → intake → PRD → roadmap to see where the human-facing flow breaks.
+
+**Verdict:** Backend is more real than the front door. 22 of 27 MCP tools have actual implementations (all of KG, all ISO scanners, sandbox, verify, standards, plan/build dispatch). The 5 stubs are exactly the orchestrator front-door tools that the CLI calls — so the user-facing flow is gated by a wall before it touches any of the real code.
+
+### Bugs surfaced (in the order they hit)
+
+| # | Where | Bug |
+|---|---|---|
+| D1 | `orchestrator/bin/spine` | Shipped without exec bit — `./spine help` permission-denied; needs `chmod +x` |
+| D2 | `spine doctor` | Warns "no mcp transport found" but `project new` plows ahead with HTTP POST anyway and dies |
+| D3 | `install.sh` | Doesn't install the `mcp` Python SDK or any other Python deps |
+| D4 | `install.sh` | Doesn't set up a Python venv; PEP 668 system Python refuses `pip install` |
+| D5 | `shared/mcp/server.py:128/133` | `logger.info(..., extra={"name": ...})` — `name` is a reserved LogRecord field; Python 3.14+ raises **(fixed in this commit)** |
+| D6 | `shared/mcp/server.py:138` | `FastMCP.run(host=, port=)` — current SDK signature has no host/port; takes them at construction, transport is `"streamable-http"` not `"http"` **(fixed in this commit)** |
+| D7 | `orchestrator/bin/spine` `_mcp_call` HTTP fallback | POSTs raw to `/tools/<name>` with no session handshake; FastMCP Streamable-HTTP needs `initialize` → session-id → POST `/mcp`. The CLI was written against a REST-style endpoint that doesn't exist. Needs full rewrite as a Streamable-HTTP client OR an in-process Python fallback |
+| D8 | `shared/mcp/tools/orchestrator.py` | **Critical:** `project_create`, `project_status`, `phase_advance`, `approval_grant` are all stubs returning `status="stub_implementation"` — no DB write, no transition, no token. Smoke test passes because tools register and Pydantic validates, but no project ever lands |
+| D9 | CLI `spine project new --type cli` | CLI accepts any `--type` string; backend Literal is `greenfield|evolve|audit_only|operate`. No client-side validation |
+
+### Stub map — what's still needed
+
+| Tool | Module | Underlying real code that already exists |
+|---|---|---|
+| `project_create` | `orchestrator.py` | `INSERT INTO spine_lifecycle.project` + audit row + initial phase=intake (see smoke test SQL for shape) |
+| `project_status` | `orchestrator.py` | `SELECT FROM spine_lifecycle.project` + `phase_history` |
+| `phase_advance` | `orchestrator.py` | `orchestrator/lib/transition.sh execute` already works; needs HMAC verify via `approval.py` |
+| `approval_grant` | `orchestrator.py` | `orchestrator/lib/approval.py` already has HMAC sign/verify; needs persistence |
+| `graph_query` | `kg.py` | The 8 other KG tools work; this one is the open-ended Cypher-ish query |
+
+### Highest-leverage next step
+
+**Implement the 4 orchestrator front-door stubs** (STORY-9.9.1 / 9.2.1 / 9.3.2 from the original backlog). All four wrap code that already exists and is tested — they're glue, not new features. Estimated 1 small agent / a few hours. After that, also either:
+- add an in-process Python fallback to `orchestrator/bin/spine` (cheapest), OR
+- write a proper Streamable-HTTP MCP client into `_mcp_call`, OR
+- replace the bash CLI with a Python `spine.cli` that calls tools in-process.
+
+The bash CLI rewrite (option C) is the highest-leverage long term but the most invasive. Option A unblocks dogfood tomorrow.
+
 ### Cleanup
 
 Smoke-test artifacts left in DB:

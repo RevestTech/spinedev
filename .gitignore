@@ -8,3 +8,8 @@
 
 # Copies of lib/*.sh — created by install.sh into scripts/
 scripts/
+
+# Python venv (per-machine; created during dogfood / dev)
+.venv/
+*/__pycache__/
+__pycache__/
