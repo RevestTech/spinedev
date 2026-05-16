@@ -1,0 +1,64 @@
+# Markdown extractor — STORY-6.2.3 + REQ-INIT-6 FR-4.
+#
+# Two jobs:
+#  1. Structural — headings → Heading nodes (with level); links → LINKS_TO.
+#  2. Spine-ID detection — scan inline text for embedded IDs (INIT-N /
+#     EPIC-N.M / STORY-N.M.K / REQ-INIT-N / ADR-N / FR-N) → typed CITES edges.
+#     This makes "show every doc that cites STORY-6.2.3" sub-ms (FR-4).
+#
+# OUT OF SCOPE here: fenced code blocks. Parser core (STORY-6.2.1) hands the
+# inner text to the matching language extractor as a synthetic Module.
+
+language: markdown
+
+grammar:
+  package: tree_sitter_markdown
+  version: "0.3.*"                       # Block grammar; inline grammar sibling-loaded.
+  language_function: language
+
+node_extractors:
+  - ast_type: __file_root__
+    node_kind: Document
+    subtype: __infer_from_path__         # `reqs/REQ-*` → REQ, `docs/PRD.md` → PRD, ...
+    name_field: __filename__
+    properties:
+      - { source_field: __file_path__, property_key: path, transform: stringify }
+    children_recurse: true
+
+  - ast_type: atx_heading                # `# h1`, `## h2`, ...
+    node_kind: Heading
+    name_field: heading_content
+    properties:
+      - { source_field: __heading_level__, property_key: level, transform: stringify }
+      - { source_field: __self__, property_key: lines, transform: line_range }
+
+  - ast_type: setext_heading             # `Title\n=====` (level 1) / `\n-----` (level 2).
+    node_kind: Heading
+    name_field: heading_content
+    properties:
+      - { source_field: __heading_level__, property_key: level, transform: stringify }
+
+edge_extractors:
+  - ast_type: inline_link                # `[text](url)` and reference-style.
+    edge_kind: LINKS_TO
+    from_resolver: enclosing_module
+    to_resolver: literal_text:link_destination
+    properties:
+      - { source_field: link_text, property_key: anchor_text, transform: stringify }
+
+  # Spine IDs in inline text → CITES. One edge per regex match. Alternation
+  # order matters (longest prefix first) so REQ-INIT-N isn't shadowed by
+  # INIT-N. Runtime joins the captured ID against Initiative/Epic/Story/
+  # Document nodes so cites anchor at real nodes, not strings.
+  - ast_type: inline
+    edge_kind: CITES
+    from_resolver: enclosing_module
+    to_resolver: "pattern:(REQ-INIT-\\d+|STORY-\\d+\\.\\d+\\.\\d+|EPIC-\\d+\\.\\d+|INIT-\\d+|ADR-\\d+|FR-\\d+)"
+    properties:
+      - { source_field: __match__, property_key: cited_id, transform: stringify }
+
+file_filters:
+  include_globs: ["**/*.md", "**/*.markdown"]
+  exclude_globs: ["**/node_modules/**", "**/.git/**", "**/CHANGELOG.md"]
+
+test_file_detection: { path_patterns: [], name_patterns: [] }  # No exec tests in MD.

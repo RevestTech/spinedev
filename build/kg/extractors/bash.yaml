@@ -1,0 +1,49 @@
+# Bash extractor — STORY-6.2.3. Powers "who calls into team-agent-daemon.sh?".
+# Resolution is best-effort: literal command names become CALLS edges; the
+# indexer post-pass matches them against in-repo function_definitions.
+# Unresolved names anchor at synthetic ExternalSymbol nodes.
+
+language: bash
+
+grammar: { package: tree_sitter_bash, version: "0.23.*", language_function: language }
+
+node_extractors:
+  - ast_type: __file_root__
+    node_kind: Module
+    name_field: __relpath__
+    properties: [{ source_field: __file_path__, property_key: path, transform: stringify }]
+    children_recurse: true
+
+  # Both `name()` and `function name` parse to function_definition.
+  - ast_type: function_definition
+    node_kind: Function
+    name_field: name
+    qualified_name: "{module}::{name}"   # `::` avoids collision with bash names.
+    properties:
+      - { source_field: __self__, property_key: lines,     transform: line_range }
+      - { source_field: body,     property_key: body_hash, transform: hash }   # hash for diffing.
+    children_recurse: false              # No meaningful nested fns in bash.
+
+edge_extractors:
+  # `source foo.sh` / `. foo.sh` → IMPORTS. Variable-interpolated paths may not
+  # link cleanly — acceptable, target node still anchors the query.
+  - ast_type: command
+    edge_kind: IMPORTS
+    from_resolver: enclosing_module
+    to_resolver: literal_text:argument
+    skip_if: [{ command_name_not_in: ["source", "."] }]
+
+  # Any command → CALLS from enclosing function (else module). Indexer post-pass
+  # resolves the command name to an in-repo function_definition if possible.
+  - ast_type: command
+    edge_kind: CALLS
+    from_resolver: enclosing_function
+    to_resolver: literal_text:name
+
+file_filters:
+  include_globs: ["**/*.sh", "**/*.bash"]
+  exclude_globs: ["**/node_modules/**", "**/.git/**"]
+
+test_file_detection:
+  path_patterns: ["(^|/)tests?/"]
+  name_patterns: ["^test-", "_test$"]    # Spine convention: `lib/tests/test-*.sh`.

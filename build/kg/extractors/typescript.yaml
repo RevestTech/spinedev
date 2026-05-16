@@ -1,0 +1,80 @@
+# TypeScript + JavaScript extractor — one config, multiple grammars.
+# STORY-6.2.3. TS is a parse-level superset of JS so the same node/edge rules
+# apply. Runtime picks a grammar by extension. Canonical "language family"
+# pattern — add JSX/Flow/etc. by appending a grammar entry, no new YAML.
+
+language: typescript                     # Also covers javascript via grammars below.
+
+grammars:                                # Ordered; first matching `extensions` wins.
+  - { package: tree_sitter_typescript, version: "0.23.*", language_function: language_typescript, extensions: [".ts"] }
+  - { package: tree_sitter_typescript, version: "0.23.*", language_function: language_tsx,        extensions: [".tsx"] }
+  - { package: tree_sitter_javascript, version: "0.23.*", language_function: language,            extensions: [".js", ".mjs", ".cjs", ".jsx"] }
+
+node_extractors:
+  - ast_type: __file_root__
+    node_kind: Module
+    name_field: __relpath_dotted__
+    properties: [{ source_field: __file_path__, property_key: path, transform: stringify }]
+    children_recurse: true
+
+  - ast_type: function_declaration
+    node_kind: Function
+    name_field: name
+    qualified_name: "{module}.{name}"
+    properties:
+      - { source_field: parameters, property_key: signature, transform: stringify }
+      - { source_field: __self__,   property_key: lines,     transform: line_range }
+    children_recurse: true
+
+  - ast_type: class_declaration
+    node_kind: Class
+    name_field: name
+    qualified_name: "{module}.{name}"
+    properties: [{ source_field: __self__, property_key: lines, transform: line_range }]
+    children_recurse: true
+
+  # Methods (inside class_body). Runtime context promotes to Method via scope.
+  - ast_type: method_definition
+    node_kind: Method
+    name_field: name
+    qualified_name: "{module}.{enclosing_scope}.{name}"
+    properties: [{ source_field: parameters, property_key: signature, transform: stringify }]
+    children_recurse: true
+
+  # TS-only types — JS grammar simply won't produce these node types.
+  - { ast_type: interface_declaration,  node_kind: TypeDef, subtype: interface, name_field: name }
+  - { ast_type: type_alias_declaration, node_kind: TypeDef, subtype: alias,     name_field: name }
+
+edge_extractors:
+  - ast_type: import_statement           # ES `import x from 'foo'` / `import {y} from 'foo'`.
+    edge_kind: IMPORTS
+    from_resolver: enclosing_module
+    to_resolver: literal_text:source
+
+  # CommonJS — best-effort when RHS is a literal `require('...')` call.
+  - ast_type: variable_declarator
+    edge_kind: IMPORTS
+    from_resolver: enclosing_module
+    to_resolver: "pattern:require\\([\"']([^\"']+)[\"']\\)"
+
+  - ast_type: call_expression
+    edge_kind: CALLS
+    from_resolver: enclosing_function
+    to_resolver: symbol_lookup:function
+
+  - ast_type: class_heritage             # `class Foo extends Bar` → EXTENDS.
+    edge_kind: EXTENDS
+    from_resolver: current_node
+    to_resolver: symbol_lookup:value
+
+  - ast_type: implements_clause          # TS-only — JS grammar skips silently.
+    edge_kind: IMPLEMENTS
+    from_resolver: current_node
+    to_resolver: symbol_lookup:type_identifier
+file_filters:
+  include_globs: ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"]
+  exclude_globs: ["**/node_modules/**", "**/dist/**", "**/build/**", "**/.next/**", "**/coverage/**", "**/*.d.ts"]
+
+test_file_detection:
+  path_patterns: ["(^|/)__tests__/", "(^|/)test/"]
+  name_patterns: ["\\.test\\.(t|j)sx?$", "\\.spec\\.(t|j)sx?$"]   # Jest/Vitest, Mocha/Jasmine.

@@ -1,0 +1,110 @@
+# Example eval dataset: engineer role — STORY-3.4.1
+# Two cases: trivial bug fix + sandbox-verified validation change.
+# Conforms to _dataset_schema.yaml.
+
+dataset_id: engineer-core-v1
+role: engineer
+description: Core engineer regressions — bug fix discipline + sandbox-verified change discipline.
+created_at: 2026-05-16
+created_by: khash@khash.com
+
+baseline:
+  prompt_path: lib/role-prompts/engineer.md
+  prompt_sha: 0000000000000000000000000000000000000000000000000000000000000000  # populated by `spine eval baseline`
+  model: claude-opus-4-7
+  recorded_scores:
+    fix-import-typo: 1.0
+    add-input-validation: 0.85
+
+cases:
+  # ---- Case 1: trivial bug fix — scope discipline matters --------------------
+  - case_id: fix-import-typo
+    directive: |
+      tests/test_foo.py fails at collection time — the import `from app.helpers import frobnicate`
+      should be `from app.utils import frobnicate`. Fix the import and rerun the test.
+    inputs:
+      files:
+        - tests/test_foo.py
+        - app/utils.py
+      kg_queries:
+        - "callers_of:app.utils.frobnicate"
+    expected_traits:
+      must:
+        - trait_id: ba-code-changes-target-file
+          description: BuildArtifact.code_changes contains exactly tests/test_foo.py
+          check_type: structured_field
+          check_payload:
+            structured_field:
+              schema_path: shared.schemas.build.build_artifact.BuildArtifact
+              field_path: code_changes
+              assertion: "len(value) == 1 and value[0].path == 'tests/test_foo.py'"
+        - trait_id: ba-kg-impact-populated
+          description: kg_impact non-empty (engineer must call impact_radius before sealing)
+          check_type: structured_field
+          check_payload:
+            structured_field:
+              schema_path: shared.schemas.build.build_artifact.BuildArtifact
+              field_path: kg_impact
+              assertion: "len(value) > 0"
+        - trait_id: ba-tests-passed
+          description: tests_run includes the fixed test in passed state
+          check_type: structured_field
+          check_payload:
+            structured_field:
+              schema_path: shared.schemas.build.build_artifact.BuildArtifact
+              field_path: tests_run
+              assertion: "any(t.path == 'tests/test_foo.py' and t.status == 'passed' for t in value)"
+      must_not:
+        - trait_id: no-out-of-scope-files
+          description: Did not touch any file outside tests/test_foo.py
+          check_type: structured_field
+          check_payload:
+            structured_field:
+              schema_path: shared.schemas.build.build_artifact.BuildArtifact
+              field_path: code_changes
+              assertion: "all(c.path == 'tests/test_foo.py' for c in value)"
+    rubric_ref: rubrics/engineer_strict.yaml
+    severity: high
+    tags: [bug-fix, scope-discipline]
+    notes: Guards against engineer prompt drift that produced "while I was in there..." sprawl.
+
+  # ---- Case 2: validation change — sandbox + judge ---------------------------
+  - case_id: add-input-validation
+    directive: |
+      Add input validation to parse_user_input(raw: str) in app/inputs.py. Reject inputs
+      that are None, empty, > 10kB, or contain null bytes. Raise ValueError with a
+      descriptive message. Add tests for each rejection path.
+    inputs:
+      files: [app/inputs.py, tests/test_inputs.py]
+    expected_traits:
+      must:
+        - trait_id: ba-tests-added
+          description: At least one new test was added covering the validation paths
+          check_type: structured_field
+          check_payload:
+            structured_field:
+              schema_path: shared.schemas.build.build_artifact.BuildArtifact
+              field_path: tests_added
+              assertion: "len(value) >= 4"  # one per rejection path
+        - trait_id: sandbox-run-passes
+          description: Patched code + new tests pass under sandbox execution
+          check_type: deterministic
+          check_payload:
+            deterministic:
+              script_path: shared/eval/scripts/run_sandbox.sh
+              timeout_seconds: 120
+      should:
+        - trait_id: validation-addresses-security
+          description: Validation actually addresses the security concerns named in the directive
+          check_type: llm_judge
+          check_payload:
+            llm_judge:
+              judge_prompt: |
+                Directive asked for validation against {None, empty, >10kB, null bytes}.
+                Patch: {output}. Did the implementation address each rejection path? Score 0-1.
+              judge_model: claude-haiku-4-5
+              passing_score: 0.75
+    rubric_ref: rubrics/engineer_composite.yaml
+    severity: critical
+    tags: [security, validation, sandbox]
+    notes: Catches prompt edits that drop "actually test the change" or "use sandbox" instructions.

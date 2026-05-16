@@ -1,0 +1,98 @@
+# Spine KG extractor config — STRUCTURAL SCHEMA (informative, not a parser input).
+#
+# Implements STORY-6.2.2. Every per-language config in this directory conforms
+# to the shape described below. The parser runtime (built in STORY-6.2.1) reads
+# these YAML files at startup, loads the named tree-sitter grammar, then walks
+# every source file's AST emitting kg_node / kg_edge rows that match V2 SQL
+# (db/flyway/sql/V2__spine_kg_schema.sql).
+#
+# WHY YAML-driven (not Python plugins): REQ-INIT-6 FR-3 mandates "new languages
+# added by dropping a grammar + extractor config — no Spine source change". Org
+# bundles can override or extend extractors without forking the parser.
+
+language: <slug>                # e.g. python, typescript, bash, markdown, sql, go, rust.
+                                # Used as the `language` property on every emitted
+                                # node and as a key in the indexer manifest.
+
+grammar:
+  package: <pip_or_npm_pkg>     # tree-sitter language package. Resolved at install
+                                # time; missing grammars degrade gracefully (file
+                                # skipped, warning logged — see README §error-handling).
+  version: <semver_pin>         # Pinned to keep AST shape stable; bumping a grammar
+                                # may shift node_type names so this triggers a re-index.
+  language_function: <symbol>   # Tree-sitter constructor (e.g. `language()` or
+                                # `language_typescript`). Lets one package expose
+                                # multiple grammars (see typescript.yaml).
+
+node_extractors:                # Each entry: "when you see this AST node type,
+                                # emit a kg_node of this Spine type".
+  - ast_type: <ts_node_type>    # tree-sitter node kind from the grammar's node-types.json.
+    node_kind: <SpineNodeType>  # Maps to kg_node.type. Must come from FR-1 catalog:
+                                # File|Module|Class|Function|Method|Variable|TypeDef|
+                                # TestFile|TestCase|Document|Heading|Reference|...
+    subtype: <optional>         # Refines node_kind (kg_node.subtype). Optional.
+    name_field: <field_path>    # Where the symbol's name lives within the AST node.
+                                # Either a named field (`name`) or a dotted path
+                                # (`declarator.name`). Drives kg_node.name and node_id.
+    qualified_name: <expr>      # Optional template for nested scopes; e.g.
+                                # `{module}.{class}.{name}` for methods. Resolved by
+                                # the runtime's scope stack — see README §resolution.
+    properties:                 # AST fields → entries in kg_node.properties (jsonb).
+      - source_field: <path>    # Where to read from in the AST.
+        property_key: <key>     # jsonb key under properties.
+        transform: <none|stringify|hash|first_line|line_range>
+                                # `stringify` = raw source text of the field.
+                                # `hash` = SHA-256 of stringified value (for big bodies).
+                                # `first_line` = useful for docstrings/comments.
+                                # `line_range` = `{start_line, end_line}` 2-tuple.
+    children_recurse: <bool>    # If true, the runtime keeps walking into this node's
+                                # subtree to find nested extractor matches (e.g. methods
+                                # inside a class). Default false for leaf-like nodes.
+    skip_if:                    # Negative filters — drop a candidate when any rule matches.
+      - parent_ast_type: <type> # e.g. skip `function_definition` inside `decorated_definition`
+                                # when the parent already produced a Function node.
+      - has_modifier: <token>   # e.g. skip private (`_name`) when bundle requests.
+
+edge_extractors:                # AST pattern → kg_edge of a given type.
+  - ast_type: <ts_node_type>    # Trigger node (e.g. `call`, `import_statement`).
+    edge_kind: <EdgeType>       # CALLS|IMPORTS|DEFINES|REFERENCES|OVERRIDES|EXTENDS|
+                                # IMPLEMENTS|CONTAINS|TESTS|COVERS|LINKS_TO|CITES|...
+    from_resolver: <strategy>   # How to compute kg_edge.from_node_id. Allowed strategies:
+                                #   `enclosing_function` — innermost Function/Method on
+                                #     the scope stack (most CALLS edges).
+                                #   `enclosing_module`   — the file's Module node.
+                                #   `current_node`       — the AST node itself if it was
+                                #     also produced as a kg_node (DEFINES, CONTAINS).
+    to_resolver: <strategy>     # How to compute kg_edge.to_node_id. Strategies:
+                                #   `symbol_lookup:<field>` — look up the name extracted
+                                #     from the named field in the current scope chain,
+                                #     then in imported modules (best-effort static).
+                                #   `import_target:<field>` — resolve module path against
+                                #     the project's import-path rules (e.g. Python's
+                                #     `from foo.bar import baz` → module `foo.bar`).
+                                #   `literal_text:<field>` — raw text as the target name
+                                #     (used when the target isn't a code symbol, e.g.
+                                #     a markdown link URL or a Spine ID like `STORY-6.2.3`).
+                                #   `pattern:<regex>` — scan the node's text with a regex
+                                #     and emit one edge per match (used for embedded
+                                #     Spine IDs in markdown).
+    properties:                 # Per-edge properties → kg_edge.properties (jsonb).
+      - source_field: <path>
+        property_key: <key>
+        transform: <none|stringify|hash|line_range>
+
+file_filters:                   # Which files this extractor owns. Globs are anchored
+                                # at the repo root.
+  include_globs: [<glob>]       # e.g. ["**/*.py"]
+  exclude_globs: [<glob>]       # e.g. ["**/__pycache__/**", "**/.venv*/**"].
+                                # Indexer never opens excluded files (faster than
+                                # parsing-then-discarding).
+
+test_file_detection:            # Drives STORY-6.2.4 (TestFile / TestCase + TESTS/COVERS).
+  path_patterns: [<regex>]      # e.g. `^tests/`, `_test\\.py$`. Matches against repo
+                                # path.
+  name_patterns: [<regex>]      # e.g. `^test_`. Applied to extracted Function names
+                                # to mark TestCase nodes.
+                                # When BOTH match, the runtime upgrades the node_kind
+                                # from File→TestFile / Function→TestCase and seeds a
+                                # TESTS edge candidate (resolved in STORY-6.2.4).

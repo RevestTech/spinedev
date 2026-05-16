@@ -1,0 +1,127 @@
+# Example eval dataset: architect role — STORY-3.4.1
+# Two cases: TRD synthesis from small PRD + delta-aware TRD that must
+# reference existing architecture (verifies the architect actually queries
+# code_neighborhood before writing the TRD).
+# Conforms to _dataset_schema.yaml.
+
+dataset_id: architect-core-v1
+role: architect
+description: Architect must produce complete TRDs and must consult the KG on delta work.
+created_at: 2026-05-16
+created_by: khash@khash.com
+
+baseline:
+  prompt_path: lib/role-prompts/architect.md
+  prompt_sha: 0000000000000000000000000000000000000000000000000000000000000000
+  model: claude-opus-4-7
+  recorded_scores:
+    trd-from-small-prd: 0.92
+    delta-aware-trd: 0.78
+
+cases:
+  # ---- Case 1: TRD synthesis — all 8 required sections present --------------
+  - case_id: trd-from-small-prd
+    directive: |
+      Synthesize a TRD from the attached PRD. The PRD describes a small standalone
+      service (REST CRUD over a single Postgres table). Cover all required TRD
+      sections per shared/standards/trd_template.md.
+    inputs:
+      files: [shared/standards/trd_template.md]
+      prior_reports: [fixtures/eval/architect/small_prd.md]
+    expected_traits:
+      must:
+        - trait_id: trd-has-architecture
+          description: TRD output contains an "## Architecture" section with at least one diagram reference
+          check_type: regex
+          check_payload:
+            regex: {pattern: "## Architecture", case_sensitive: false, target: stdout}
+        - trait_id: trd-has-data-model
+          description: TRD includes a "## Data Model" section
+          check_type: regex
+          check_payload:
+            regex: {pattern: "## Data Model", case_sensitive: false, target: stdout}
+        - trait_id: trd-has-integrations
+          description: TRD includes "## Integrations"
+          check_type: regex
+          check_payload:
+            regex: {pattern: "## Integrations", case_sensitive: false, target: stdout}
+        - trait_id: trd-has-nfrs
+          description: TRD includes "## NFRs" (or "Non-Functional Requirements")
+          check_type: regex
+          check_payload:
+            regex: {pattern: "## (NFRs|Non-Functional Requirements)", case_sensitive: false, target: stdout}
+        - trait_id: trd-has-tech-choices
+          description: TRD includes "## Tech Choices"
+          check_type: regex
+          check_payload:
+            regex: {pattern: "## Tech Choices", case_sensitive: false, target: stdout}
+        - trait_id: trd-has-risks
+          description: TRD includes "## Risks"
+          check_type: regex
+          check_payload:
+            regex: {pattern: "## Risks", case_sensitive: false, target: stdout}
+        - trait_id: trd-has-open-questions
+          description: TRD includes "## Open Questions"
+          check_type: regex
+          check_payload:
+            regex: {pattern: "## Open Questions", case_sensitive: false, target: stdout}
+        - trait_id: trd-has-scope
+          description: TRD includes "## Scope"
+          check_type: regex
+          check_payload:
+            regex: {pattern: "## Scope", case_sensitive: false, target: stdout}
+        - trait_id: trd-has-cost-projection
+          description: TRD includes "## Cost Projection"
+          check_type: regex
+          check_payload:
+            regex: {pattern: "## Cost Projection", case_sensitive: false, target: stdout}
+      must_not:
+        - trait_id: no-tbd-placeholders
+          description: No literal "TBD" or "TODO" placeholder bodies
+          check_type: regex
+          check_payload:
+            regex: {pattern: "\\b(TBD|TODO)\\b", case_sensitive: true, target: stdout}
+    rubric_ref: rubrics/architect_strict.yaml
+    severity: critical
+    tags: [trd, completeness]
+    notes: Guards against architect prompt edits that drop one of the 8 required sections.
+
+  # ---- Case 2: delta-aware TRD — architect must query KG --------------------
+  - case_id: delta-aware-trd
+    directive: |
+      Synthesize a TRD for adding pagination + filtering to the existing /orders endpoint.
+      The TRD MUST reference the current handler, the current DB indexes, and any callers
+      whose response shape changes.
+    inputs:
+      files: [fixtures/eval/architect/orders_prd.md]
+      kg_queries:
+        - "code_neighborhood:app.api.orders.list_orders"
+        - "callers_of:app.api.orders.list_orders"
+    expected_traits:
+      must:
+        - trait_id: references-existing-handler
+          description: TRD names list_orders and the current handler file path
+          check_type: regex
+          check_payload:
+            regex: {pattern: "list_orders|app/api/orders\\.py", case_sensitive: false, target: stdout}
+        - trait_id: kg-was-consulted
+          description: Output cites at least one KG-derived fact (e.g. caller, index name)
+          check_type: llm_judge
+          check_payload:
+            llm_judge:
+              judge_prompt: |
+                Did the TRD cite at least one concrete fact about the existing /orders
+                code (caller name, index name, current response shape)? Score 0-1.
+                TRD: {output}
+              judge_model: claude-haiku-4-5
+              passing_score: 0.7
+      should:
+        - trait_id: lists-impacted-callers
+          description: Open Questions or Risks section enumerates callers whose contract shifts
+          check_type: regex
+          check_payload:
+            regex: {pattern: "callers?|impacted", case_sensitive: false, target: stdout}
+    rubric_ref: rubrics/architect_composite.yaml
+    severity: high
+    tags: [trd, delta, kg-grounding]
+    notes: Catches prompt edits that drop "query code_neighborhood before drafting" instructions.

@@ -1,0 +1,67 @@
+# Spine eval rubric schema — STORY-3.4.1
+# ---------------------------------------------------------------------------
+# WHY: a rubric is the deterministic-first, LLM-judge-as-fallback scoring
+# config for a dataset case. We split rubric from dataset because the same
+# rubric often applies to many cases (e.g. "all engineer BuildArtifact must
+# be sealable"). Keeps datasets terse and scoring logic auditable.
+# ---------------------------------------------------------------------------
+
+rubric_id: <slug>              # unique (e.g. "engineer-strict-v1")
+description: <one_line>        # what this rubric scores — "Engineer BuildArtifact compliance + sandbox pass"
+
+# scoring_method governs how per-check results aggregate into a case score:
+#   strict_must      — any must_pass=true check fails → case score = 0; else 1.0
+#   weighted_average — sum(check_pass * weight) / sum(weight); honors weights only
+#   composite        — strict_must on must_pass=true checks; weighted_average across the rest;
+#                      final = (must_passes_all ? weighted_score : 0)
+scoring_method: <weighted_average | strict_must | composite>
+
+checks:
+  - check_id: <slug>           # stable id for diffs (e.g. "kg-impact-non-empty")
+    description: <text>        # human readable
+    check_type: <regex | structured_field | llm_judge | deterministic>
+    must_pass: <bool>          # composite/strict_must: if true, failing zeros the case
+    weight: <0.0-1.0>          # weighted_average: contribution weight; ignored by strict_must
+
+    # Payload shape depends on check_type. Exactly one of the blocks below.
+    payload:
+
+      # --- regex: match output text against a pattern -----------------------
+      # Use for simple presence/absence checks (e.g. "output contains '## Risks'").
+      regex:
+        pattern: <regex>             # Python re syntax
+        case_sensitive: <bool>       # default false
+        target: <stdout|file|field>  # what to match; if field, also set field_path
+
+      # --- structured_field: parse output with a Pydantic schema, assert -----
+      # Use for typed artifacts (BuildArtifact, PRD, TRD). Validates AND probes.
+      structured_field:
+        schema_path: <import_path>   # e.g. "shared.schemas.build.build_artifact.BuildArtifact"
+        field_path: <dot_path>       # e.g. "kg_impact" or "code_changes[0].path"
+        assertion: <expression>      # mini-DSL — "len(value) > 0", "value == 'foo'", "all(v.status == 'passed' for v in value)"
+
+      # --- llm_judge: ask a cheaper model to grade the output ---------------
+      # Use as last resort — non-deterministic, costs money. Pair with passing_score
+      # threshold so flaky judges don't oscillate green/red across re-runs.
+      llm_judge:
+        judge_prompt: |              # rendered with {output}, {directive}, {expected} placeholders
+          <prompt text>
+        judge_model: <model_id>      # e.g. "claude-haiku-4-5" — judge cheaper than role model
+        passing_score: <0.0-1.0>     # threshold; judge returns float, pass iff >= threshold
+        retries: <int>               # default 2 — re-roll on parse failure only, not on disagreement
+
+      # --- deterministic: run a script, exit 0 = pass ----------------------
+      # Escape hatch for checks the other types can't express
+      # (e.g. "sandbox-run the patch and assert exit 0").
+      deterministic:
+        script_path: <path>          # relative to repo root; bash or python
+        timeout_seconds: <int>       # hard kill if exceeded; default 60
+        env: {<key>: <value>}        # injected env; runner adds OUTPUT_PATH, DIRECTIVE_ID
+
+# ---------------------------------------------------------------------------
+# Validation rules (enforced by `spine eval validate <rubric>`):
+# 1. scoring_method=strict_must requires every check to set must_pass=true.
+# 2. weights MUST sum to ~1.0 (tolerance 0.01) when scoring_method=weighted_average.
+# 3. llm_judge checks MUST set passing_score; default judge_model is config-driven.
+# 4. structured_field.assertion is sandboxed; no imports, no I/O.
+# ---------------------------------------------------------------------------

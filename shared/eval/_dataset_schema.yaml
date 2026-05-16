@@ -1,0 +1,61 @@
+# Spine eval dataset schema — STORY-3.4.1
+# ---------------------------------------------------------------------------
+# WHY: an eval dataset answers "did my edit to <role>.md make outputs better
+# or worse?" A dataset is a list of cases. Each case = (directive, inputs,
+# expected_traits, rubric_ref). The runner (STORY-3.4.2) replays each case
+# against a candidate role prompt + model and scores the output.
+#
+# Pattern lifted from TRON's verify/tests/golden_suite/ but generalized:
+# golden_suite covers verify ISO agents; this covers ANY Spine role.
+# ---------------------------------------------------------------------------
+
+dataset_id: <slug>             # stable id across versions (e.g. "engineer-core-v1")
+role: <spine_role>             # engineer | architect | planner | qa | product | ux | datawright | operator | conductor | seer | auditor | researcher | memory
+description: <one_line>        # human summary — "Core engineer regression set: bug fixes + small features"
+created_at: <ISO_date>         # YYYY-MM-DD; used for dataset-age telemetry on the dashboard
+created_by: <author>           # GitHub handle or email
+
+# Baseline pins what the dataset was authored against. Drift detection
+# fires when prompt_sha changes; user is prompted to re-baseline or accept.
+baseline:
+  prompt_path: <path>          # e.g. "lib/role-prompts/engineer.md"
+  prompt_sha: <hex>            # SHA-256 of prompt file at dataset-creation time
+  model: <model_id>            # e.g. "claude-opus-4-7" — baseline is a tuple (prompt, model)
+  recorded_scores:             # optional — last green run's per-case scores; regression mode diffs against this
+    <case_id>: <0.0-1.0>
+
+cases:
+  - case_id: <slug>            # unique within dataset (e.g. "fix-import-typo")
+    directive: |               # exact directive text fed to the role (multi-line block)
+      <directive text>
+    inputs:                    # any context the role normally receives at run time
+      files: [<path>]          # repo-relative files to include in context window
+      kg_queries: [<query>]    # optional KG queries pre-resolved + injected (mocks the live KG)
+      prior_reports: [<path>]  # upstream artifacts (PRD for architect, TRD for planner, etc.)
+      env: {<key>: <value>}    # any env vars the role uses (e.g. POLICY_BUNDLE=acme)
+
+    expected_traits:           # what the output MUST/SHOULD contain. Drives the rubric checks.
+      must:                    # hard pass/fail — any failure fails the case
+        - trait_id: <slug>     # stable id so rubric can ref this trait
+          description: <text>  # human readable — "BuildArtifact.code_changes contains the named file"
+          check_type: <regex | structured_field | llm_judge | deterministic>
+          check_payload: {...} # see _rubric_schema.yaml for per-type payload shape
+      should:                  # soft — contributes to weighted score but doesn't gate
+        - {trait_id: ..., description: ..., check_type: ..., check_payload: ...}
+      must_not:                # negative — presence fails the case (e.g. "TBD", out-of-scope files)
+        - {trait_id: ..., description: ..., check_type: ..., check_payload: ...}
+
+    rubric_ref: <path>         # which rubric file scores this case (e.g. "rubrics/engineer_strict.yaml")
+    severity: <critical|high|medium|low>  # weight in the dataset's aggregate score; critical = 3x, low = 0.5x
+    tags: [<tag>, ...]         # filter labels (e.g. ["security", "refactor"]) — runner supports --tag flag
+    notes: <free_text>         # why this case exists, what regression it guards against
+
+# ---------------------------------------------------------------------------
+# Authoring rules (enforced by `spine eval validate <dataset>`):
+# 1. case_id MUST be unique within dataset.
+# 2. role MUST match an existing lib/role-prompts/<role>.md.
+# 3. baseline.prompt_sha MUST match current file or `--allow-drift` is passed.
+# 4. Every case MUST have at least one `must` trait OR `severity: low`.
+# 5. rubric_ref MUST resolve to an existing _rubric_schema-compliant file.
+# 6. tags are free-form but a curated set lives in shared/eval/TAGS.md.
+# ---------------------------------------------------------------------------

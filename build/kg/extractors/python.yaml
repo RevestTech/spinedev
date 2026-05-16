@@ -1,0 +1,98 @@
+# Python extractor — primary v1 target (most Spine code is Python + Bash).
+# STORY-6.2.3. Conforms to _schema.yaml. Refs: REQ-INIT-6 FR-1, FR-3.
+
+language: python
+
+grammar:
+  package: tree_sitter_python            # pip-installed in indexer venv.
+  version: "0.23.*"                      # Pin minor — bumps occasionally rename nodes.
+  language_function: language
+
+node_extractors:
+  # One Module per .py file. Runtime synthesises from the tree root rather
+  # than matching an AST type — __file_root__ signals "create on file open".
+  - ast_type: __file_root__
+    node_kind: Module
+    name_field: __relpath_dotted__       # build/kg/x.py → build.kg.x
+    properties:
+      - { source_field: __module_docstring__, property_key: docstring, transform: first_line }
+      - { source_field: __file_path__,        property_key: path,      transform: stringify  }
+    children_recurse: true
+
+  # function_definition covers `def` and `async def`; async-ness is a property
+  # not a kind, keeping the FR-1 catalog small (Function/Method only). Methods
+  # come from the same rule — scope-stack post-processing promotes Function→
+  # Method when the parent scope is a class_definition.
+  - ast_type: function_definition
+    node_kind: Function
+    name_field: name
+    qualified_name: "{module}.{enclosing_scope}.{name}"
+    properties:
+      - { source_field: parameters,        property_key: signature,  transform: stringify  }
+      - { source_field: body.string_first, property_key: docstring,  transform: first_line }   # body's 1st string literal.
+      - { source_field: __self__,          property_key: lines,      transform: line_range }
+      - { source_field: __preceding_decorators__, property_key: decorators, transform: stringify }
+      - { source_field: __is_async__,      property_key: is_async,   transform: stringify  }
+    children_recurse: true               # Walk in to capture nested closures + calls.
+    skip_if:
+      - { parent_ast_type: decorated_definition }  # Decorator wrapper emits instead.
+
+  - ast_type: class_definition
+    node_kind: Class
+    name_field: name
+    qualified_name: "{module}.{name}"
+    properties:
+      - { source_field: superclasses,      property_key: bases,     transform: stringify  }
+      - { source_field: body.string_first, property_key: docstring, transform: first_line }
+      - { source_field: __self__,          property_key: lines,     transform: line_range }
+    children_recurse: true               # Required so methods inside the class emit.
+
+  # Module-level assignments → Variable. Skip locals; tuple unpacking handled by runtime.
+  - ast_type: assignment
+    node_kind: Variable
+    name_field: left
+    properties:
+      - { source_field: right, property_key: value_text, transform: stringify }
+    skip_if:
+      - { parent_ast_type: function_definition }
+      - { parent_ast_type: async_function_definition }
+
+edge_extractors:
+  - ast_type: import_statement           # `import foo` / `import foo.bar as fb`.
+    edge_kind: IMPORTS
+    from_resolver: enclosing_module
+    to_resolver: import_target:name
+
+  # `from foo.bar import baz, qux` — one edge per imported name so call-graph
+  # resolution can map `baz()` → `foo.bar.baz`.
+  - ast_type: import_from_statement
+    edge_kind: IMPORTS
+    from_resolver: enclosing_module
+    to_resolver: import_target:module_name + name
+
+  # Best-effort: scope chain → imported symbol → unresolved (synthetic
+  # ExternalSymbol node). Always emits so the call site is queryable.
+  - ast_type: call
+    edge_kind: CALLS
+    from_resolver: enclosing_function
+    to_resolver: symbol_lookup:function
+
+  - ast_type: class_definition           # `class Foo(Bar, Baz)` → EXTENDS Foo→Bar, Foo→Baz.
+    edge_kind: EXTENDS
+    from_resolver: current_node
+    to_resolver: symbol_lookup:superclasses
+
+file_filters:
+  include_globs: ["**/*.py", "**/*.pyi"] # Stubs carry type info worth indexing.
+  exclude_globs:
+    - "**/__pycache__/**"
+    - "**/.venv*/**"
+    - "**/venv/**"
+    - "**/build/**"
+    - "**/dist/**"
+    - "**/.tox/**"
+    - "**/site-packages/**"              # Third-party libs — WON'T per REQ-INIT-6 §6.4.
+
+test_file_detection:
+  path_patterns: ["(^|/)tests?/", "/conftest\\.py$"]
+  name_patterns: ["^test_", "_test$"]    # pytest + nose/unittest conventions.

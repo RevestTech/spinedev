@@ -109,11 +109,11 @@ Maps to REQ FR-4. **The bridge from spec to executable work.**
 ### EPIC-1.4 — Approval Gate System
 Maps to REQ FR-5. Absorbs the old EPIC-1.3.
 
-- `STORY-1.4.1` · `Backlog` · `P0` · `M` — Gate engine: enforces phase boundaries; no phase advances without an approval token.
+- `STORY-1.4.1` · `Done` · `P0` · `M` — Gate engine: enforces phase boundaries; no phase advances without an approval token. At `orchestrator/lib/gate.sh` (5 functions: status/approve/reject/request-changes/list-pending) wraps `approval.py` + `transition.sh` + `router.sh`. *(Done 2026-05-16.)*
 - `STORY-1.4.2` · `Backlog` · `P0` · `S` — Approval queue UI (pending PRD / TRD / Roadmap sign-offs across all projects).
 - `STORY-1.4.3` · `Backlog` · `P0` · `S` — Inline review surface (read the artifact, see the diff if it's a re-submission).
-- `STORY-1.4.4` · `Backlog` · `P0` · `S` — Actions: approve / reject / request-changes (with notes).
-- `STORY-1.4.5` · `Backlog` · `P1` · `S` — Request-changes routes back to the producing role with the user's notes attached.
+- `STORY-1.4.4` · `Done` · `P0` · `S` — Actions: approve / reject / request-changes (with notes). *(Done 2026-05-16 — `gate.sh approve|reject|request-changes` subcommands.)*
+- `STORY-1.4.5` · `Done` · `P1` · `S` — Request-changes routes back to the producing role with the user's notes attached. *(Done 2026-05-16 — `gate_request_changes` composes follow-up directive + dispatches via `router.sh` with `parent_directive_id` linkage.)*
 - `STORY-1.4.6` · `Backlog` · `P1` · `S` — Multi-approver gates (e.g., TRD requires CTO + Compliance both sign).
 - `STORY-1.4.7` · `Backlog` · `P2` · `XS` — Notifications (email / Slack / system) when an approval is pending.
 
@@ -122,9 +122,9 @@ Maps to REQ FR-6. **Powers every phase.** Five composable mechanisms.
 
 > **Tech:** Borrow **LangChain** model-router + tiered-fallback primitives where they slot cleanly; wrap with Spine's per-phase / budget / org-bundle policy layer. Don't reimplement routing primitives.
 
-- `STORY-1.5.1` · `Backlog` · `P0` · `S` — Per-phase default tier table (declared in `sdlc-pipeline.yaml`).
+- `STORY-1.5.1` · `Done` · `P0` · `S` — Per-phase default tier table (declared in `sdlc-pipeline.yaml`). Read by `shared/cost/router.py` `route()` decision flow. *(Done 2026-05-16; sdlc-pipeline-default.yaml carries the table; cost router consumes it.)*
 - `STORY-1.5.2` · `Backlog` · `P0` · `M` — Per-turn escalation classifier (cheap Haiku-class) — synthesis/decision turns escalate; chitchat stays cheap.
-- `STORY-1.5.3` · `Backlog` · `P0` · `M` — Org-bundle model menu + budget enforcement (hard block on cap exceed, not warn).
+- `STORY-1.5.3` · `Done` · `P0` · `M` — Org-bundle model menu + budget enforcement (hard block on cap exceed, not warn). At `shared/cost/router.py` (`route()` + `get_budget_status()`) + `shared/cost/router_cli.sh`. Exit code 2 = would-exceed-budget. *(Done 2026-05-16.)*
 - `STORY-1.5.4` · `Backlog` · `P1` · `M` — Anthropic prompt-cache integration for long intake conversations (huge cost win on repeated context).
 - `STORY-1.5.5` · `Backlog` · `P1` · `S` — User override (pin tier per directive; counted against budget; logged).
 - `STORY-1.5.6` · `Backlog` · `P1` · `S` — UI cost meter (run / day / month + the rationale for each tier choice).
@@ -163,9 +163,9 @@ Maps to REQ FR-7 + FR-8. **"Not etched in stone."** The principle that lets each
 Package an enterprise's coding standards, security rules, banned patterns, cost ceilings, and approved libraries; inject into every user's install.
 
 - `STORY-2.1.1` · `Done` · `P1` · `M` — Design bundle schema (YAML / TOML): `standards`, `security`, `banned_patterns`, `approved_libs`, `cost_caps`, `deployment_targets`, `compliance_tags`. At `shared/standards/bundle-schema.yaml` + README. *(Done 2026-05-16.)*
-- `STORY-2.1.2` · `Backlog` · `P1` · `S` — `spine install --org-bundle <url|path>` command + bundle validation.
-- `STORY-2.1.3` · `Backlog` · `P1` · `M` — Bundle injection into role prompts (each role gets the slice relevant to its authority).
-- `STORY-2.1.4` · `Backlog` · `P1` · `M` — Bundle injection into auditor checks (audit role enforces the banned patterns + security rules).
+- `STORY-2.1.2` · `Done` · `P1` · `S` — `spine install --org-bundle <url|path>` command + bundle validation. At `shared/standards/install_bundle.sh` (7 subcommands: install/validate/list/activate/status/remove/inject) + `validator.py` (Pydantic v2). *(Done 2026-05-16.)*
+- `STORY-2.1.3` · `Done` · `P1` · `M` — Bundle injection into role prompts (each role gets the slice relevant to its authority). At `shared/standards/prompt_injector.py` with idempotent injection markers + per-role slice map (product/architect/engineer/qa/operator/auditor/datawright). *(Done 2026-05-16.)*
+- `STORY-2.1.4` · `In Progress` · `P1` · `M` — Bundle injection into auditor checks (audit role enforces the banned patterns + security rules). Injector exists (`STORY-2.1.3`); auditor runtime hookup pending wave 4.
 - `STORY-2.1.5` · `Backlog` · `P2` · `S` — Bundle versioning + drift detection (warn user when their bundle is older than org's published version).
 - `STORY-2.1.6` · `Done` · `P2` · `M` — Reference bundle for "small SaaS startup" + "regulated enterprise" as starting templates. At `shared/standards/bundle-startup-saas.yaml` + `bundle-regulated-enterprise.yaml`. *(Done 2026-05-16.)*
 
@@ -229,8 +229,8 @@ Today user picks the tier hint. Smarter: route automatically by (role, task comp
 ### EPIC-3.4 — Eval / regression harness (new — closes survey gap)
 **Tech:** **LangSmith**-style evals for role prompts and pipeline outputs. Closes the "did this role-prompt change make it better?" gap called out in `COMPETITIVE_LANDSCAPE.md §4 Tier 5`.
 
-- `STORY-3.4.1` · `Backlog` · `P1` · `M` — Eval dataset format: `(directive, expected_artifact_traits, scoring_rubric)` triples per role.
-- `STORY-3.4.2` · `Backlog` · `P1` · `M` — Eval runner: replays a directive against a candidate role prompt + model; scores output against rubric.
+- `STORY-3.4.1` · `Done` · `P1` · `M` — Eval dataset format: `(directive, expected_artifact_traits, scoring_rubric)` triples per role. At `shared/eval/_dataset_schema.yaml` + `_rubric_schema.yaml` + 2 worked examples (engineer + architect). 4 check types: regex / structured_field / llm_judge / deterministic. *(Done 2026-05-16.)*
+- `STORY-3.4.2` · `In Progress` · `P1` · `M` — Eval runner: replays a directive against a candidate role prompt + model; scores output against rubric. Design at `shared/eval/runner_design.md` (architecture + per-case flow + scoring + regression mode + A/B mode + `spine_eval` schema sketch). Implementation pending wave 4.
 - `STORY-3.4.3` · `Backlog` · `P1` · `S` — Regression mode: run candidate prompt against the full eval set; diff scores vs baseline.
 - `STORY-3.4.4` · `Backlog` · `P2` · `S` — A/B mode: route a fraction of real directives to candidate prompt; record outcomes.
 - `STORY-3.4.5` · `Backlog` · `P2` · `S` — Dashboard view: per-role score history; flag regressions on prompt edits.
@@ -341,8 +341,8 @@ Maps to REQ FR-1 + FR-2.
 Maps to REQ FR-3.
 
 - `STORY-6.2.1` · `Backlog` · `P0` · `M` — Tree-sitter scaffolding + grammar bundles for the v1 language set: Python, TypeScript/JavaScript, Go, Rust, Bash, SQL, Markdown.
-- `STORY-6.2.2` · `Backlog` · `P0` · `M` — Per-language extractor config format (`lib/kg/extractors/<lang>.yaml`) — which AST nodes become graph nodes / edges.
-- `STORY-6.2.3` · `Backlog` · `P0` · `S` — Default extractors for the v1 language set (functions, classes, calls, imports, defines, references).
+- `STORY-6.2.2` · `Done` · `P0` · `M` — Per-language extractor config format (`build/kg/extractors/<lang>.yaml`) — which AST nodes become graph nodes / edges. At `build/kg/extractors/_schema.yaml` + README. Multi-grammar pattern demonstrated. *(Done 2026-05-16.)*
+- `STORY-6.2.3` · `In Progress` · `P0` · `S` — Default extractors for the v1 language set (functions, classes, calls, imports, defines, references). Python/TS-JS/Bash/Markdown shipped at `build/kg/extractors/*.yaml`. Go/Rust/SQL pending wave 4. *(Partial done 2026-05-16.)*
 - `STORY-6.2.4` · `Backlog` · `P1` · `S` — Test-file detection + `TESTS`/`COVERS` edge generation.
 
 ### EPIC-6.3 — Document parser
@@ -459,8 +459,8 @@ Maps to REQ FR-8.
 - `STORY-8.5.2` · `Backlog` · `P0` · `S` — Verify writes findings to `spine_audit`; orchestrator decides route-back-to-Build or surface-to-user.
 
 ### EPIC-8.5 — TRON ISO agents in the Build phase
-- `STORY-8.6.1` · `Backlog` · `P1` · `M` — Expose TRON ISO agents (SecurityISO, QAISO, etc.) as MCP tools callable from Build phase for early-detect.
-- `STORY-8.6.2` · `Backlog` · `P1` · `S` — Engineer daemon optionally invokes SecurityISO before completing a security-sensitive directive.
+- `STORY-8.6.1` · `In Progress` · `P1` · `M` — Expose TRON ISO agents (SecurityISO, QAISO, etc.) as MCP tools callable from Build phase for early-detect. Wrapper at `shared/mcp/tools/iso.py` with `iso_invoke` + 6 per-agent convenience tools (lazy TRON import). MCP contract complete; TRON `BaseISO.execute` call-site adapter stubbed pending wave 4. *(Design + scaffold Done 2026-05-16.)*
+- `STORY-8.6.2` · `In Progress` · `P1` · `S` — Engineer daemon optionally invokes SecurityISO before completing a security-sensitive directive. MCP tool surface ready (`security_iso_scan`); engineer daemon hookup pending wave 4.
 - `STORY-8.6.3` · `Backlog` · `P2` · `S` — Cost-aware: pre-verify costs counted against project budget (`EPIC-1.5`).
 
 ### EPIC-8.6 — Verification as canonical SDLC phase 7-8
@@ -503,9 +503,9 @@ Maps to REQ FR-8.
 - `STORY-9.5.3` · `Backlog` · `P2` · `S` — Cross-project rollups: how many projects in each phase; what's blocked on what.
 
 ### EPIC-9.6 — Unified cost ledger
-- `STORY-9.6.1` · `Backlog` · `P0` · `M` — Cost rows from Plan + Build + Verify all aggregate into `spine_recording.costs` with `subsystem` column.
-- `STORY-9.6.2` · `Backlog` · `P0` · `S` — Per-phase / per-project / per-user / per-org rollups via SQL views.
-- `STORY-9.6.3` · `Backlog` · `P1` · `S` — Budget enforcement (per `EPIC-2.3`) reads aggregated ledger.
+- `STORY-9.6.1` · `Done` · `P0` · `M` — Cost rows from Plan + Build + Verify all aggregate into `spine_recording.costs` with `subsystem` column. At `db/flyway/sql/V16__unified_cost_ledger.sql` (ALTER + CHECK constraint + indexes). *(Done 2026-05-16; legacy `public.cost_row` coexists, backfill is a follow-on data migration.)*
+- `STORY-9.6.2` · `Done` · `P0` · `S` — Per-phase / per-project / per-user / per-org rollups via SQL views. V16 defines `v_cost_per_project`, `v_cost_per_user`, `v_cost_per_org`, `v_cost_per_pipeline_version`. CLI rollup at `shared/cost/budget_rollup.sh` (5 subcommands). *(Done 2026-05-16.)*
+- `STORY-9.6.3` · `Done` · `P1` · `S` — Budget enforcement (per `EPIC-2.3`) reads aggregated ledger. `shared/cost/router.py` `route()` checks budget via `get_budget_status()`; `budget_rollup.sh check-budget` exits 2 if over. *(Done 2026-05-16.)*
 
 ### EPIC-9.7 — Unified audit log
 - `STORY-9.7.1` · `Done` · `P0` · `S` — Append-only `spine_audit` table; every subsystem writes here. At `db/flyway/sql/V15__spine_audit_schema.sql` with `spine_audit_writer` role (INSERT-only) + `reject_mutation` trigger (defense in depth). *(Done 2026-05-16.)*
@@ -513,8 +513,8 @@ Maps to REQ FR-8.
 - `STORY-9.7.3` · `Backlog` · `P1` · `S` — Query API for compliance/audit: export project history; reconstruct any decision.
 
 ### EPIC-9.8 — Failure handling & re-routing
-- `STORY-9.8.1` · `Backlog` · `P0` · `M` — Verify failure → orchestrator auto-generates remediation directive → routes back to Build with findings attached.
-- `STORY-9.8.2` · `Backlog` · `P1` · `S` — Max-retry policy per phase (default 3 build/verify loops before surfacing to user).
+- `STORY-9.8.1` · `Done` · `P0` · `M` — Verify failure → orchestrator auto-generates remediation directive → routes back to Build with findings attached. At `orchestrator/lib/remediation.sh` (compose / check-retry / dispatch / surface). *(Done 2026-05-16.)*
+- `STORY-9.8.2` · `Done` · `P1` · `S` — Max-retry policy per phase (default 5 verify-build loops before surfacing to user; read from `phases.yaml transitions_metadata.retry_policy.verify_build_loop_max`). Exit code 3 from `remediation_dispatch` on exhaustion → `remediation_surface_to_user` sets `project.status='paused'` + `metadata.blocked=true`. *(Done 2026-05-16.)*
 - `STORY-9.8.3` · `Backlog` · `P1` · `S` — Build failure (engineer can't complete) → routes back to Plan with "scope unclear" feedback.
 
 ### EPIC-9.9 — Orchestrator API surface
