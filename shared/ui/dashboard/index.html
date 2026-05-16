@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<!--
+  Spine Dashboard - STORY-9.9.4 + STORY-1.5.6 + STORY-1.5.7 + STORY-1.6.2 + STORY-1.6.3
+  Full single-page control surface: project status grid, unified cost meter,
+  live role-activity stream, KG hybrid_search box, and a link out to the
+  existing approval queue at /approvals/index.html.
+
+  Vanilla HTML/JS/CSS. No build step. No framework. No external CDNs.
+  See shared/ui/dashboard/dashboard_README.md for context + run instructions.
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Spine Dashboard</title>
+  <link rel="stylesheet" href="dashboard.css" />
+</head>
+<body>
+  <header class="shell">
+    <div class="shell-inner">
+      <div class="header-row">
+        <div>
+          <h1>SPINE CONTROL CENTER</h1>
+          <div class="sub" id="sub-line">Portfolio status, spend, live activity, knowledge graph</div>
+        </div>
+        <div class="header-actions">
+          <span class="health-chip" id="health-chip" title="Portfolio health snapshot">- / - / -</span>
+          <span class="last-sync" id="last-sync" aria-live="polite">never synced</span>
+          <button type="button" class="ghost" id="btn-refresh" title="Refresh active panel (R)">Refresh</button>
+          <button type="button" class="ghost" id="btn-pause" title="Pause/resume polling (Space)">Pause</button>
+          <button type="button" class="ghost" id="btn-settings" aria-haspopup="dialog">Settings</button>
+        </div>
+      </div>
+
+      <nav class="tabs" role="tablist" aria-label="Dashboard sections">
+        <button type="button" role="tab" class="tab active" data-tab="projects"  aria-selected="true"  id="tab-projects">Projects</button>
+        <button type="button" role="tab" class="tab"        data-tab="cost"      aria-selected="false" id="tab-cost">Cost</button>
+        <button type="button" role="tab" class="tab"        data-tab="activity"  aria-selected="false" id="tab-activity">Activity</button>
+        <button type="button" role="tab" class="tab"        data-tab="knowledge" aria-selected="false" id="tab-knowledge">Knowledge</button>
+        <a href="../approvals/index.html" class="tab tab-link" target="_blank" rel="noopener" title="Open approvals UI">
+          Approvals <span class="ext-glyph" aria-hidden="true">&#x2197;</span>
+        </a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <!-- Projects tab: STORY-9.9.4 dashboard tiles. -->
+    <section class="tab-panel active" id="panel-projects" role="tabpanel" aria-labelledby="tab-projects">
+      <div class="panel-toolbar">
+        <div class="field">
+          <label for="pf-status">Status</label>
+          <select id="pf-status">
+            <option value="active">active</option>
+            <option value="">all</option>
+            <option value="paused">paused</option>
+            <option value="completed">completed</option>
+            <option value="terminated">terminated</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="pf-phase">Phase</label>
+          <select id="pf-phase"><option value="">All</option></select>
+        </div>
+        <div class="field">
+          <label for="pf-owner">Owner</label>
+          <select id="pf-owner"><option value="">All</option></select>
+        </div>
+        <div class="field">
+          <label for="pf-sort">Sort</label>
+          <select id="pf-sort">
+            <option value="updated">Recently updated</option>
+            <option value="age">Oldest first</option>
+            <option value="cost">Cost (high to low)</option>
+            <option value="name">Name (A-Z)</option>
+          </select>
+        </div>
+        <div class="spacer"></div>
+        <button type="button" class="primary" id="btn-new-project">+ New Project</button>
+      </div>
+      <div class="grid-host" id="projects-host" aria-busy="false">
+        <div class="empty" id="projects-empty" hidden>No projects match your filters.</div>
+        <div class="tiles" id="projects-tiles"></div>
+      </div>
+    </section>
+
+    <!-- Cost tab: STORY-1.5.6 + STORY-1.5.7. -->
+    <section class="tab-panel" id="panel-cost" role="tabpanel" aria-labelledby="tab-cost" hidden>
+      <div class="panel-toolbar">
+        <div class="field">
+          <label for="cf-scope">Scope</label>
+          <select id="cf-scope">
+            <option value="org">Organisation</option>
+            <option value="user">My user</option>
+            <option value="project">By project</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="cf-window">Window</label>
+          <select id="cf-window">
+            <option value="24h">Last 24h</option>
+            <option value="7d">Last 7d</option>
+            <option value="30d">Last 30d</option>
+          </select>
+        </div>
+        <div class="spacer"></div>
+        <span class="muted" id="cf-asof">as of -</span>
+      </div>
+      <div class="cost-grid" id="cost-host" aria-busy="false">
+        <section class="card-box" id="cost-top">
+          <h3>Spend vs Budget</h3>
+          <div class="body" id="cost-budgets"></div>
+        </section>
+        <section class="card-box" id="cost-mid">
+          <h3>Per-Subsystem Breakdown</h3>
+          <div class="body" id="cost-subsystems"></div>
+        </section>
+        <section class="card-box" id="cost-proj">
+          <h3>Next-Phase Projection (STORY-1.5.7)</h3>
+          <div class="body" id="cost-projection"></div>
+        </section>
+        <section class="card-box" id="cost-bot">
+          <h3>Per-Model Cost Rollup</h3>
+          <div class="body" id="cost-models"></div>
+        </section>
+      </div>
+    </section>
+
+    <!-- Activity tab: STORY-1.6.2 + STORY-1.6.3. -->
+    <section class="tab-panel" id="panel-activity" role="tabpanel" aria-labelledby="tab-activity" hidden>
+      <div class="panel-toolbar">
+        <div class="field">
+          <label for="af-project">Project</label>
+          <select id="af-project"><option value="">All</option></select>
+        </div>
+        <div class="field">
+          <label for="af-role">Role</label>
+          <select id="af-role"><option value="">All</option></select>
+        </div>
+        <div class="field">
+          <label for="af-window">Window</label>
+          <select id="af-window">
+            <option value="1h">Last 1h</option>
+            <option value="6h">Last 6h</option>
+            <option value="24h">Last 24h</option>
+          </select>
+        </div>
+        <div class="spacer"></div>
+        <button type="button" class="ghost" id="af-pause">Pause stream</button>
+      </div>
+      <div class="stream-host" id="activity-host" aria-busy="false" aria-live="polite">
+        <div class="empty" id="activity-empty" hidden>No activity in this window.</div>
+        <ol class="stream" id="activity-list"></ol>
+      </div>
+    </section>
+
+    <!-- Knowledge tab: KG hybrid_search. -->
+    <section class="tab-panel" id="panel-knowledge" role="tabpanel" aria-labelledby="tab-knowledge" hidden>
+      <div class="kg-grid">
+        <section class="card-box" id="kg-main">
+          <h3>Knowledge Graph Search</h3>
+          <div class="body">
+            <form class="kg-form" id="kg-form" onsubmit="return false;">
+              <input type="text" id="kg-query" placeholder='Try: "where do we validate phase tokens"' autocomplete="off" />
+              <select id="kg-type">
+                <option value="">Any type</option>
+                <option value="symbol">symbol</option>
+                <option value="file">file</option>
+                <option value="doc">doc</option>
+                <option value="test">test</option>
+              </select>
+              <input type="number" id="kg-limit" min="1" max="100" value="25" title="Result limit" />
+              <button type="submit" class="primary" id="kg-go">Search</button>
+            </form>
+            <div class="kg-results" id="kg-results">
+              <div class="empty">Enter a query to search the knowledge graph.</div>
+            </div>
+          </div>
+        </section>
+        <aside class="card-box" id="kg-side">
+          <h3>Top Queried Nodes</h3>
+          <div class="body" id="kg-top"></div>
+        </aside>
+      </div>
+    </section>
+  </main>
+
+  <!-- New Project modal -->
+  <dialog class="modal" id="np-modal" aria-labelledby="np-title">
+    <header class="modal-head">
+      <h2 id="np-title">New Project</h2>
+      <button type="button" class="ghost" id="np-close" aria-label="Close">&times;</button>
+    </header>
+    <div class="modal-body">
+      <div class="field">
+        <label for="np-name">Name</label>
+        <input type="text" id="np-name" placeholder="my-saas-tool" />
+      </div>
+      <div class="field">
+        <label for="np-type">Project type</label>
+        <select id="np-type">
+          <option value="greenfield">greenfield</option>
+          <option value="evolve">evolve</option>
+          <option value="audit_only">audit_only</option>
+          <option value="operate">operate</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="np-owner">Owner (optional)</label>
+        <input type="text" id="np-owner" placeholder="khash@khash.com" />
+      </div>
+    </div>
+    <footer class="modal-foot">
+      <span class="muted" id="np-status"></span>
+      <div class="modal-actions">
+        <button type="button" class="ghost" id="np-cancel">Cancel</button>
+        <button type="button" class="primary" id="np-create">Create</button>
+      </div>
+    </footer>
+  </dialog>
+
+  <!-- Project drill modal -->
+  <dialog class="modal modal-wide" id="pd-modal" aria-labelledby="pd-title">
+    <header class="modal-head">
+      <h2 id="pd-title">Project</h2>
+      <button type="button" class="ghost" id="pd-close" aria-label="Close">&times;</button>
+    </header>
+    <div class="modal-body" id="pd-body">Loading...</div>
+    <footer class="modal-foot">
+      <span class="muted" id="pd-meta"></span>
+      <div class="modal-actions"><button type="button" class="ghost" id="pd-done">Close</button></div>
+    </footer>
+  </dialog>
+
+  <!-- Settings modal -->
+  <dialog class="modal" id="settings-modal" aria-labelledby="sm-title">
+    <header class="modal-head">
+      <h2 id="sm-title">Dashboard Settings</h2>
+      <button type="button" class="ghost" id="sm-close" aria-label="Close">&times;</button>
+    </header>
+    <div class="modal-body">
+      <div class="field">
+        <label for="opt-api">API base URL</label>
+        <input type="text" id="opt-api" value="http://127.0.0.1:8081" />
+      </div>
+      <div class="field">
+        <label for="opt-actor">Actor identity</label>
+        <input type="text" id="opt-actor" placeholder="e.g. khash@khash.com" />
+      </div>
+      <div class="field">
+        <label for="opt-poll-activity">Activity poll (sec)</label>
+        <input type="number" id="opt-poll-activity" min="2" max="600" value="5" />
+      </div>
+      <div class="field">
+        <label for="opt-poll-projects">Projects poll (sec)</label>
+        <input type="number" id="opt-poll-projects" min="2" max="600" value="10" />
+      </div>
+      <div class="field">
+        <label for="opt-poll-cost">Cost poll (sec)</label>
+        <input type="number" id="opt-poll-cost" min="10" max="3600" value="60" />
+      </div>
+      <div class="field">
+        <label for="opt-default-tab">Default tab</label>
+        <select id="opt-default-tab">
+          <option value="projects">projects</option>
+          <option value="cost">cost</option>
+          <option value="activity">activity</option>
+          <option value="knowledge">knowledge</option>
+        </select>
+      </div>
+    </div>
+    <footer class="modal-foot">
+      <span class="muted">Persisted to localStorage</span>
+      <div class="modal-actions"><button type="button" class="primary" id="sm-save">Save</button></div>
+    </footer>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <footer class="dash-foot">
+    Spine Dashboard v1 - vanilla HTML/JS/CSS - REST proxy on
+    <code id="foot-api">http://127.0.0.1:8081</code> - keys: <kbd>R</kbd> refresh,
+    <kbd>1-4</kbd> switch tabs, <kbd>Space</kbd> pause, <kbd>Esc</kbd> close modal.
+  </footer>
+
+  <script src="dashboard.js" type="module"></script>
+</body>
+</html>

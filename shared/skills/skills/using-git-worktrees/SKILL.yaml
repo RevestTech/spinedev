@@ -1,0 +1,27 @@
+slug: using-git-worktrees
+name: "Using git worktrees for parallel work"
+version: 1
+trigger:
+  applies_to_roles: [engineer, operator, datawright, conductor]
+  applies_to_phases: [build_in_progress]
+  applies_when:
+    - workers_count_gte: 2
+    - artifact_about_to_be_emitted: BuildArtifact
+  applies_when_or:
+    - directive_contains: "parallel"
+    - directive_contains: "worktree"
+priority: 150
+max_token_overhead: 800
+incompatible_with: []
+inherits_from: []
+metadata:
+  author: spine
+  source_pattern: obra/superpowers
+  story: STORY-4.1.3
+  why: >-
+    Cleaner parallel-worker isolation than scratch dirs; preserves git state,
+    enables PR-based review of worker output, and makes cleanup mechanical.
+  cross_refs:
+    - REQ-INIT-7 §7.5 FR-1 (parallel worker isolation)
+    - build/daemons/team-agent-daemon.sh (dispatch site)
+    - plan/swarm/swarm_engine.py (read-only swarms that skip this)

@@ -65,9 +65,55 @@ phases:
       members: [qa, operator]                         # verify subsystem surfaces ISO agents internally
       composition_rule: project_type
     artifact: Findings
-    template: findings-v1
+    template: findings-v1                             # legacy alias kept for back-compat
     tier_default: high                                # verification synthesis → high
     gate: { type: auto, approvers: [system], min_approvals: 0 }
+    # ── verify-as-a-phase (STORY-8.7.1/8.7.2/8.7.3) ───────────────────
+    # Canonical verify phase config. Org bundles patch this section via
+    # `verify_overrides:` (bundle-schema.yaml). DO NOT hardcode TRON
+    # specifics in source — every knob here is data the orchestrator
+    # reads at runtime from the locked pipeline manifest.
+    verify_config:
+      # MCP tool the orchestrator invokes when entering this phase.
+      # Maps 1:1 to router.sh SPINE_MCP_TOOL[verify]; see verify.py.
+      mcp_tool: verify_audit                          # STORY-8.7.1
+      # Which ISO agents run by default. Bundles widen (regulated) or
+      # narrow (lean) this set via verify_overrides.iso_agents_enabled.
+      # ComplianceISO + DocumentationISO are opt-in per bundle.
+      iso_agents_default:                             # STORY-8.7.2
+        - SecurityISO
+        - BuilderISO
+        - QAISO
+        - PerformanceISO
+      # TRON's 7 layers — opt-in flags so CI without docker / cost-sensitive
+      # orgs can disable expensive layers without forking source.
+      layers_enabled:
+        deterministic_scanners: true
+        schema_validation:      true
+        sandbox_execution:      true                  # disable in CI without docker
+        cross_llm_validation:   false                 # opt-in via bundle (EPIC-3.7)
+        calibration:            true
+        prompt_regression:      true
+      # Per-verify-run cost cap; overrides tier_routing.budget_caps for
+      # this phase only. Bundles raise (regulated) or tighten (lean).
+      cost_cap_usd: 5.00
+      # Severity floor for auto-remediation routing (STORY-8.7.3 / EPIC-9.8):
+      #   critical → fail-fast (blocked, user must intervene)
+      #   high     → auto-loop back to build_in_progress via remediation.sh
+      #   medium   → advance to verify_approved_with_warnings
+      #   low      → advance to verify_approved
+      auto_remediation_severity: high
+    # Project-type override hook for the findings template. Project types
+    # may register a typed findings template (e.g. findings-mobile-v1) by
+    # adding `verify_findings_template:` under project_types.<id>.
+    template_ref: verify_findings_v1                  # STORY-8.7.1
+    next: [verify_approved, build_in_progress]        # build_in_progress = remediation loop
+    transitions:
+      on_pass:     verify_approved
+      on_critical: blocked                            # status update only; no phase
+      on_high:     build_in_progress                  # STORY-8.7.3 (EPIC-9.8)
+      on_medium:   verify_approved_with_warnings      # advance + flag
+      on_low:      verify_approved
 
   - id: verify_approved
     ownership: verify
@@ -113,6 +159,8 @@ phases:
 
 # ── Project types (FR-2 / FR-3) ───────────────────────────────────────────────
 # custom-* types (custom-fintech, custom-healthcare, …) live in org overrides.
+# A project_type MAY register `verify_findings_template:` to scope the findings
+# template that the verify phase emits — see `templates:` below for the default.
 project_types:
   web-app:        { swarm_override: [researcher, engineer, operator, qa],            intake_template: templates/intake/web-app.yaml }
   internal-tool:  { swarm_override: [researcher, engineer, qa],                      intake_template: templates/intake/internal-tool.yaml }
@@ -120,6 +168,16 @@ project_types:
   mobile:         { swarm_override: [researcher, engineer, qa, operator],            intake_template: templates/intake/mobile.yaml }
   api-service:    { swarm_override: [researcher, engineer, qa, operator],            intake_template: templates/intake/api-service.yaml }
   cli-tool:       { swarm_override: [researcher, engineer, qa],                      intake_template: templates/intake/cli-tool.yaml }
+
+# ── Templates (project-type-overridable) ──────────────────────────────────────
+# Named templates referenced by `phase.template_ref`. Project types or org
+# bundles may register typed variants (e.g. verify_findings_mobile_v1) that
+# the orchestrator resolves at dispatch time. STORY-8.7.1.
+templates:
+  verify_findings_v1:
+    path: templates/verify/findings_v1.yaml
+    schema: shared/mcp/tools/verify.py#VerifyFindings   # Pydantic schema source
+    overridable_by: [project_type, org_bundle]
 
 # ── Cost-aware tier routing (FR-6) ────────────────────────────────────────────
 tier_routing:

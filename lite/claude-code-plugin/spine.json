@@ -1,0 +1,78 @@
+{
+  "name": "spine",
+  "version": "lite-1",
+  "spine_version": "v2-lite-1",
+  "description": "Spine — local-deployed AI engineering team (lite mode). Role prompts, skills, and intake templates for Claude Code, with zero infrastructure dependencies.",
+  "author": {
+    "name": "Khash Sarrafi",
+    "url": "https://github.com/RevestTech/spinedev"
+  },
+  "homepage": "https://github.com/RevestTech/spinedev",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/RevestTech/spinedev.git"
+  },
+  "license": "MIT",
+  "keywords": [
+    "spine",
+    "agent-team",
+    "sdlc",
+    "claude-code",
+    "role-prompts",
+    "skills",
+    "lite"
+  ],
+  "claude_code_compatible": true,
+  "minimum_claude_code_version": "1.0.0",
+  "skills": [
+    {
+      "name": "brainstorming",
+      "path": "skills/brainstorming/SKILL.yaml",
+      "auto_trigger": true
+    },
+    {
+      "name": "verification-before-completion",
+      "path": "skills/verification-before-completion/SKILL.yaml",
+      "auto_trigger": true
+    }
+  ],
+  "role_prompts_dir": "role-prompts",
+  "intake_templates_dir": "templates/intake",
+  "artifacts_dir": "artifacts",
+  "recipes_dir": "recipes",
+  "master_doc": "SPINE.md",
+  "session_start_load": [
+    "SPINE.md"
+  ],
+  "mentions": {
+    "@engineer": "role-prompts/engineer.md",
+    "@product": "role-prompts/product.md",
+    "@architect": "role-prompts/architect.md",
+    "@planner": "role-prompts/planner.md",
+    "@operator": "role-prompts/operator.md",
+    "@datawright": "role-prompts/datawright.md",
+    "@qa": "role-prompts/qa.md",
+    "@auditor": "role-prompts/auditor.md",
+    "@memory": "role-prompts/memory.md",
+    "@researcher": "role-prompts/researcher.md",
+    "@seer": "role-prompts/seer.md",
+    "@conductor": "role-prompts/conductor.md",
+    "@ux": "role-prompts/ux.md"
+  },
+  "upgrade": {
+    "to": "full",
+    "command": "bash lite/upgrade-to-full.sh",
+    "docs": "lite/feature_matrix.md"
+  },
+  "excludes": [
+    "postgres",
+    "docker",
+    "daemons",
+    "mcp_server",
+    "cost_router",
+    "kg_indexer",
+    "tron_verify",
+    "audit_log",
+    "eval_harness"
+  ]
+}

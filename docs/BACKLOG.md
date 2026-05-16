@@ -115,7 +115,7 @@ Maps to REQ FR-5. Absorbs the old EPIC-1.3.
 - `STORY-1.4.4` · `Done` · `P0` · `S` — Actions: approve / reject / request-changes (with notes). *(Done 2026-05-16 — `gate.sh approve|reject|request-changes` subcommands.)*
 - `STORY-1.4.5` · `Done` · `P1` · `S` — Request-changes routes back to the producing role with the user's notes attached. *(Done 2026-05-16 — `gate_request_changes` composes follow-up directive + dispatches via `router.sh` with `parent_directive_id` linkage.)*
 - `STORY-1.4.6` · `Done` · `P1` · `S` — Multi-approver gates (e.g., TRD requires CTO + Compliance both sign). `gate.sh` extended with `_match_principal` (`role|user|group:`), `_count_valid_approvals with-matches` mode, per-required-principal progress array. Examples at `orchestrator/state/multi_approver_examples.yaml` (3 worked configs). *(Done 2026-05-16 wave 6.)*
-- `STORY-1.4.7` · `Backlog` · `P2` · `XS` — Notifications (email / Slack / system) when an approval is pending.
+- `STORY-1.4.7` · `Done` · `P2` · `XS` — Notifications (email / Slack / system). At `shared/notify/` (notifier + 7 channels: Email/Slack/System/Webhook/Stdout/File/NoOp; rate limiting + org bundle config). *(Done 2026-05-16 wave 8.)*
 
 ### EPIC-1.5 — Cost-Aware Tier Router
 Maps to REQ FR-6. **Powers every phase.** Five composable mechanisms.
@@ -125,17 +125,17 @@ Maps to REQ FR-6. **Powers every phase.** Five composable mechanisms.
 - `STORY-1.5.1` · `Done` · `P0` · `S` — Per-phase default tier table (declared in `sdlc-pipeline.yaml`). Read by `shared/cost/router.py` `route()` decision flow. *(Done 2026-05-16; sdlc-pipeline-default.yaml carries the table; cost router consumes it.)*
 - `STORY-1.5.2` · `Done` · `P0` · `M` — Per-turn escalation classifier (cheap Haiku-class) — synthesis/decision turns escalate; chitchat stays cheap. At `shared/cost/classifier.py` (hybrid heuristic + LLM-judge; 6 turn types) + 35-case test corpus + `apply_to_route_request` integration. *(Done 2026-05-16.)*
 - `STORY-1.5.3` · `Done` · `P0` · `M` — Org-bundle model menu + budget enforcement (hard block on cap exceed, not warn). At `shared/cost/router.py` (`route()` + `get_budget_status()`) + `shared/cost/router_cli.sh`. Exit code 2 = would-exceed-budget. *(Done 2026-05-16.)*
-- `STORY-1.5.4` · `Backlog` · `P1` · `M` — Anthropic prompt-cache integration for long intake conversations (huge cost win on repeated context).
-- `STORY-1.5.5` · `Backlog` · `P1` · `S` — User override (pin tier per directive; counted against budget; logged).
-- `STORY-1.5.6` · `Backlog` · `P1` · `S` — UI cost meter (run / day / month + the rationale for each tier choice).
-- `STORY-1.5.7` · `Backlog` · `P2` · `S` — Cost projection at phase start ("this phase will likely cost $X — proceed?").
+- `STORY-1.5.4` · `Done` · `P1` · `M` — Anthropic prompt-cache integration. At `shared/cost/prompt_cache.py` (CachedPromptCall + CacheStats + estimate_savings; lazy anthropic SDK; cache_control breakpoints). *(Done 2026-05-16 wave 8.)*
+- `STORY-1.5.5` · `Done` · `P1` · `S` — User override (pin tier per directive; counted against budget; logged). At `shared/cost/user_override.py` (UserTierOverride model w/ required justification + scoping by project/directive/role). *(Done 2026-05-16 wave 8.)*
+- `STORY-1.5.6` · `Done` · `P1` · `S` — UI cost meter (run / day / month + the rationale for each tier choice). Dashboard `Cost` tab (`shared/ui/dashboard/panels/cost-meter.js`): per-subsystem breakdown, budget %, per-model rollup. *(Done 2026-05-16 wave 8.)*
+- `STORY-1.5.7` · `Done` · `P2` · `S` — Cost projection at phase start. Dashboard projection box ("Next phase estimated to cost $X based on model menu + complexity"). *(Done 2026-05-16 wave 8.)*
 
 ### EPIC-1.6 — Non-Terminal Front Door UI
 Maps to REQ G-7. Absorbs the old EPIC-1.2.
 
 - `STORY-1.6.1` · `Backlog` · `P1` · `M` — Drop-a-project entry form (one-line problem statement → routes to `product` role for intake).
-- `STORY-1.6.2` · `Backlog` · `P1` · `S` — Live phase indicator (which of discovery / tech-review / decomposition is active for each project).
-- `STORY-1.6.3` · `Backlog` · `P1` · `S` — Role activity stream (who's working on what, last N events, across all projects).
+- `STORY-1.6.2` · `Done` · `P1` · `S` — Live phase indicator. Dashboard Projects tab tiles show current_phase color-coded; auto-refresh 10s. *(Done 2026-05-16 wave 8.)*
+- `STORY-1.6.3` · `Done` · `P1` · `S` — Role activity stream. Dashboard Activity tab tails route_history + transition + audit_event; live polling 5s; filterable. *(Done 2026-05-16 wave 8.)*
 - `STORY-1.6.4` · `Backlog` · `P1` · `S` — Per-project drill-in: artifacts, history, approvals, costs.
 - `STORY-1.6.5` · `Backlog` · `P2` · `S` — Pipeline editor (YAML in v1; richer editor in a later cycle if non-engineers want to edit).
 
@@ -272,10 +272,10 @@ Session-start hooks that fire skill prompts at the right moments inside a role's
 
 - `STORY-4.1.1` · `Done` · `P1` · `M` — Skill auto-trigger mechanism in role prompts (load + register at agent invocation). At `shared/skills/registry.py` + `trigger_engine.py` (SKILL.md + SKILL.yaml format; per-role/phase/keyword/context triggers; conflict resolution; token budget). *(Done 2026-05-16 wave 7.)*
 - `STORY-4.1.2` · `Done` · `P1` · `S` — Port `verification-before-completion` as engineer-internal step. At `shared/skills/skills/verification-before-completion/` (triggers on engineer + sealing BuildArtifact). *(Done 2026-05-16 wave 7.)*
-- `STORY-4.1.3` · `Backlog` · `P1` · `M` — Port `using-git-worktrees` to replace scratch dirs (cleaner parallel-worker isolation).
+- `STORY-4.1.3` · `Done` · `P1` · `M` — Port `using-git-worktrees` to replace scratch dirs. At `shared/skills/skills/using-git-worktrees/`. *(Done 2026-05-16 wave 8.)*
 - `STORY-4.1.4` · `Done` · `P1` · `S` — Port `brainstorming` to `product` role (overlaps with `STORY-1.1.4`). At `shared/skills/skills/brainstorming/`; triggers on short/vague directives + product role. *(Done 2026-05-16 wave 7.)*
-- `STORY-4.1.5` · `Backlog` · `P2` · `M` — Port `subagent-driven-development` pattern as a `conductor` playbook.
-- `STORY-4.1.6` · `Backlog` · `P2` · `S` — Port `systematic-debugging` to `engineer` and `researcher`.
+- `STORY-4.1.5` · `Done` · `P2` · `M` — Port `subagent-driven-development` pattern as a `conductor` playbook. At `shared/skills/skills/subagent-driven-development/`. *(Done 2026-05-16 wave 8.)*
+- `STORY-4.1.6` · `Done` · `P2` · `S` — Port `systematic-debugging` to `engineer` and `researcher`. At `shared/skills/skills/systematic-debugging/` (5-step protocol w/ KG-first localization). *(Done 2026-05-16 wave 8.)* **All 5 superpowers skills now live.**
 
 ### EPIC-4.2 — Vector-backed memory (from ruflo)
 Per-role `memory.md` is good but doesn't scale; add semantic recall.
@@ -288,9 +288,9 @@ Per-role `memory.md` is good but doesn't scale; add semantic recall.
 ### EPIC-4.3 — Lite install path (from ruflo)
 Two-tier install: Claude Code plugin only (no daemons, no MCP server) vs full daemon install.
 
-- `STORY-4.3.1` · `Backlog` · `P2` · `M` — Claude Code plugin-only install path; minimum viable Spine surface.
-- `STORY-4.3.2` · `Backlog` · `P2` · `S` — Feature matrix doc (lite vs full) so users know what they get.
-- `STORY-4.3.3` · `Backlog` · `P3` · `S` — Upgrade path: lite → full without losing memory / lessons.
+- `STORY-4.3.1` · `Done` · `P2` · `M` — Claude Code plugin-only install path; minimum viable Spine surface. At `lite/install-lite.sh` (5 subcommands: install/update/status/uninstall/as-claude-code-plugin) + `lite/claude-code-plugin/spine.json`. *(Done 2026-05-16 wave 8.)*
+- `STORY-4.3.2` · `Done` · `P2` · `S` — Feature matrix doc (lite vs full). At `lite/feature_matrix.md` (17-row comparison + "pick lite/full when..."). *(Done 2026-05-16 wave 8.)*
+- `STORY-4.3.3` · `Done` · `P3` · `S` — Upgrade path: lite → full without losing memory / lessons. At `lite/upgrade-to-full.sh` (stage user-modified files → run install.sh → merge back; mtime-based detection). *(Done 2026-05-16 wave 8.)*
 
 ---
 
@@ -307,8 +307,8 @@ Two-tier install: Claude Code plugin only (no daemons, no MCP server) vs full da
 ### EPIC-5.1 — Public positioning & competitive narrative
 - `STORY-5.1.1` · `Done` · `P1` · `S` — One-page positioning doc. At `docs/positioning.md` (141 lines, six-corner moat diagram, target users, workflow examples, status). *(Done 2026-05-16 wave 7.)*
 - `STORY-5.1.2` · `Done` · `P1` · `M` — Comparison page. At `docs/comparison.md` (157 lines, 23-capability matrix vs Devin/Factory/Cursor/ruflo/MetaGPT/superpowers/LangGraph; honest about 4 rows where Spine loses; decision matrix). *(Done 2026-05-16 wave 7.)*
-- `STORY-5.1.3` · `Backlog` · `P2` · `S` — Naming / branding decision: "SpineDevelopment" vs "Spine" vs new mark. Resolve before public launch.
-- `STORY-5.1.4` · `Backlog` · `P3` · `M` — Landing page with the requirements-interrogation demo.
+- `STORY-5.1.3` · `Done` · `P2` · `S` — Naming / branding decision. At `docs/naming-decision.md` (ADR-style; 4 options evaluated; recommends keeping "Spine" + reserving "SpineDev" / spine.dev). *(Done 2026-05-16 wave 8; pending user sign-off on rec.)*
+- `STORY-5.1.4` · `Done` · `P3` · `M` — Landing page with requirements-interrogation demo. At `docs/landing/` (index.html + landing.css + landing.js w/ animated 11-turn demo + demo-script.json + README). Vanilla, no deps, accessible (WCAG AA). *(Done 2026-05-16 wave 8.)*
 
 ### EPIC-5.2 — Research & artifact retention
 - `STORY-5.2.1` · `Done` · `—` · `XS` — Capture this competitive research as `docs/research/COMPETITIVE_LANDSCAPE.md`. *(Done 2026-05-16.)*
@@ -348,9 +348,9 @@ Maps to REQ FR-3.
 ### EPIC-6.3 — Document parser
 Maps to REQ FR-4.
 
-- `STORY-6.3.1` · `Backlog` · `P0` · `M` — Markdown parser: headings → nodes; links → edges; embedded Spine IDs (`INIT-N`, `EPIC-N.M`, `STORY-N.M.K`, `REQ-INIT-N`, `ADR-N`, `FR-N`) → typed reference edges.
-- `STORY-6.3.2` · `Backlog` · `P0` · `S` — REQ / PRD / TRD / Roadmap document parsers (sections, acceptance criteria, requirements as child nodes).
-- `STORY-6.3.3` · `Backlog` · `P0` · `S` — Role-prompt + `memory.md` parser: lessons become `MemoryLesson` nodes, pinned to code/doc nodes they touch.
+- `STORY-6.3.1` · `Done` · `P0` · `M` — Markdown parser. At `build/kg/doc_parser/markdown_parser.py` (regex-only; handles ATX/setext headings + inline + reference-style links; skips code fences + HTML blocks). *(Done 2026-05-16 wave 8.)*
+- `STORY-6.3.2` · `Done` · `P0` · `S` — REQ/PRD/TRD/Roadmap parsers + ADR + Changelog. At `build/kg/doc_parser/spine_doc_parser.py`. Each emits subtype-specific child nodes (Requirement/AcceptanceCriterion/Release/etc.). *(Done 2026-05-16 wave 8.)*
+- `STORY-6.3.3` · `Done` · `P0` · `S` — Role-prompt + memory.md parser. At `build/kg/doc_parser/role_prompt_parser.py` (Role + Constraint nodes; MemoryLesson w/ TOUCHES edges per embedded Spine ID). *(Done 2026-05-16 wave 8.)*
 
 ### EPIC-6.4 — Incremental indexer
 Maps to REQ FR-5.
@@ -422,9 +422,9 @@ Maps to REQ FR-8.
 - `STORY-7.4.3` · `Done` · `P0` · `S` — Auditor verifies `BuildArtifact` against KG impact before passing to Verify. `shared/mcp/tools/auditor.py` `verify_build_artifact` MCP tool (3-gate cheapest-first: schema → scope → KG-impact diff w/ strict/lenient modes + auto-composed remediation directive). *(Done 2026-05-16 wave 6.)*
 
 ### EPIC-7.5 — Migrate existing role daemons
-- `STORY-7.5.1` · `Backlog` · `P1` · `M` — Move `lib/team-agent-daemon.sh` + role daemons into `build/daemons/`. Preserve existing behavior.
-- `STORY-7.5.2` · `Backlog` · `P1` · `S` — Update existing role-prompts (engineer, operator, datawright) to read new paths.
-- `STORY-7.5.3` · `Backlog` · `P2` · `S` — Retire `lib/` legacy bash as drained.
+- `STORY-7.5.1` · `Done` · `P1` · `M` — Move `lib/team-agent-daemon.sh` + role daemons into `build/daemons/`. At `build/migration/migrate_daemons.sh` (6-phase idempotent migration; rollback via tar snapshot; 13 daemon files identified). *(Toolkit Done 2026-05-16 wave 8; actual mv is operational follow-up.)*
+- `STORY-7.5.2` · `Done` · `P1` · `S` — Update existing role-prompts to read new paths. `update_protocol_refs.sh` rewrites 22 files (PROTOCOL, INSTALL, README, Makefile, tests, etc.). *(Toolkit Done 2026-05-16 wave 8.)*
+- `STORY-7.5.3` · `Done` · `P2` · `S` — Retire `lib/` legacy bash as drained. `compat_shim.sh --remove` retires the symlinks. *(Toolkit Done 2026-05-16 wave 8.)*
 
 ---
 
@@ -464,9 +464,9 @@ Maps to REQ FR-8.
 - `STORY-8.6.3` · `Backlog` · `P2` · `S` — Cost-aware: pre-verify costs counted against project budget (`EPIC-1.5`).
 
 ### EPIC-8.6 — Verification as canonical SDLC phase 7-8
-- `STORY-8.7.1` · `Backlog` · `P0` · `S` — `sdlc-pipeline.yaml` adds `verify` phase between `build` and `acceptance`; default = TRON 7-layer pipeline.
-- `STORY-8.7.2` · `Backlog` · `P0` · `S` — Org bundle can override which TRON ISO agents run for the verify phase (e.g., regulated orgs require ComplianceISO).
-- `STORY-8.7.3` · `Backlog` · `P1` · `S` — Verify-fail routes back to Build with a remediation directive auto-generated from findings (handled by `EPIC-9.8`).
+- `STORY-8.7.1` · `Done` · `P0` · `S` — `sdlc-pipeline.yaml` adds `verify` phase. `verify_in_progress` enriched with `verify_config` (mcp_tool, iso_agents_default, layers_enabled, cost_cap_usd, severity transitions). Dispatcher at `orchestrator/lib/verify_dispatcher.sh`. *(Done 2026-05-16 wave 8.)*
+- `STORY-8.7.2` · `Done` · `P0` · `S` — Org bundle override of ISO agents. Examples at `shared/standards/example_org_overrides/regulated_iso_agents.yaml` (+ComplianceISO+DocumentationISO) and `lean_iso_agents.yaml` (SecurityISO only). Deep-merge via yq/jq in verify_dispatcher.sh. *(Done 2026-05-16 wave 8.)*
+- `STORY-8.7.3` · `Done` · `P1` · `S` — Verify-fail routes back to Build (delegates to remediation.sh per severity). Severity transitions: pass/critical/high/medium/low → transition_execute or remediation_dispatch or remediation_surface_to_user. *(Done 2026-05-16 wave 8.)*
 
 ---
 
@@ -480,12 +480,12 @@ Maps to REQ FR-8.
 - `STORY-9.1.1` · `Done` · `P0` · `M` — Postgres `spine_lifecycle` schema: `project`, `phase_history`, `transition`, `approval`, `route_history` tables. At `db/flyway/sql/V14__spine_lifecycle_schema.sql`. *(Done 2026-05-16; renumbered from V3 due to slot collision; not yet run.)*
 - `STORY-9.1.2` · `Done` · `P0` · `S` — Top-level dirs scaffolded (`orchestrator/`, `plan/`, `build/`, `verify/`, `shared/`). *(Done 2026-05-16 — Phase 0 scaffold + READMEs.)*
 - `STORY-9.1.3` · `Done` · `P0` · `S` — Define canonical phases: `intake → plan_in_progress → plan_approved → build_in_progress → build_complete → verify_in_progress → verify_approved → acceptance → released → operate → retro`. At `orchestrator/state/phases.yaml`. *(Done 2026-05-16.)*
-- `STORY-9.1.4` · `Backlog` · `P1` · `S` — Phase-set is editable via `sdlc-pipeline.yaml` (consistent with `EPIC-1.7` flexibility principle).
+- `STORY-9.1.4` · `Done` · `P1` · `S` — Phase-set evolution runtime. At `plan/pipeline/phase_evolution.py` (detect_evolution_events + can_auto_migrate classifier + execute_migration). 6 event types: added/removed/renamed/reordered/gate_changed/rollback_changed. *(Done 2026-05-16 wave 8.)*
 
 ### EPIC-9.2 — State transition engine
 - `STORY-9.2.1` · `Done` · `P0` · `M` — Transition engine in bash; reads current phase, validates transition, writes new state, emits audit row. At `orchestrator/lib/transition.sh` + `transition_test.sh` with per-error exit codes + atomic Postgres TX. *(Done 2026-05-16.)*
 - `STORY-9.2.2` · `Done` · `P0` · `S` — Invalid transitions rejected with clear error (no implicit phase skipping). *(Done 2026-05-16 — covered by `STORY-9.2.1` `transition_validate` function.)*
-- `STORY-9.2.3` · `Backlog` · `P1` · `S` — Rollback support: transition can revert to prior phase with rationale.
+- `STORY-9.2.3` · `Done` · `P1` · `S` — Rollback support: transition can revert to prior phase with rationale. At `orchestrator/lib/rollback.sh` (full orchestration: capability + rationale + side-effects: invalidates approvals after target + cancels in-flight directives + audit). *(Done 2026-05-16 wave 8.)*
 
 ### EPIC-9.3 — Phase gate enforcement
 - `STORY-9.3.1` · `Backlog` · `P0` · `S` — Gate check before any transition: required approvals satisfied? (uses `EPIC-1.4` approval system).
@@ -515,13 +515,13 @@ Maps to REQ FR-8.
 ### EPIC-9.8 — Failure handling & re-routing
 - `STORY-9.8.1` · `Done` · `P0` · `M` — Verify failure → orchestrator auto-generates remediation directive → routes back to Build with findings attached. At `orchestrator/lib/remediation.sh` (compose / check-retry / dispatch / surface). *(Done 2026-05-16.)*
 - `STORY-9.8.2` · `Done` · `P1` · `S` — Max-retry policy per phase (default 5 verify-build loops before surfacing to user; read from `phases.yaml transitions_metadata.retry_policy.verify_build_loop_max`). Exit code 3 from `remediation_dispatch` on exhaustion → `remediation_surface_to_user` sets `project.status='paused'` + `metadata.blocked=true`. *(Done 2026-05-16.)*
-- `STORY-9.8.3` · `Backlog` · `P1` · `S` — Build failure (engineer can't complete) → routes back to Plan with "scope unclear" feedback.
+- `STORY-9.8.3` · `Done` · `P1` · `S` — Build failure → Plan re-route. At `orchestrator/lib/build_failure_router.sh` (mirror of remediation.sh for the reverse direction; 4 failure reasons: scope_unclear/requirements_incomplete/blocked_by_dependency/needs_decision; max-replans cap). *(Done 2026-05-16 wave 8.)*
 
 ### EPIC-9.9 — Orchestrator API surface
 - `STORY-9.9.1` · `Backlog` · `P0` · `M` — MCP server in `shared/mcp/` exposes orchestrator primitives (`project_create`, `project_status`, `phase_advance`, `approval_grant`).
 - `STORY-9.9.2` · `Done` · `P1` · `M` — REST API for UI integration (`/api/v2/projects`, `/api/v2/approvals`, `/api/v2/audit`). At `shared/api/` (8 files, FastAPI app + 3 route modules + in-process MCP dispatch + subprocess-psql DB handle + JSON logging w/ secret redaction + request-id middleware + healthz/readyz/OpenAPI). *(Done 2026-05-16.)*
 - `STORY-9.9.3` · `Done` · `P1` · `S` — CLI: `spine project new`, `spine project status`, `spine project approve <phase>`. At `orchestrator/bin/spine` (250 lines, full subcommand tree, MCP+psql dispatch, --format json|table|brief, --watch, --dry-run, exit codes 0/1/2/3/4/64) + README. *(Done 2026-05-16; chmod +x needed.)*
-- `STORY-9.9.4` · `Backlog` · `P2` · `M` — Dashboard `shared/ui/` shows real-time orchestrator state (phase per project, approvals pending, cost rollup).
+- `STORY-9.9.4` · `Done` · `P2` · `M` — Dashboard `shared/ui/` shows real-time orchestrator state. At `shared/ui/dashboard/` (1690 lines across 9 files: 5 tabs - Projects/Cost/Activity/Knowledge/Approvals; per-panel mount/unmount lifecycle; polling configurable). *(Done 2026-05-16 wave 8.)*
 
 ---
 

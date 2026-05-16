@@ -1,0 +1,75 @@
+{
+  "scenario": "A vibecoder wants to build a personal reading-list tracker. Watch the product role refuse to build, run the 5-move dialogue protocol, and end with a signed PRD.",
+  "project_id": "family-media-tracker-v1",
+  "template_ref": "plan/templates/intake/web-app.yaml",
+  "role_prompt_ref": "lib/role-prompts/product.md",
+  "estimated_cost_usd": 0.42,
+  "turns": [
+    {
+      "move": 1,
+      "label": "Naive cast",
+      "actor": "user",
+      "text": "I want to build a tool to track my reading list."
+    },
+    {
+      "move": 1,
+      "label": "Naive cast",
+      "actor": "product",
+      "text": "Move 1 — Naive cast. Best guess: a personal web app that lets you log books you want to read, books you're reading, and books you've finished. Single user (you), hosted publicly, mobile-responsive but not native. Auth via email or social login. No social/sharing features. Goal: replace a Notes app for book tracking. Stated assumptions: web (not mobile native), single tenant, email/password auth, hobby-budget hosting. Right strawman? What's wrong about this?"
+    },
+    {
+      "move": 2,
+      "label": "Provoke correction",
+      "actor": "user",
+      "text": "Actually it's for my whole family — 4 people. And I want to track movies + TV shows too, not just books."
+    },
+    {
+      "move": 3,
+      "label": "Reframe and redo",
+      "actor": "product",
+      "text": "Move 3 — Reframe. The frame was wrong on two axes: not single-user (family of 4), not books-only (books + movies + TV). Throwing out the strawman and rebuilding. New corrected frame: a multi-user family media tracker spanning books and screen content, with per-person lists. Confirming before I redo: family of 4 with separate accounts, tracking books + movies + TV — yes?"
+    },
+    {
+      "move": 3,
+      "label": "Reframe and redo",
+      "actor": "user",
+      "text": "Yes — separate accounts, can see each other's lists. Cloud hosted. Goodreads import would be nice but not required."
+    },
+    {
+      "move": 3,
+      "label": "Reframe and redo",
+      "actor": "product",
+      "text": "New strawman: multi-user web app (family of 4, separate accounts, cross-user visibility on lists). Each user maintains to-consume, in-progress, and finished lists across books, movies, and TV. Ratings + notes per item. Cloud hosted. Auth: email/password per user with a shared family group. External metadata lookup (Goodreads / TMDB) on title input. Mobile-responsive. Goodreads CSV import marked as nice-to-have. Still right? Anything to attack?"
+    },
+    {
+      "move": 4,
+      "label": "Tier the outputs",
+      "actor": "product",
+      "text": "Move 4 — Tiering per plan/templates/intake/web-app.yaml::must_should_could. Let's lock the cut-line. MUST: 4 user accounts, books + movies + TV tracking with status (to/in-progress/done), ratings + notes per item, cross-user visibility. SHOULD: external metadata lookup (Goodreads/TMDB by title), mobile-responsive. COULD: Goodreads CSV import. WON'T (out_of_scope v1): social features beyond family, native mobile apps, recommendation engine, sharing outside family. Any item in the wrong bucket?"
+    },
+    {
+      "move": 4,
+      "label": "Tier the outputs",
+      "actor": "user",
+      "text": "Looks right. Mobile-responsive should be a MUST — my kids will only use it from their phones."
+    },
+    {
+      "move": 4,
+      "label": "Tier the outputs",
+      "actor": "product",
+      "text": "Promoting mobile-responsive from SHOULD to MUST. Confirming WON'T list: no social beyond family, no native apps, no recommendation engine, no sharing outside family — we're saying no to all four for v1. Yes?"
+    },
+    {
+      "move": 5,
+      "label": "Produce the artifact",
+      "actor": "user",
+      "text": "Yes. Looks good."
+    },
+    {
+      "move": 5,
+      "label": "Produce the artifact",
+      "actor": "product",
+      "text": "Move 5 — Sealing PRD. Validating against prd-v1 schema... project_id=family-media-tracker-v1, project_type=web_app, 4 acceptance criteria, 4 MUST goals, 4 out_of_scope entries, 0 TBD fields. Written to plan/artifacts/family-media-tracker-v1/PRD.md. Estimated intake cost: $0.42. Awaiting sign-off via gate.sh approve. Next phase on approval: Technical Review swarm (architect leads researcher + engineer + operator + qa) produces TRD."
+    }
+  ]
+}

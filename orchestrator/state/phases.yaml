@@ -69,8 +69,45 @@ phases:
     subsystem: verify
     artifact: null
     role_lead: auditor        # Spine role; TRON AuditManager underneath
-    next: [verify_approved, build_in_progress]   # verify-fail loops to build
+    next: [verify_approved, verify_approved_with_warnings, build_in_progress]   # verify-fail loops to build
     rollback_to: [build_complete]
+    # ── Runtime mirror of plan/artifacts/sdlc-pipeline-default.yaml ──
+    # The pipeline manifest is the SOURCE OF TRUTH; phases.yaml is the
+    # orchestrator's runtime view. verify_dispatcher.sh reads these
+    # fields when a project enters this phase. Bundles override via
+    # verify_overrides.iso_agents_enabled (bundle-schema.yaml).
+    # STORY-8.7.1 / STORY-8.7.2 / STORY-8.7.3.
+    verify_config:
+      mcp_tool: verify_audit
+      iso_agents_enabled:                            # default; bundle may override
+        - SecurityISO
+        - BuilderISO
+        - QAISO
+        - PerformanceISO
+      layers_enabled:
+        deterministic_scanners: true
+        schema_validation:      true
+        sandbox_execution:      true
+        cross_llm_validation:   false                # opt-in via bundle
+        calibration:            true
+        prompt_regression:      true
+      cost_cap_usd: 5.00
+      auto_remediation_severity: high                # critical→blocked; high→loop; medium→advance-with-warnings; low→advance
+      transitions:
+        on_pass:     verify_approved
+        on_critical: blocked                         # status update only; not a phase
+        on_high:     build_in_progress               # STORY-8.7.3 via remediation.sh
+        on_medium:   verify_approved_with_warnings
+        on_low:      verify_approved
+
+  - id: verify_approved_with_warnings
+    label: "Verify Approved with Warnings (medium-severity findings flagged)"
+    subsystem: verify
+    artifact: verify_findings
+    role_lead: auditor
+    gate: user_approval         # user must acknowledge the warnings
+    next: [acceptance, build_in_progress]
+    rollback_to: [verify_in_progress, build_in_progress]
 
   - id: verify_approved
     label: "Verify Approved (VerifyFindings green or accepted)"

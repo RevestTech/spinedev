@@ -1,0 +1,30 @@
+slug: subagent-driven-development
+name: "Subagent-driven development"
+version: 1
+trigger:
+  applies_to_roles: [conductor, planner, engineer, architect]
+  applies_to_phases: [plan_in_progress, build_in_progress, technical_review]
+  applies_when:
+    - directive_length_chars_gte: 500
+  applies_when_or:
+    - directive_contains: "parallel"
+    - directive_contains: "decompose"
+    - workers_count_gte: 2
+priority: 180
+max_token_overhead: 1000
+incompatible_with: []
+inherits_from: []
+metadata:
+  author: spine
+  source_pattern: obra/superpowers
+  story: STORY-4.1.5
+  why: >-
+    Long or naturally-parallel directives benefit from decomposition into
+    isolated sub-directives dispatched to parallel sub-agents and aggregated.
+    Makes Spine's existing planner-manager-worker pattern explicit at dispatch
+    time rather than leaving it as folklore.
+  cross_refs:
+    - REQ-INIT-1 §1.5 FR-3 (decomposition discipline)
+    - plan/swarm/swarm_engine.py (Tech Review Swarm primitive)
+    - build/daemons/team-agent-daemon.sh (build-side worker dispatch)
+    - using-git-worktrees (co-fires when code is touched)

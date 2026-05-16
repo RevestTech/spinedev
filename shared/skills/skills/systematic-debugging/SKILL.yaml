@@ -1,0 +1,31 @@
+slug: systematic-debugging
+name: "Systematic debugging"
+version: 1
+trigger:
+  applies_to_roles: [engineer, researcher, datawright]
+  applies_to_phases: [build_in_progress]
+  applies_when_or:
+    - directive_contains: "bug"
+    - directive_contains: "fix"
+    - directive_contains: "broken"
+    - directive_contains: "failure"
+    - directive_contains: "exception"
+    - directive_contains: "error"
+    - directive_contains: "doesn't work"
+    - directive_contains: "not working"
+priority: 220
+max_token_overhead: 900
+incompatible_with: []
+inherits_from: []
+metadata:
+  author: spine
+  source_pattern: obra/superpowers
+  story: STORY-4.1.6
+  why: >-
+    Default failure mode on bug directives is hypothesis-jumping followed by
+    shotgun fixes. The 5-step protocol (reproduce, localize, hypothesize, test,
+    fix+verify) forces evidence before code changes.
+  cross_refs:
+    - REQ-INIT-7 (engineer artifact contract)
+    - verification-before-completion (picks up at Step 5)
+    - KG tools (find_callers, code_neighborhood, impact_radius, doc_for_region)

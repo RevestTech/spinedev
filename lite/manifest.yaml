@@ -1,0 +1,112 @@
+# Spine lite bundle manifest
+#
+# Declarative definition of what `install-lite.sh` ships into ~/.spine-lite/.
+# Used by install-lite.sh (component selection) and upgrade-to-full.sh
+# (knowing what to carry over).
+#
+# Edit `enabled: false` to opt out of a component without modifying the
+# installer. The installer still always ships role-prompts (they are the
+# minimum viable Spine surface).
+#
+# Implements STORY-4.3.2 — the "what's in lite" source of truth.
+
+version: 1
+spine_version: "v2-lite-1"
+
+# ── What ships in lite ─────────────────────────────────────────────────
+components:
+
+  role_prompts:
+    enabled: true
+    description: "All 13 Spine role personas; usable via @-mention in Claude Code."
+    source: "lib/role-prompts/"        # falls back to build/roles/ post-migration
+    target: "~/.spine-lite/role-prompts/"
+    files:
+      - engineer.md
+      - product.md
+      - architect.md
+      - planner.md
+      - operator.md
+      - datawright.md
+      - qa.md
+      - auditor.md
+      - memory.md
+      - researcher.md
+      - seer.md
+      - conductor.md
+      - ux.md
+
+  skills:
+    enabled: true
+    description: "Auto-triggering Claude Code skills (no host process required)."
+    source: "shared/skills/skills/"
+    target: "~/.spine-lite/skills/"
+    bundles:
+      - brainstorming
+      - verification-before-completion
+      # Future skill bundles go here as they ship.
+
+  templates:
+    enabled: true
+    description: "Intake templates for the 6 supported project archetypes."
+    source: "plan/templates/intake/"
+    target: "~/.spine-lite/templates/intake/"
+    files:
+      - web-app.yaml
+      - internal-tool.yaml
+      - data-pipeline.yaml
+      - mobile.yaml
+      - api-service.yaml
+      - cli-tool.yaml
+
+  artifacts:
+    enabled: true
+    description: "Pydantic PRD/TRD/Roadmap schemas — documentation only in lite mode."
+    source: "plan/artifacts/"
+    target: "~/.spine-lite/artifacts/"
+    files:
+      - prd_v1.py
+      - trd_v1.py
+      - roadmap_v1.py
+      - _base.py
+
+  recipes:
+    enabled: false                       # opt-in via --with-recipes
+    description: "Runnable recipe narratives (ship-feature, postmortem, etc.)."
+    source: "recipes/"
+    target: "~/.spine-lite/recipes/"
+    files:
+      - "*.md"
+
+  master_doc:
+    enabled: true
+    description: "Auto-synthesized SPINE.md that Claude Code reads on session start."
+    target: "~/.spine-lite/SPINE.md"
+
+# ── What lite explicitly excludes (full-install only) ──────────────────
+features_excluded:
+  - postgres            # full-install state store
+  - docker              # full-install container runtime
+  - daemons             # team-agent-daemon.sh, watchdog.sh, heartbeat.sh
+  - mcp_server          # MCP dispatch surface
+  - cost_router         # tier router + budget enforcement
+  - kg_indexer          # knowledge-graph + embeddings
+  - tron_verify         # verify subsystem
+  - audit_log           # tamper-evident audit trail
+  - eval_harness        # eval harness runtime
+  - approval_queue_ui   # control-center dashboard
+
+# ── Upgrade path ───────────────────────────────────────────────────────
+upgrade_full_path: "install.sh"
+upgrade_helper:    "lite/upgrade-to-full.sh"
+
+# ── Compatibility ──────────────────────────────────────────────────────
+claude_code:
+  minimum_version: "1.0.0"
+  plugin_manifest: "lite/claude-code-plugin/spine.json"
+
+# ── Notes for installers ───────────────────────────────────────────────
+# - All target paths are resolved against $HOME at install time.
+# - Files matching the "*.md" pattern under a component are copied with
+#   `find -type f -name '*.md'` (no recursion guard needed; sources are flat).
+# - User-modified files (mtime newer than source) are preserved on update.

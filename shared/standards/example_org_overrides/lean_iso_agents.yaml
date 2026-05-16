@@ -1,0 +1,47 @@
+# lean_iso_agents.yaml — example org bundle excerpt showing how a lean
+# startup narrows the verify phase ISO-agent set to save cost while still
+# enforcing a security floor. STORY-8.7.2 reference for
+# `bundle-schema.yaml § verify_overrides`. See also:
+#   - shared/standards/bundle-startup-saas.yaml (full bundle)
+#   - plan/artifacts/sdlc-pipeline-default.yaml (verify_config defaults)
+#   - orchestrator/lib/verify_dispatcher.sh (consumer)
+
+$schema: spine.org-bundle/v1
+
+identity:
+  bundle_version:  1
+  bundle_id:       example-lean-iso-agents
+  display_name:    "Example — lean ISO agents override"
+  org_name:        "Reference Org (lean startup)"
+  inherits_from:   startup-saas-reference
+  scope:           org
+  created_at:      2026-05-16T00:00:00Z
+  last_updated_at: 2026-05-16T00:00:00Z
+  last_updated_by: spine-reference
+  rationale:       "STORY-8.7.2 reference: lean startup runs only SecurityISO at the verify phase. Sandbox layer is disabled because CI has no Docker available; cross-LLM is disabled to keep cost predictable. Cap tightened to $0.50/run. auto_remediation_severity left at the default `high` so high-severity findings still auto-loop back to Build rather than blocking the project."
+
+# ── Verify overrides (STORY-8.7.2) ───────────────────────────────────────
+verify_overrides:
+
+  # Narrow the ISO-agent set to just SecurityISO. BuilderISO/QAISO/
+  # PerformanceISO are dropped to minimize per-run cost.
+  iso_agents_enabled:
+    - SecurityISO
+
+  # Explicit disable list — defense in depth against future agents being
+  # auto-enabled in a manifest bump.
+  iso_agents_disabled:
+    - BuilderISO
+    - QAISO
+    - PerformanceISO
+    - ComplianceISO
+    - DocumentationISO
+
+  # Layers — strip the expensive ones.
+  layers_enabled:
+    sandbox_execution:    false   # CI without docker
+    cross_llm_validation: false   # save tokens
+    calibration:          true    # cheap; keeps confidence honest
+
+  cost_cap_usd: 0.50              # tight; lean is the whole point
+  auto_remediation_severity: high # default: auto-loop on high+ findings

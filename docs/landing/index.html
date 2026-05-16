@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Spine — the local-deployed virtual engineering team. Plan, build, and verify software with thirteen role-bounded AI agents on your own machine, against your own LLM accounts, under your organization's standards." />
+  <meta name="theme-color" content="#0f1419" />
+  <title>Spine — The Local-Deployed AI Engineering Team</title>
+  <link rel="stylesheet" href="landing.css" />
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to main content</a>
+
+  <header class="site-header" role="banner">
+    <div class="container nav-row">
+      <a class="brand" href="#hero" aria-label="Spine — home">
+        <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true" focusable="false">
+          <circle cx="16" cy="6" r="2.5" fill="currentColor" />
+          <circle cx="16" cy="12" r="2.5" fill="currentColor" />
+          <circle cx="16" cy="18" r="2.5" fill="currentColor" />
+          <circle cx="16" cy="24" r="2.5" fill="currentColor" />
+          <line x1="16" y1="6" x2="16" y2="28" stroke="currentColor" stroke-width="1.5" />
+        </svg>
+        <span class="brand-name">Spine</span>
+      </a>
+      <nav class="primary-nav" aria-label="Primary">
+        <a href="#moat">Moat</a>
+        <a href="#demo">Demo</a>
+        <a href="#architecture">Architecture</a>
+        <a href="#who">Who it's for</a>
+        <a href="#install">Install</a>
+      </nav>
+      <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle color theme" aria-pressed="false">
+        <span class="theme-icon" aria-hidden="true">moon</span>
+      </button>
+    </div>
+  </header>
+
+  <main id="main">
+    <!-- =============== HERO =============== -->
+    <section id="hero" class="hero" aria-labelledby="hero-title">
+      <div class="container hero-inner">
+        <p class="eyebrow">v2 active development</p>
+        <h1 id="hero-title" class="hero-title">The local-deployed AI engineering team.</h1>
+        <p class="hero-sub">
+          Spine runs an entire SDLC — Plan, Build, Verify — on your own machine, against your own LLM accounts, under your organization's standards.
+          Thirteen role-bounded agents collaborate via a markdown message bus, gated by approval checkpoints, persisted in Postgres. No SaaS runtime. No data leaving your box.
+        </p>
+        <div class="hero-cta">
+          <a class="btn btn-primary" href="../../INSTALL.md">Try it locally</a>
+          <a class="btn btn-ghost" href="#demo">Watch the demo</a>
+        </div>
+        <div class="hero-meta" aria-label="Quick facts">
+          <span><strong>13</strong> role-bounded agents</span>
+          <span><strong>6</strong> intake templates</span>
+          <span><strong>$0</strong> SaaS subscription</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- =============== SIX-CORNER MOAT =============== -->
+    <section id="moat" class="moat" aria-labelledby="moat-title">
+      <div class="container">
+        <h2 id="moat-title" class="section-title">The six-corner moat</h2>
+        <p class="section-lede">
+          Each corner has a leader in isolation. Only Spine lines up all six — the intersection an org actually needs.
+        </p>
+
+        <div class="moat-grid" role="list">
+          <article class="hex-tile" role="listitem">
+            <div class="hex-icon" aria-hidden="true">LD</div>
+            <h3>Local-deploy</h3>
+            <p>No SaaS runtime. Installs from a tarball, runs as bash daemons + Postgres on your machine, never phones home.</p>
+            <p class="only-spine"><span aria-hidden="true">[</span>Only Spine pairs this with full multi-agent SDLC<span aria-hidden="true">]</span></p>
+          </article>
+          <article class="hex-tile" role="listitem">
+            <div class="hex-icon" aria-hidden="true">MA</div>
+            <h3>Multi-agent</h3>
+            <p>A standing coordinated team of 13 roles — not one smart agent calling subagents on demand. Fan-out up to 130 worker slots.</p>
+            <p class="only-spine"><span aria-hidden="true">[</span>Only Spine bounds each role's authority<span aria-hidden="true">]</span></p>
+          </article>
+          <article class="hex-tile" role="listitem">
+            <div class="hex-icon" aria-hidden="true">RB</div>
+            <h3>Role-bounded</h3>
+            <p>Researchers cannot write code. Engineers cannot deploy. Boundaries enforced by role prompt + auditor cross-check + module-boundary linter.</p>
+            <p class="only-spine"><span aria-hidden="true">[</span>Only Spine + MetaGPT enforce this; Spine adds runtime checks<span aria-hidden="true">]</span></p>
+          </article>
+          <article class="hex-tile" role="listitem">
+            <div class="hex-icon" aria-hidden="true">SG</div>
+            <h3>SDLC-gated</h3>
+            <p>Plan → Build → Verify. Each phase produces a signed artifact: PRD, TRD, Roadmap, BuildArtifact, VerifyFindings. No phase advances without explicit approval.</p>
+            <p class="only-spine"><span aria-hidden="true">[</span>Only Spine ships this as editable pipeline-as-data YAML<span aria-hidden="true">]</span></p>
+          </article>
+          <article class="hex-tile" role="listitem">
+            <div class="hex-icon" aria-hidden="true">RF</div>
+            <h3>Requirements-first</h3>
+            <p>Spine refuses to build until the spec is real. The product role runs a 5-move dialogue protocol with per-project-type intake templates.</p>
+            <p class="only-spine"><span aria-hidden="true">[</span>Only Spine has this. Every other tool treats intake as a free-form prompt<span aria-hidden="true">]</span></p>
+          </article>
+          <article class="hex-tile" role="listitem">
+            <div class="hex-icon" aria-hidden="true">VP</div>
+            <h3>Verify-as-phase</h3>
+            <p>A separate subsystem runs scanners, ephemeral Docker sandboxes, cross-LLM validation (Anthropic + OpenAI), and Platt-scaled confidence calibration.</p>
+            <p class="only-spine"><span aria-hidden="true">[</span>Only Spine integrates verification as a first-class SDLC phase<span aria-hidden="true">]</span></p>
+          </article>
+        </div>
+
+        <p class="moat-foot">
+          See the full <a href="../comparison.md">capability matrix</a> (Spine vs Devin, Factory, Cursor, ruflo, MetaGPT, superpowers, LangGraph — 16 wins, 4 honest losses).
+        </p>
+      </div>
+    </section>
+
+    <!-- =============== DEMO =============== -->
+    <section id="demo" class="demo" aria-labelledby="demo-title">
+      <div class="container">
+        <h2 id="demo-title" class="section-title">See it in action: 5 moves from vague idea to signed PRD</h2>
+        <p class="section-lede">
+          A real vibecoder shows up with one sentence. Spine's product role refuses to build, runs the 5-move dialogue protocol, and ends with a PRD that satisfies the <code>prd-v1</code> schema.
+        </p>
+
+        <div class="demo-stage">
+          <div class="demo-controls" role="toolbar" aria-label="Demo controls">
+            <button id="demo-play" class="btn btn-control" type="button" aria-label="Play demo">Play</button>
+            <button id="demo-pause" class="btn btn-control" type="button" aria-label="Pause demo" disabled>Pause</button>
+            <button id="demo-step" class="btn btn-control" type="button" aria-label="Step to next turn">Step</button>
+            <button id="demo-reset" class="btn btn-control" type="button" aria-label="Reset demo">Reset</button>
+            <span class="move-indicator" id="move-indicator" aria-live="polite">Move 0 / 5</span>
+          </div>
+          <div class="demo-terminal" id="demo-terminal" role="log" aria-live="polite" aria-label="Scripted product-role dialogue"></div>
+        </div>
+
+        <p class="demo-foot">
+          Source: role prompt at <a href="../../lib/role-prompts/product.md"><code>lib/role-prompts/product.md</code></a> ·
+          intake template at <a href="../../plan/templates/intake/web-app.yaml"><code>plan/templates/intake/web-app.yaml</code></a> ·
+          dialogue script at <a href="demo-script.json"><code>demo-script.json</code></a>.
+        </p>
+      </div>
+    </section>
+
+    <!-- =============== ARCHITECTURE =============== -->
+    <section id="architecture" class="architecture" aria-labelledby="arch-title">
+      <div class="container">
+        <h2 id="arch-title" class="section-title">Architecture</h2>
+        <p class="section-lede">One product, three subsystems, one orchestrator, one shared backbone.</p>
+
+        <figure class="arch-figure">
+          <svg viewBox="0 0 800 360" role="img" aria-labelledby="arch-svg-title" class="arch-svg">
+            <title id="arch-svg-title">Spine architecture: orchestrator on top dispatching to Plan, Build, and Verify subsystems over a shared Postgres backbone</title>
+            <!-- Orchestrator -->
+            <rect x="290" y="20" width="220" height="60" rx="10" class="arch-box arch-box-conductor" />
+            <text x="400" y="48" text-anchor="middle" class="arch-label">Orchestrator</text>
+            <text x="400" y="68" text-anchor="middle" class="arch-sub">bash state machine + gate engine</text>
+
+            <!-- Three panes -->
+            <rect x="40" y="130" width="200" height="120" rx="10" class="arch-box arch-box-plan" />
+            <text x="140" y="160" text-anchor="middle" class="arch-label">Plan</text>
+            <text x="140" y="185" text-anchor="middle" class="arch-sub">product · planner</text>
+            <text x="140" y="205" text-anchor="middle" class="arch-sub">architect · ux</text>
+            <text x="140" y="225" text-anchor="middle" class="arch-sub">PRD → TRD → Roadmap</text>
+
+            <rect x="300" y="130" width="200" height="120" rx="10" class="arch-box arch-box-build" />
+            <text x="400" y="160" text-anchor="middle" class="arch-label">Build</text>
+            <text x="400" y="185" text-anchor="middle" class="arch-sub">engineer · datawright</text>
+            <text x="400" y="205" text-anchor="middle" class="arch-sub">operator · researcher</text>
+            <text x="400" y="225" text-anchor="middle" class="arch-sub">→ BuildArtifact</text>
+
+            <rect x="560" y="130" width="200" height="120" rx="10" class="arch-box arch-box-verify" />
+            <text x="660" y="160" text-anchor="middle" class="arch-label">Verify</text>
+            <text x="660" y="185" text-anchor="middle" class="arch-sub">qa · auditor · seer</text>
+            <text x="660" y="205" text-anchor="middle" class="arch-sub">sandbox + cross-LLM</text>
+            <text x="660" y="225" text-anchor="middle" class="arch-sub">→ VerifyFindings</text>
+
+            <!-- Shared backbone -->
+            <rect x="40" y="290" width="720" height="50" rx="10" class="arch-box arch-box-shared" />
+            <text x="400" y="318" text-anchor="middle" class="arch-label">Shared backbone — Postgres · KG (pgvector) · cost router · audit log · MCP server</text>
+
+            <!-- Lines -->
+            <line x1="400" y1="80" x2="140" y2="130" class="arch-line" />
+            <line x1="400" y1="80" x2="400" y2="130" class="arch-line" />
+            <line x1="400" y1="80" x2="660" y2="130" class="arch-line" />
+            <line x1="140" y1="250" x2="140" y2="290" class="arch-line" />
+            <line x1="400" y1="250" x2="400" y2="290" class="arch-line" />
+            <line x1="660" y1="250" x2="660" y2="290" class="arch-line" />
+          </svg>
+          <figcaption class="arch-caption">
+            The orchestrator dispatches role-bounded directives. Plan produces PRD/TRD/Roadmap. Build produces signed artifacts the auditor cross-checks against the Knowledge Graph. Verify (TRON-integrated) sandbox-runs the change and cross-validates with a second LLM family. All four write through Postgres.
+          </figcaption>
+        </figure>
+
+        <p class="arch-foot">
+          Deep dive: <a href="../ARCHITECTURE.md">docs/ARCHITECTURE.md</a> · full requirements: <a href="../PRD.md">docs/PRD.md</a>.
+        </p>
+      </div>
+    </section>
+
+    <!-- =============== WHO IT'S FOR =============== -->
+    <section id="who" class="who" aria-labelledby="who-title">
+      <div class="container">
+        <h2 id="who-title" class="section-title">Who's it for?</h2>
+        <div class="persona-grid">
+          <article class="persona-card">
+            <h3>Vibecoder</h3>
+            <p>You want to ship software but you can't articulate what you want and you can't debug failures. Spine's product role drags real requirements out of you. The auditor catches the mistakes you can't see.</p>
+            <ul>
+              <li>"Build me an app for tracking my team's time off"</li>
+              <li>"I want a personal dashboard for my fantasy football league"</li>
+              <li>"My church needs a sermon-archive site"</li>
+            </ul>
+          </article>
+          <article class="persona-card">
+            <h3>Engineering team</h3>
+            <p>A staff engineer running a refactor on a 50-person codebase. The architect queries the Knowledge Graph for blast radius before the TRD. The auditor catches missed callers automatically.</p>
+            <ul>
+              <li>"Migrate auth service from session cookies to OAuth2"</li>
+              <li>"Split the monolith's reporting module into a service"</li>
+              <li>"Add OpenTelemetry tracing across 14 microservices"</li>
+            </ul>
+          </article>
+          <article class="persona-card">
+            <h3>Org admin / CTO</h3>
+            <p>Roll AI to every employee without losing control. Org bundles inject coding standards, banned patterns, per-user budget caps, and required gates into every install. Audit log is hash-chained.</p>
+            <ul>
+              <li>50-person company, $50/day per user, hard cap</li>
+              <li>Banned: <code>eval()</code>, raw SQL, requests without timeout</li>
+              <li>TRD requires CTO + Compliance both sign for revenue-critical work</li>
+            </ul>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- =============== WHY LOCAL =============== -->
+    <section id="why-local" class="why-local" aria-labelledby="why-title">
+      <div class="container">
+        <h2 id="why-title" class="section-title">Why local-deploy?</h2>
+        <div class="why-grid">
+          <div class="why-card"><h3>Trust</h3><p>Source code, prompts, and outputs never leave your machine. Compliance arguments collapse — there's nothing to review except the code you audited at install time.</p></div>
+          <div class="why-card"><h3>Control</h3><p>You set the model menu, the budget, the gates, the swarm composition. Spine reads your YAML; the YAML reads no one else's mind.</p></div>
+          <div class="why-card"><h3>Cost</h3><p>You pay your own LLM bills directly. No vendor margin. Cost router can block dispatch when projected spend would exceed your cap.</p></div>
+          <div class="why-card"><h3>Customization</h3><p>Org bundles, custom roles, custom intake templates, editable SDLC pipeline — no forking. Drift detector warns when your bundle lags the org's published version.</p></div>
+          <div class="why-card"><h3>Audit</h3><p>Every LLM call written to an append-only Postgres table: prompt hash, output hash, model, cost, role, user, timestamp, with HMAC hash-chain for tamper detection.</p></div>
+        </div>
+        <p class="why-foot">
+          <strong>Compared to SaaS alternatives</strong> (Devin, Factory, Cursor): excellent at zero-setup turnkey UX, but the runtime, the keys, the data, and the policy live on the vendor's box. If that's the right tradeoff for you, use them — <a href="../comparison.md">we'll tell you so honestly</a>.
+        </p>
+      </div>
+    </section>
+
+    <!-- =============== INSTALL =============== -->
+    <section id="install" class="install" aria-labelledby="install-title">
+      <div class="container">
+        <h2 id="install-title" class="section-title">Install in 30 seconds</h2>
+        <pre class="code-block" aria-label="Install commands"><code>git clone &lt;repo&gt;
+cd SpineDevelopment
+make team-up       # bring up the agent team
+make team-status   # see what's in flight</code></pre>
+        <div class="install-tiers">
+          <div class="tier-card">
+            <h3>Spine Lite</h3>
+            <p>Plugin install. No daemons, no Postgres. Single-agent skill layer for users who aren't ready for the full team yet. (Planned — EPIC-4.3.)</p>
+          </div>
+          <div class="tier-card tier-recommended">
+            <h3>Spine Full</h3>
+            <p>The full virtual engineering team. Bash daemons + Postgres + MCP server + 13 roles + verify subsystem + KG. <strong>Recommended.</strong></p>
+          </div>
+        </div>
+        <p class="install-foot">
+          Full instructions: <a href="../../INSTALL.md">INSTALL.md</a> · architecture: <a href="../ARCHITECTURE.md">docs/ARCHITECTURE.md</a> · requirements: <a href="../PRD.md">docs/PRD.md</a>.
+        </p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer" role="contentinfo">
+    <div class="container footer-inner">
+      <div class="footer-col">
+        <strong class="footer-brand">Spine</strong>
+        <p>Local-deployed virtual engineering team.</p>
+      </div>
+      <nav class="footer-col" aria-label="Project links">
+        <h4>Project</h4>
+        <a href="../../README.md">README</a>
+        <a href="../ARCHITECTURE.md">Architecture</a>
+        <a href="../PRD.md">PRD</a>
+        <a href="../BACKLOG.md">Backlog</a>
+      </nav>
+      <nav class="footer-col" aria-label="Positioning links">
+        <h4>Positioning</h4>
+        <a href="../positioning.md">One-pager</a>
+        <a href="../comparison.md">Honest comparison</a>
+        <a href="../naming-decision.md">Naming decision</a>
+        <a href="../research/COMPETITIVE_LANDSCAPE.md">Competitive analysis</a>
+      </nav>
+      <div class="footer-col">
+        <h4>Status</h4>
+        <span class="status-badge">v2 active development</span>
+        <p class="status-meta">~80 / ~180 stories Done across 9 INITs.</p>
+      </div>
+    </div>
+    <div class="container footer-bottom">
+      <small>Built locally. No analytics. No tracking. No external CDNs.</small>
+    </div>
+  </footer>
+
+  <script src="landing.js" defer></script>
+</body>
+</html>
