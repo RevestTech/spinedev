@@ -2,12 +2,16 @@
 
 Tools from REQ-INIT-6 FR-6 (EPIC-6.5) plus the hybrid retrieval tool from
 FR-8 (EPIC-6.7). Real implementations live behind the ``spine_kg`` schema and
-LangChain ``GraphRetriever`` / ``MultiVectorRetriever`` wrappers; ``find_callers``
-and ``impact_radius`` are wired through to Postgres (STORY-6.5.2 / STORY-6.5.5);
-the rest remain scaffolding pending their own stories.
+LangChain ``GraphRetriever`` / ``MultiVectorRetriever`` wrappers. The following
+tools are wired through to Postgres: ``find_callers`` (STORY-6.5.2),
+``impact_radius`` (STORY-6.5.5), ``trace_dependency`` (STORY-6.5.3),
+``code_neighborhood`` (STORY-6.5.4), ``doc_for_region`` (STORY-6.5.6), and
+``who_owns`` (STORY-6.5.7). ``graph_query``, ``hybrid_search``, and
+``find_by_satisfies`` remain scaffolding pending their own stories.
 
-Tools registered: ``graph_query``, ``find_callers``, ``code_neighborhood``,
-``impact_radius``, ``doc_for_region``, ``who_owns``, ``hybrid_search``.
+Tools registered: ``graph_query``, ``find_callers``, ``trace_dependency``,
+``code_neighborhood``, ``impact_radius``, ``doc_for_region``, ``who_owns``,
+``hybrid_search``.
 """
 
 from __future__ import annotations
@@ -32,6 +36,20 @@ _FORBID = ConfigDict(extra="forbid")
 _CALLS = "CALLS"
 _TESTS = ("TESTS", "COVERS")
 _IMPORTS = "IMPORTS"
+
+# Edge types whose source is a Document node and which connect to code
+# (see V2 README + REQ-INIT-6 FR-6 doc_for_region).
+_DOC_EDGE_TYPES = ("CITES", "OWNS", "TESTS", "TOUCHES", "DERIVED_FROM", "DECIDED_BY")
+
+# Relevance ranking for doc_for_region — lower index = higher relevance.
+_DOC_RELEVANCE_ORDER = {
+    "OWNS": 0,
+    "DECIDED_BY": 1,
+    "CITES": 2,
+    "TESTS": 3,
+    "DERIVED_FROM": 4,
+    "TOUCHES": 5,
+}
 
 # psql column separator. Pipe `|` is psql's default for -A output but symbol
 # names can legitimately contain it; use ASCII unit-separator instead.
@@ -69,13 +87,32 @@ class FindCallersInput(BaseModel):
     limit: int = Field(default=100, ge=1, le=10000, description="Cap on returned callers.")
 
 
-class CodeNeighborhoodInput(BaseModel):
-    """Inputs for ``code_neighborhood``."""
+class TraceDependencyInput(BaseModel):
+    """Inputs for ``trace_dependency`` (STORY-6.5.3)."""
 
     model_config = _FORBID
     project_id: str = Field(..., min_length=1)
-    node: str = Field(..., min_length=1, description="File path or symbol anchor.")
-    radius: int = Field(default=2, ge=1, le=5, description="Hops to expand from the anchor.")
+    from_symbol: str = Field(..., min_length=1, description="Source symbol (qualified name or node_id).")
+    to_symbol: str = Field(..., min_length=1, description="Target symbol (qualified name or node_id).")
+    repo: str = Field(..., min_length=1, description="Repo to query; fail loud if missing.")
+    max_depth: int = Field(default=5, ge=1, le=10, description="Cap search depth (hops).")
+    edge_types: list[str] = Field(default_factory=lambda: ["CALLS", "IMPORTS"],
+                                  description="Edge types to traverse.")
+    commit_sha: str | None = Field(default=None, description="Point-in-time snapshot (NFR-6).")
+
+
+class CodeNeighborhoodInput(BaseModel):
+    """Inputs for ``code_neighborhood`` (STORY-6.5.4)."""
+
+    model_config = _FORBID
+    project_id: str = Field(..., min_length=1)
+    target: str = Field(..., min_length=1, description="Symbol OR file path anchor.")
+    repo: str = Field(..., min_length=1, description="Repo to query; fail loud if missing.")
+    radius: int = Field(default=2, ge=1, le=5, description="N-hop subgraph radius.")
+    edge_types: list[str] | None = Field(default=None,
+                                         description="Edge types to traverse; None = all edges.")
+    commit_sha: str | None = Field(default=None, description="Point-in-time snapshot (NFR-6).")
+    limit: int = Field(default=200, ge=1, le=5000, description="Max nodes returned.")
 
 
 class ImpactRadiusInput(BaseModel):
@@ -91,19 +128,27 @@ class ImpactRadiusInput(BaseModel):
 
 
 class DocForRegionInput(BaseModel):
-    """Inputs for ``doc_for_region``."""
+    """Inputs for ``doc_for_region`` (STORY-6.5.6)."""
 
     model_config = _FORBID
     project_id: str = Field(..., min_length=1)
-    region: str = Field(..., min_length=1, description="file:lines selector, e.g. 'auth/session.py:1-50'.")
+    file: str = Field(..., min_length=1, description="File path within the repo.")
+    line_start: int | None = Field(default=None, ge=0,
+                                   description="Optional line range start (1-indexed).")
+    line_end: int | None = Field(default=None, ge=0,
+                                 description="Optional line range end (1-indexed).")
+    repo: str = Field(..., min_length=1, description="Repo to query; fail loud if missing.")
+    commit_sha: str | None = Field(default=None, description="Point-in-time snapshot (NFR-6).")
 
 
 class WhoOwnsInput(BaseModel):
-    """Inputs for ``who_owns``."""
+    """Inputs for ``who_owns`` (STORY-6.5.7)."""
 
     model_config = _FORBID
     project_id: str = Field(..., min_length=1)
-    node: str = Field(..., min_length=1, description="File or symbol whose owners we want.")
+    target: str = Field(..., min_length=1, description="File path or symbol whose owners we want.")
+    repo: str = Field(..., min_length=1, description="Repo to query; fail loud if missing.")
+    commit_sha: str | None = Field(default=None, description="Point-in-time snapshot (NFR-6).")
 
 
 class HybridSearchInput(BaseModel):
@@ -164,6 +209,105 @@ class ImpactRadiusOutput(BaseModel):
     direct_test_count: int
     importer_count: int
     total_impact: int
+    query_latency_ms: int
+    audit_id: UUID
+
+
+class DependencyPath(BaseModel):
+    """One path through the dependency graph for ``trace_dependency``."""
+
+    model_config = _FORBID
+    path: list[str]            # node IDs from source -> target (display names)
+    edges: list[str]           # edge types along the path
+    depth: int
+
+
+class TraceDependencyOutput(BaseModel):
+    """Structured payload for ``trace_dependency``."""
+
+    model_config = _FORBID
+    status: str
+    from_symbol: str
+    to_symbol: str
+    paths_found: list[DependencyPath]
+    no_path: bool
+    query_latency_ms: int
+    audit_id: UUID
+
+
+class NeighborNode(BaseModel):
+    """One node in the ``code_neighborhood`` subgraph."""
+
+    model_config = _FORBID
+    node_id: str
+    name: str
+    type: str
+    path: str
+    distance: int              # hops from target
+
+
+class NeighborEdge(BaseModel):
+    """One edge in the ``code_neighborhood`` subgraph."""
+
+    model_config = _FORBID
+    from_node_id: str
+    to_node_id: str
+    type: str
+
+
+class CodeNeighborhoodOutput(BaseModel):
+    """Structured payload for ``code_neighborhood``."""
+
+    model_config = _FORBID
+    status: str
+    target: str
+    nodes: list[NeighborNode]
+    edges: list[NeighborEdge]
+    query_latency_ms: int
+    audit_id: UUID
+
+
+class DocReference(BaseModel):
+    """One document reference returned by ``doc_for_region``."""
+
+    model_config = _FORBID
+    doc_type: str              # REQ | ADR | PRD | TRD | Roadmap | MemoryLesson | README
+    doc_id: str                # e.g. REQ-INIT-1, ADR-005
+    title: str
+    relevance: str             # CITES | OWNS | TESTS | TOUCHES | DERIVED_FROM | DECIDED_BY
+    path: str                  # doc file path
+    line_in_doc: int | None
+
+
+class DocForRegionOutput(BaseModel):
+    """Structured payload for ``doc_for_region``."""
+
+    model_config = _FORBID
+    status: str
+    file: str
+    region: str
+    docs: list[DocReference]
+    query_latency_ms: int
+    audit_id: UUID
+
+
+class Owner(BaseModel):
+    """One owner returned by ``who_owns``."""
+
+    model_config = _FORBID
+    owner_type: str            # Role | Person | Team | ADR | Memory
+    owner_id: str
+    confidence: float
+    via: str                   # OWNED_BY edge | inferred from git blame | from memory lesson
+
+
+class WhoOwnsOutput(BaseModel):
+    """Structured payload for ``who_owns``."""
+
+    model_config = _FORBID
+    status: str
+    target: str
+    owners: list[Owner]
     query_latency_ms: int
     audit_id: UUID
 
@@ -288,6 +432,59 @@ def _resolve_target_to_node_ids(target: str, target_type: str, repo: str,
     return []
 
 
+def _resolve_any_to_node_id(target: str, repo: str,
+                            commit_sha: str | None) -> int | None:
+    """Resolve a symbol OR file path to a single node ID.
+
+    Tries symbol match first (matches ``name`` or ``node_id`` against
+    Function/Method/Class), then falls back to File path equality. Returns
+    the most recently-created match on ambiguity (and warns).
+    """
+    # Symbol-style match first.
+    sql_sym = (
+        "SELECT id FROM spine_kg.kg_node "
+        "WHERE (name = :'target' OR node_id = :'target') "
+        "AND type IN ('Function', 'Method', 'Class') "
+        "AND repo = :'repo' "
+        f"AND {_commit_filter(commit_sha, 'kg_node')} "
+        "ORDER BY created_at DESC LIMIT 10;"
+    )
+    params: dict[str, Any] = {"target": target, "repo": repo}
+    if commit_sha:
+        params["commit_sha"] = commit_sha
+    rows = _run_psql_query(sql_sym, params)
+    if rows:
+        if len(rows) > 1:
+            logger.warning("kg_target_ambiguous",
+                           extra={"target": target, "repo": repo,
+                                  "match_count": len(rows), "kind": "symbol"})
+        try:
+            return int(rows[0]["id"])
+        except (KeyError, ValueError):
+            pass
+
+    # File path fallback.
+    sql_file = (
+        "SELECT id FROM spine_kg.kg_node "
+        "WHERE path = :'target' "
+        "AND type = 'File' "
+        "AND repo = :'repo' "
+        f"AND {_commit_filter(commit_sha, 'kg_node')} "
+        "ORDER BY created_at DESC LIMIT 10;"
+    )
+    rows = _run_psql_query(sql_file, params)
+    if not rows:
+        return None
+    if len(rows) > 1:
+        logger.warning("kg_target_ambiguous",
+                       extra={"target": target, "repo": repo,
+                              "match_count": len(rows), "kind": "file"})
+    try:
+        return int(rows[0]["id"])
+    except (KeyError, ValueError):
+        return None
+
+
 def _fetch_node_names(node_ids: list[int]) -> dict[int, str]:
     """Bulk lookup id -> display name for `via` chain enrichment."""
     if not node_ids:
@@ -304,6 +501,45 @@ def _fetch_node_names(node_ids: list[int]) -> dict[int, str]:
         except (KeyError, ValueError):
             continue
     return out
+
+
+def _fetch_node_info(node_ids: list[int]) -> dict[int, dict[str, str]]:
+    """Bulk lookup id -> {node_id, name, type, path} for nodes by integer id."""
+    if not node_ids:
+        return {}
+    array_lit = "{" + ",".join(str(int(i)) for i in node_ids) + "}"
+    sql = ("SELECT id, node_id, COALESCE(name, node_id) AS name, type, "
+           "COALESCE(path, '') AS path "
+           "FROM spine_kg.kg_node WHERE id = ANY(:'ids'::bigint[]);")
+    rows = _run_psql_query(sql, {"ids": array_lit})
+    out: dict[int, dict[str, str]] = {}
+    for r in rows:
+        try:
+            out[int(r["id"])] = {
+                "node_id": r.get("node_id", ""),
+                "name": r.get("name", ""),
+                "type": r.get("type", ""),
+                "path": r.get("path", ""),
+            }
+        except (KeyError, ValueError):
+            continue
+    return out
+
+
+def _sanitize_edge_types(edge_types: list[str] | None) -> list[str] | None:
+    """Strip non-alphanumeric/underscore characters; return None on None input.
+
+    Edge type names in the schema are uppercase A-Z plus underscore. Reject
+    anything else to keep SQL string-interpolation safe (we cannot use psql
+    parameters inside ``IN (...)`` lists portably).
+    """
+    if edge_types is None:
+        return None
+    clean: list[str] = []
+    for et in edge_types:
+        if et and all(c.isalnum() or c == "_" for c in et):
+            clean.append(et.upper())
+    return clean
 
 
 def _write_kg_audit(action: str, subject_id: str, metadata: dict[str, Any]) -> UUID:
@@ -435,12 +671,228 @@ def find_callers(payload: FindCallersInput) -> ToolResponse:
     return ToolResponse(status="ok", data=out.model_dump(mode="json"), audit_id=audit_id)
 
 
+@register_tool(name="trace_dependency", input_model=TraceDependencyInput, story="STORY-6.5.3",
+               description="Shortest dependency paths between two symbols through CALLS/IMPORTS edges.",
+               tags=("kg",))
+def trace_dependency(payload: TraceDependencyInput) -> ToolResponse:
+    """Resolve both endpoints and return up to 5 shortest paths between them.
+
+    The recursive CTE walks forward from ``from_symbol`` through the supplied
+    ``edge_types``, accumulating the path as an array and stopping as soon as
+    ``to_symbol`` is reached or ``max_depth`` is exhausted. Cycles are blocked
+    by checking ``NOT (next_id = ANY(path))``.
+    """
+    _log("trace_dependency", payload.project_id)
+    started = time.perf_counter()
+
+    from_id = _resolve_symbol_to_node_id(payload.from_symbol, payload.repo, payload.commit_sha)
+    to_id = _resolve_symbol_to_node_id(payload.to_symbol, payload.repo, payload.commit_sha)
+    if from_id is None or to_id is None:
+        latency_ms = int((time.perf_counter() - started) * 1000)
+        audit_id = _write_kg_audit("kg_query", f"{payload.from_symbol}->{payload.to_symbol}",
+                                   {"tool": "trace_dependency", "result": "symbol_not_found",
+                                    "repo": payload.repo,
+                                    "from_resolved": from_id is not None,
+                                    "to_resolved": to_id is not None})
+        out = TraceDependencyOutput(status="ok", from_symbol=payload.from_symbol,
+                                    to_symbol=payload.to_symbol, paths_found=[],
+                                    no_path=True, query_latency_ms=latency_ms,
+                                    audit_id=audit_id)
+        return ToolResponse(status="ok", data=out.model_dump(mode="json"), audit_id=audit_id)
+
+    edge_types = _sanitize_edge_types(payload.edge_types) or ["CALLS", "IMPORTS"]
+    edge_types_sql = "(" + ",".join(f"'{t}'" for t in edge_types) + ")"
+
+    # Forward BFS from `from_id`; we collect both the node-id chain and the
+    # edge-type chain, stopping when we hit `to_id` or exceed max_depth.
+    sql = (
+        "WITH RECURSIVE walk AS ( "
+        "  SELECT e.from_node_id AS src, e.to_node_id AS dst, 1 AS d, "
+        "         ARRAY[e.from_node_id, e.to_node_id] AS node_path, "
+        "         ARRAY[e.type::text] AS edge_path "
+        "  FROM spine_kg.kg_edge e "
+        f"  WHERE e.from_node_id = :from_id AND e.type IN {edge_types_sql} "
+        f"    AND {_commit_filter(payload.commit_sha, 'e')} "
+        "  UNION ALL "
+        "  SELECT w.src, e.to_node_id, w.d + 1, "
+        "         w.node_path || e.to_node_id, "
+        "         w.edge_path || e.type::text "
+        "  FROM walk w "
+        "  JOIN spine_kg.kg_edge e ON e.from_node_id = w.dst "
+        f"  WHERE w.d < :max_depth AND w.dst <> :to_id AND e.type IN {edge_types_sql} "
+        f"    AND {_commit_filter(payload.commit_sha, 'e')} "
+        "    AND NOT (e.to_node_id = ANY(w.node_path)) "
+        ") "
+        "SELECT d, array_to_string(node_path, ',') AS node_path, "
+        "       array_to_string(edge_path, ',') AS edge_path "
+        "FROM walk WHERE dst = :to_id "
+        "ORDER BY d ASC LIMIT 5;"
+    )
+    params: dict[str, Any] = {"from_id": from_id, "to_id": to_id,
+                              "max_depth": payload.max_depth}
+    if payload.commit_sha:
+        params["commit_sha"] = payload.commit_sha
+
+    rows = _run_psql_query(sql, params)
+
+    # Collect every id we need names for in a single batch.
+    all_ids: set[int] = set()
+    for r in rows:
+        for x in (r.get("node_path") or "").split(","):
+            try:
+                all_ids.add(int(x))
+            except ValueError:
+                continue
+    name_map = _fetch_node_names(sorted(all_ids))
+
+    paths: list[DependencyPath] = []
+    for r in rows:
+        try:
+            depth_val = int(r.get("d", "0"))
+        except ValueError:
+            depth_val = 0
+        node_ids = [int(x) for x in (r.get("node_path") or "").split(",") if x]
+        edge_types_chain = [t for t in (r.get("edge_path") or "").split(",") if t]
+        paths.append(DependencyPath(
+            path=[name_map.get(nid, str(nid)) for nid in node_ids],
+            edges=edge_types_chain,
+            depth=depth_val,
+        ))
+
+    latency_ms = int((time.perf_counter() - started) * 1000)
+    audit_id = _write_kg_audit("kg_query", f"{payload.from_symbol}->{payload.to_symbol}",
+                               {"tool": "trace_dependency", "repo": payload.repo,
+                                "max_depth": payload.max_depth,
+                                "path_count": len(paths), "latency_ms": latency_ms,
+                                "edge_types": edge_types})
+    out = TraceDependencyOutput(status="ok", from_symbol=payload.from_symbol,
+                                to_symbol=payload.to_symbol, paths_found=paths,
+                                no_path=(len(paths) == 0),
+                                query_latency_ms=latency_ms, audit_id=audit_id)
+    return ToolResponse(status="ok", data=out.model_dump(mode="json"), audit_id=audit_id)
+
+
 @register_tool(name="code_neighborhood", input_model=CodeNeighborhoodInput, story="STORY-6.5.4",
                description="Subgraph within N hops of a code anchor.", tags=("kg",))
 def code_neighborhood(payload: CodeNeighborhoodInput) -> ToolResponse:
-    """Stub. TODO STORY-6.5.4: real implementation."""
+    """Return an N-hop subgraph (nodes + edges) around a symbol or file anchor.
+
+    Expansion is bidirectional: we treat the underlying directed graph as
+    undirected for neighborhood purposes (every edge contributes a +1 hop in
+    both directions). The result is capped at ``limit`` nodes.
+    """
     _log("code_neighborhood", payload.project_id)
-    return _stub({"nodes": [], "edges": []})
+    started = time.perf_counter()
+
+    target_id = _resolve_any_to_node_id(payload.target, payload.repo, payload.commit_sha)
+    if target_id is None:
+        latency_ms = int((time.perf_counter() - started) * 1000)
+        audit_id = _write_kg_audit("kg_query", payload.target,
+                                   {"tool": "code_neighborhood", "result": "target_not_found",
+                                    "repo": payload.repo})
+        out = CodeNeighborhoodOutput(status="ok", target=payload.target, nodes=[], edges=[],
+                                     query_latency_ms=latency_ms, audit_id=audit_id)
+        return ToolResponse(status="ok", data=out.model_dump(mode="json"), audit_id=audit_id)
+
+    edge_types = _sanitize_edge_types(payload.edge_types)
+    if edge_types is not None and edge_types:
+        edge_filter = " AND e.type IN (" + ",".join(f"'{t}'" for t in edge_types) + ")"
+    else:
+        edge_filter = ""
+
+    # Recursive bidirectional BFS up to `radius` hops. PostgreSQL only
+    # supports UNION ALL in recursive CTEs, so dedup happens in `min_dist`.
+    sql_nodes = (
+        "WITH RECURSIVE hood AS ( "
+        "  SELECT :target_id::bigint AS nid, 0 AS distance, "
+        "         ARRAY[:target_id::bigint] AS visited "
+        "  UNION ALL "
+        "  SELECT CASE WHEN e.from_node_id = h.nid THEN e.to_node_id "
+        "              ELSE e.from_node_id END AS nid, "
+        "         h.distance + 1 AS distance, "
+        "         h.visited || CASE WHEN e.from_node_id = h.nid THEN e.to_node_id "
+        "                           ELSE e.from_node_id END "
+        "  FROM hood h "
+        "  JOIN spine_kg.kg_edge e "
+        "    ON (e.from_node_id = h.nid OR e.to_node_id = h.nid) "
+        f"  WHERE h.distance < :radius{edge_filter} "
+        f"    AND {_commit_filter(payload.commit_sha, 'e')} "
+        "    AND NOT ((CASE WHEN e.from_node_id = h.nid THEN e.to_node_id "
+        "                   ELSE e.from_node_id END) = ANY(h.visited)) "
+        "), "
+        "min_dist AS ( "
+        "  SELECT nid, MIN(distance) AS distance FROM hood GROUP BY nid "
+        ") "
+        "SELECT n.id, n.node_id, COALESCE(n.name, n.node_id) AS name, n.type, "
+        "       COALESCE(n.path, '') AS path, m.distance "
+        "FROM min_dist m "
+        "JOIN spine_kg.kg_node n ON n.id = m.nid "
+        f"WHERE {_commit_filter(payload.commit_sha, 'n')} "
+        "ORDER BY m.distance ASC, n.id ASC "
+        "LIMIT :limit;"
+    )
+    params: dict[str, Any] = {"target_id": target_id, "radius": payload.radius,
+                              "limit": payload.limit}
+    if payload.commit_sha:
+        params["commit_sha"] = payload.commit_sha
+
+    node_rows = _run_psql_query(sql_nodes, params)
+    nodes: list[NeighborNode] = []
+    int_id_to_node_id: dict[int, str] = {}
+    for r in node_rows:
+        try:
+            int_id = int(r["id"])
+            dist = int(r.get("distance", "0"))
+        except (KeyError, ValueError):
+            continue
+        int_id_to_node_id[int_id] = r.get("node_id", "")
+        nodes.append(NeighborNode(
+            node_id=r.get("node_id", ""),
+            name=r.get("name", ""),
+            type=r.get("type", ""),
+            path=r.get("path", ""),
+            distance=dist,
+        ))
+
+    edges: list[NeighborEdge] = []
+    if int_id_to_node_id:
+        # Fetch edges where BOTH endpoints are in the returned node set.
+        id_lit = "{" + ",".join(str(i) for i in int_id_to_node_id) + "}"
+        sql_edges = (
+            "SELECT e.from_node_id, e.to_node_id, e.type "
+            "FROM spine_kg.kg_edge e "
+            "WHERE e.from_node_id = ANY(:'ids'::bigint[]) "
+            "  AND e.to_node_id = ANY(:'ids'::bigint[]) "
+            f"  AND {_commit_filter(payload.commit_sha, 'e')}"
+            f"{edge_filter} "
+            "LIMIT 5000;"
+        )
+        edge_params: dict[str, Any] = {"ids": id_lit}
+        if payload.commit_sha:
+            edge_params["commit_sha"] = payload.commit_sha
+        for r in _run_psql_query(sql_edges, edge_params):
+            try:
+                f_id = int(r["from_node_id"])
+                t_id = int(r["to_node_id"])
+            except (KeyError, ValueError):
+                continue
+            f_str = int_id_to_node_id.get(f_id)
+            t_str = int_id_to_node_id.get(t_id)
+            if f_str is None or t_str is None:
+                continue
+            edges.append(NeighborEdge(
+                from_node_id=f_str, to_node_id=t_str, type=r.get("type", "")
+            ))
+
+    latency_ms = int((time.perf_counter() - started) * 1000)
+    audit_id = _write_kg_audit("kg_query", payload.target,
+                               {"tool": "code_neighborhood", "repo": payload.repo,
+                                "radius": payload.radius,
+                                "node_count": len(nodes), "edge_count": len(edges),
+                                "latency_ms": latency_ms})
+    out = CodeNeighborhoodOutput(status="ok", target=payload.target, nodes=nodes,
+                                 edges=edges, query_latency_ms=latency_ms, audit_id=audit_id)
+    return ToolResponse(status="ok", data=out.model_dump(mode="json"), audit_id=audit_id)
 
 
 @register_tool(name="impact_radius", input_model=ImpactRadiusInput, story="STORY-6.5.5",
@@ -575,17 +1027,219 @@ def impact_radius(payload: ImpactRadiusInput) -> ToolResponse:
 @register_tool(name="doc_for_region", input_model=DocForRegionInput, story="STORY-6.5.6",
                description="REQs, ADRs, and memory lessons touching the given code region.", tags=("kg",))
 def doc_for_region(payload: DocForRegionInput) -> ToolResponse:
-    """Stub. TODO STORY-6.5.6: real implementation."""
+    """Return Document nodes whose edges land on code nodes in the given region.
+
+    The walk has two halves: (1) collect code nodes whose path equals the file
+    or whose path starts with ``file:`` (member nodes encoded as ``file.py:LINE``),
+    optionally filtered to a line range; (2) find incoming edges of any
+    Document-flavoured type from Document nodes. Results are deduplicated by
+    (doc_id, relevance) and ordered by relevance rank then file proximity.
+    """
     _log("doc_for_region", payload.project_id)
-    return _stub({"docs": []})
+    started = time.perf_counter()
+
+    # Region string for the response envelope.
+    if payload.line_start is not None and payload.line_end is not None:
+        region_str = f"{payload.file}:{payload.line_start}-{payload.line_end}"
+    elif payload.line_start is not None:
+        region_str = f"{payload.file}:{payload.line_start}"
+    else:
+        region_str = payload.file
+
+    # 1) Resolve code nodes in the file (optionally filtered by line range).
+    sql_codes = (
+        "SELECT id, COALESCE(path, '') AS path FROM spine_kg.kg_node "
+        "WHERE repo = :'repo' "
+        "AND (path = :'file' OR path LIKE :'file_prefix') "
+        f"AND {_commit_filter(payload.commit_sha, 'kg_node')} "
+        "LIMIT 5000;"
+    )
+    code_params: dict[str, Any] = {"repo": payload.repo, "file": payload.file,
+                                   "file_prefix": f"{payload.file}:%"}
+    if payload.commit_sha:
+        code_params["commit_sha"] = payload.commit_sha
+    code_rows = _run_psql_query(sql_codes, code_params)
+
+    code_ids: list[int] = []
+    for r in code_rows:
+        path = r.get("path") or ""
+        if payload.line_start is not None and ":" in path:
+            try:
+                line = int(path.rsplit(":", 1)[1])
+            except ValueError:
+                line = -1
+            hi = payload.line_end if payload.line_end is not None else payload.line_start
+            if line >= 0 and not (payload.line_start <= line <= hi):
+                continue
+        try:
+            code_ids.append(int(r["id"]))
+        except (KeyError, ValueError):
+            continue
+
+    if not code_ids:
+        latency_ms = int((time.perf_counter() - started) * 1000)
+        audit_id = _write_kg_audit("kg_query", region_str,
+                                   {"tool": "doc_for_region", "repo": payload.repo,
+                                    "result": "no_code_nodes",
+                                    "latency_ms": latency_ms})
+        out = DocForRegionOutput(status="ok", file=payload.file, region=region_str, docs=[],
+                                 query_latency_ms=latency_ms, audit_id=audit_id)
+        return ToolResponse(status="ok", data=out.model_dump(mode="json"), audit_id=audit_id)
+
+    # 2) Fetch incoming doc-style edges where from_node is a Document node.
+    code_id_lit = "{" + ",".join(str(i) for i in code_ids) + "}"
+    edge_types_sql = "(" + ",".join(f"'{t}'" for t in _DOC_EDGE_TYPES) + ")"
+    sql_docs = (
+        "SELECT DISTINCT ON (d.id, e.type) "
+        "       d.node_id, COALESCE(d.subtype, d.type) AS doc_type, "
+        "       COALESCE(d.name, d.node_id) AS title, e.type AS relevance, "
+        "       COALESCE(d.path, '') AS path, "
+        "       d.properties->>'line' AS line_in_doc "
+        "FROM spine_kg.kg_edge e "
+        "JOIN spine_kg.kg_node d ON d.id = e.from_node_id "
+        "WHERE e.to_node_id = ANY(:'code_ids'::bigint[]) "
+        f"  AND e.type IN {edge_types_sql} "
+        "  AND d.type = 'Document' "
+        "  AND d.repo = :'repo' "
+        f"  AND {_commit_filter(payload.commit_sha, 'e')} "
+        f"  AND {_commit_filter(payload.commit_sha, 'd')} "
+        "ORDER BY d.id, e.type, d.created_at DESC "
+        "LIMIT 500;"
+    )
+    doc_params: dict[str, Any] = {"code_ids": code_id_lit, "repo": payload.repo}
+    if payload.commit_sha:
+        doc_params["commit_sha"] = payload.commit_sha
+    doc_rows = _run_psql_query(sql_docs, doc_params)
+
+    docs: list[DocReference] = []
+    seen: set[tuple[str, str]] = set()
+    for r in doc_rows:
+        doc_id = r.get("node_id", "")
+        relevance = r.get("relevance", "")
+        key = (doc_id, relevance)
+        if key in seen:
+            continue
+        seen.add(key)
+        raw_line = r.get("line_in_doc") or ""
+        try:
+            line_val: int | None = int(raw_line) if raw_line else None
+        except ValueError:
+            line_val = None
+        docs.append(DocReference(
+            doc_type=r.get("doc_type", "Document"),
+            doc_id=doc_id,
+            title=r.get("title", ""),
+            relevance=relevance,
+            path=r.get("path", ""),
+            line_in_doc=line_val,
+        ))
+
+    # Order by relevance rank first, then by line_in_doc proximity (NULLs last).
+    docs.sort(key=lambda d: (_DOC_RELEVANCE_ORDER.get(d.relevance, 99),
+                             d.line_in_doc if d.line_in_doc is not None else 10**9,
+                             d.doc_id))
+
+    latency_ms = int((time.perf_counter() - started) * 1000)
+    audit_id = _write_kg_audit("kg_query", region_str,
+                               {"tool": "doc_for_region", "repo": payload.repo,
+                                "doc_count": len(docs), "code_node_count": len(code_ids),
+                                "latency_ms": latency_ms})
+    out = DocForRegionOutput(status="ok", file=payload.file, region=region_str,
+                             docs=docs, query_latency_ms=latency_ms, audit_id=audit_id)
+    return ToolResponse(status="ok", data=out.model_dump(mode="json"), audit_id=audit_id)
 
 
 @register_tool(name="who_owns", input_model=WhoOwnsInput, story="STORY-6.5.7",
                description="Roles, lessons, and ADRs claiming ownership of the given node.", tags=("kg",))
 def who_owns(payload: WhoOwnsInput) -> ToolResponse:
-    """Stub. TODO STORY-6.5.7: real implementation."""
+    """Return owners of a file or symbol.
+
+    Resolution order: (1) explicit ``OWNED_BY`` edges; (2) fall back to
+    ``MemoryLesson`` nodes connected to the target via any edge type; (3) if
+    nothing is found, return an empty list. We never fabricate owners.
+    """
     _log("who_owns", payload.project_id)
-    return _stub({"owners": []})
+    started = time.perf_counter()
+
+    target_id = _resolve_any_to_node_id(payload.target, payload.repo, payload.commit_sha)
+    if target_id is None:
+        latency_ms = int((time.perf_counter() - started) * 1000)
+        audit_id = _write_kg_audit("kg_query", payload.target,
+                                   {"tool": "who_owns", "result": "target_not_found",
+                                    "repo": payload.repo})
+        out = WhoOwnsOutput(status="ok", target=payload.target, owners=[],
+                            query_latency_ms=latency_ms, audit_id=audit_id)
+        return ToolResponse(status="ok", data=out.model_dump(mode="json"), audit_id=audit_id)
+
+    owners: list[Owner] = []
+    seen: set[tuple[str, str]] = set()
+
+    # 1) Explicit OWNED_BY edges (incoming or outgoing -- ownership can be modelled
+    #    either as target -OWNED_BY-> owner or owner -OWNED_BY-> target depending
+    #    on indexer convention; check both directions).
+    sql_owned_by = (
+        "SELECT n.node_id, n.type, COALESCE(n.name, n.node_id) AS name "
+        "FROM spine_kg.kg_edge e "
+        "JOIN spine_kg.kg_node n "
+        "  ON n.id = CASE WHEN e.from_node_id = :target_id THEN e.to_node_id "
+        "                 ELSE e.from_node_id END "
+        "WHERE (e.from_node_id = :target_id OR e.to_node_id = :target_id) "
+        "  AND e.type = 'OWNED_BY' "
+        f"  AND {_commit_filter(payload.commit_sha, 'e')} "
+        f"  AND {_commit_filter(payload.commit_sha, 'n')} "
+        "LIMIT 100;"
+    )
+    params: dict[str, Any] = {"target_id": target_id}
+    if payload.commit_sha:
+        params["commit_sha"] = payload.commit_sha
+
+    for r in _run_psql_query(sql_owned_by, params):
+        n_type = r.get("type", "")
+        owner_type = n_type if n_type in ("Role", "Person", "Team", "ADR") else "Role"
+        key = (owner_type, r.get("node_id", ""))
+        if key in seen:
+            continue
+        seen.add(key)
+        owners.append(Owner(
+            owner_type=owner_type,
+            owner_id=r.get("node_id", ""),
+            confidence=1.0,
+            via="OWNED_BY edge",
+        ))
+
+    # 2) Memory-lesson fallback: any MemoryLesson document with an edge to target.
+    sql_memory = (
+        "SELECT DISTINCT d.node_id, COALESCE(d.name, d.node_id) AS name "
+        "FROM spine_kg.kg_edge e "
+        "JOIN spine_kg.kg_node d "
+        "  ON d.id = CASE WHEN e.from_node_id = :target_id THEN e.to_node_id "
+        "                 ELSE e.from_node_id END "
+        "WHERE (e.from_node_id = :target_id OR e.to_node_id = :target_id) "
+        "  AND d.type = 'Document' "
+        "  AND (d.subtype = 'memory' OR d.subtype = 'MemoryLesson') "
+        f"  AND {_commit_filter(payload.commit_sha, 'e')} "
+        f"  AND {_commit_filter(payload.commit_sha, 'd')} "
+        "LIMIT 100;"
+    )
+    for r in _run_psql_query(sql_memory, params):
+        key = ("Memory", r.get("node_id", ""))
+        if key in seen:
+            continue
+        seen.add(key)
+        owners.append(Owner(
+            owner_type="Memory",
+            owner_id=r.get("node_id", ""),
+            confidence=0.5,
+            via="from memory lesson",
+        ))
+
+    latency_ms = int((time.perf_counter() - started) * 1000)
+    audit_id = _write_kg_audit("kg_query", payload.target,
+                               {"tool": "who_owns", "repo": payload.repo,
+                                "owner_count": len(owners), "latency_ms": latency_ms})
+    out = WhoOwnsOutput(status="ok", target=payload.target, owners=owners,
+                        query_latency_ms=latency_ms, audit_id=audit_id)
+    return ToolResponse(status="ok", data=out.model_dump(mode="json"), audit_id=audit_id)
 
 
 @register_tool(name="hybrid_search", input_model=HybridSearchInput, story="STORY-6.7.3",
@@ -597,9 +1251,12 @@ def hybrid_search(payload: HybridSearchInput) -> ToolResponse:
 
 
 __all__: list[str] = [
-    "CallerInfo", "CodeNeighborhoodInput", "DocForRegionInput", "FindCallersInput",
-    "FindCallersOutput", "GraphQueryInput", "HybridSearchInput", "ImpactedNode",
-    "ImpactRadiusInput", "ImpactRadiusOutput", "WhoOwnsInput",
+    "CallerInfo", "CodeNeighborhoodInput", "CodeNeighborhoodOutput",
+    "DependencyPath", "DocForRegionInput", "DocForRegionOutput", "DocReference",
+    "FindCallersInput", "FindCallersOutput", "GraphQueryInput",
+    "HybridSearchInput", "ImpactedNode", "ImpactRadiusInput", "ImpactRadiusOutput",
+    "NeighborEdge", "NeighborNode", "Owner", "TraceDependencyInput",
+    "TraceDependencyOutput", "WhoOwnsInput", "WhoOwnsOutput",
     "code_neighborhood", "doc_for_region", "find_callers", "graph_query",
-    "hybrid_search", "impact_radius", "who_owns",
+    "hybrid_search", "impact_radius", "trace_dependency", "who_owns",
 ]

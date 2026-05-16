@@ -91,18 +91,18 @@ Maps to REQ FR-3. **New orchestration pattern Spine doesn't have today** — arc
 
 > **Tech:** Swarm internals implemented as a **LangGraph subgraph** inside the architect daemon (fan-out → collect → synthesize → checkpoint). Externally the daemon still receives a markdown directive and writes a markdown report; LangGraph is an implementation detail. Gives us typed state + interrupt/resume for free.
 
-- `STORY-1.2.1` · `Backlog` · `P0` · `M` — Swarm orchestration primitive: architect-lead dispatches scoped sub-directives to swarm members, collects per-lens contributions, synthesizes one artifact.
+- `STORY-1.2.1` · `Done` · `P0` · `M` — Swarm orchestration primitive: architect-lead dispatches scoped sub-directives to swarm members, collects per-lens contributions, synthesizes one artifact. At `plan/swarm/` (LangGraph 7-node subgraph + checkpointing + linear-Python fallback + composition rules + synthesis). *(Done 2026-05-16.)*
 - `STORY-1.2.2` · `Backlog` · `P0` · `S` — Per-project-type swarm composition rules declared in `sdlc-pipeline.yaml` (web-app → researcher+engineer+operator+qa; data-pipeline → adds datawright; etc.).
 - `STORY-1.2.3` · `Done` · `P0` · `S` — Define the `trd-v1` template (architecture, data model, integrations, NFRs, tech choices, risks, open questions, scope, cost projection). Pydantic at `plan/artifacts/trd_v1.py`. *(Done 2026-05-16.)*
-- `STORY-1.2.4` · `Backlog` · `P0` · `M` — Per-scout contribution format + architect synthesis pattern (how the architect merges 4-6 scout reports into one TRD).
+- `STORY-1.2.4` · `Done` · `P0` · `M` — Per-scout contribution format + architect synthesis pattern (how the architect merges 4-6 scout reports into one TRD). At `plan/swarm/scout_contribution.py` (Pydantic `ScoutContribution` w/ lens-role binding) + `plan/swarm/synthesis.py` (lens→TRD-section merge + optional LLM prose pass). *(Done 2026-05-16.)*
 - `STORY-1.2.5` · `Backlog` · `P0` · `S` — TRD sign-off action.
 
 ### EPIC-1.3 — Roadmap Decomposer (PRD + TRD → INIT/EPIC/STORY)
 Maps to REQ FR-4. **The bridge from spec to executable work.**
 
-- `STORY-1.3.1` · `Backlog` · `P0` · `M` — `planner`-led decomposer playbook that reads PRD+TRD and emits a Roadmap.
-- `STORY-1.3.2` · `Backlog` · `P0` · `S` — Story sizing heuristic (XS/S/M/L/XL) + per-story cost + duration estimate.
-- `STORY-1.3.3` · `Backlog` · `P0` · `S` — Inter-story dependency detection + sequencing recommendation.
+- `STORY-1.3.1` · `Done` · `P0` · `M` — `planner`-led decomposer playbook that reads PRD+TRD and emits a Roadmap. At `plan/decomposer/decomposer.py` (initiative→epic→story from PRD goals + TRD components; stable IDs; topological-sorted sprints). *(Done 2026-05-16.)*
+- `STORY-1.3.2` · `Done` · `P0` · `S` — Story sizing heuristic (XS/S/M/L/XL) + per-story cost + duration estimate. At `plan/decomposer/sizing.py` (additive heuristic over prose volume + KG impact + keyword categories). *(Done 2026-05-16.)*
+- `STORY-1.3.3` · `Done` · `P0` · `S` — Inter-story dependency detection + sequencing recommendation. At `plan/decomposer/dependency_detection.py` (KG `impact_radius` path + text-overlap fallback; DFS cycle detection). *(Done 2026-05-16 — upgraded from heuristic to deterministic via KG.)*
 - `STORY-1.3.4` · `Done` · `P0` · `S` — Define `roadmap-v1` template (matches the INIT/EPIC/STORY shape already used by this file). Pydantic at `plan/artifacts/roadmap_v1.py`. *(Done 2026-05-16.)*
 - `STORY-1.3.5` · `Backlog` · `P0` · `S` — Roadmap sign-off action.
 
@@ -256,10 +256,10 @@ TRON's Platt-scaled calibration on LLM-only outputs is a real honesty layer Spin
 ### EPIC-3.7 — Cross-LLM Validation (NEW — lifted from TRON)
 TRON cross-validates severe findings across Anthropic + OpenAI. Spine should do the same for high-stakes outputs (PRD acceptance, TRD synthesis, security-critical engineer work).
 
-- `STORY-3.7.1` · `Backlog` · `P2` · `M` — Move TRON `AuditManager` cross-validation logic to `shared/validation/`.
-- `STORY-3.7.2` · `Backlog` · `P2` · `S` — Per-phase config: which phases trigger cross-validation (default: PRD-final, TRD-final, security findings).
-- `STORY-3.7.3` · `Backlog` · `P2` · `S` — Provider keys checked at boot; single-key deployments degrade gracefully (cap confidence, skip cross-check).
-- `STORY-3.7.4` · `Backlog` · `P2` · `S` — Cost projection — cross-validation roughly 2× the LLM cost for affected phases; surface in cost meter.
+- `STORY-3.7.1` · `Done` · `P2` · `M` — Move TRON `AuditManager` cross-validation logic to `shared/validation/`. At `shared/validation/cross_llm.py` (cross_validate service + lazy Anthropic/OpenAI SDKs). *(Done 2026-05-16 — pattern lifted as generalized service, not TRON code copy.)*
+- `STORY-3.7.2` · `Done` · `P2` · `S` — Per-phase config: which phases trigger cross-validation (default: PRD-final, TRD-final, security findings). At `shared/validation/config.py` (`DEFAULT_CROSS_LLM_PHASES` + org-bundle override + severity floor). *(Done 2026-05-16.)*
+- `STORY-3.7.3` · `Done` · `P2` · `S` — Provider keys checked at boot; single-key deployments degrade gracefully (cap confidence, skip cross-check). Implemented in cross_llm.py (`effective_confidence_cap=0.7` on skip; missing SDK → `ProviderResult(verdict="error")`). *(Done 2026-05-16.)*
+- `STORY-3.7.4` · `Done` · `P2` · `S` — Cost projection — cross-validation roughly 2× the LLM cost for affected phases; surface in cost meter. `CrossLLMValidationResult.total_cost_usd` field; documented in cross_llm_README. *(Done 2026-05-16.)*
 
 ---
 
@@ -355,9 +355,9 @@ Maps to REQ FR-4.
 ### EPIC-6.4 — Incremental indexer
 Maps to REQ FR-5.
 
-- `STORY-6.4.1` · `Backlog` · `P0` · `M` — Extend existing `db/watcher/` to drive graph indexing on git commits (post-commit hook + watcher poll fallback).
-- `STORY-6.4.2` · `Backlog` · `P0` · `S` — Diff-based update: parse only changed files; compute node/edge insert/update/delete set.
-- `STORY-6.4.3` · `Backlog` · `P0` · `S` — Cold-start full index on first install; record `kg_index_state.commit_sha`.
+- `STORY-6.4.1` · `Done` · `P0` · `M` — Extend existing `db/watcher/` to drive graph indexing on git commits (post-commit hook + watcher poll fallback). At `build/kg/indexer/watcher_extension.py` (kg_tick callback + render_post_commit_hook helper; no watcher modifications). *(Done 2026-05-16.)*
+- `STORY-6.4.2` · `Done` · `P0` · `S` — Diff-based update: parse only changed files; compute node/edge insert/update/delete set. At `build/kg/indexer/diff_engine.py` + `indexer.py` `incremental_index()` (supersede pattern via valid_to). *(Done 2026-05-16.)*
+- `STORY-6.4.3` · `Done` · `P0` · `S` — Cold-start full index on first install; record `kg_index_state.commit_sha`. At `build/kg/indexer/indexer.py` `cold_start_index()` (transactional batches of 1000; recoverable mid-walk). *(Done 2026-05-16.)*
 
 ### EPIC-6.5 — Query API + MCP tools
 Maps to REQ FR-6. **Depends on `EPIC-2.2` MCP scaffolding.**
@@ -366,11 +366,11 @@ Maps to REQ FR-6. **Depends on `EPIC-2.2` MCP scaffolding.**
 
 - `STORY-6.5.1` · `Backlog` · `P0` · `S` — `graph_query(query)` — escape hatch for power users.
 - `STORY-6.5.2` · `Done` · `P0` · `S` — `find_callers(symbol, depth)` — direct + transitive callers. Real impl at `shared/mcp/tools/kg.py` (recursive CTE for depth>1; point-in-time queries via commit_sha; subprocess psql; ≤50ms p95 target). *(Done 2026-05-16.)*
-- `STORY-6.5.3` · `Backlog` · `P0` · `S` — `trace_dependency(from, to)` — shortest path in CALLS/IMPORTS graph.
-- `STORY-6.5.4` · `Backlog` · `P0` · `S` — `code_neighborhood(node, radius)` — subgraph within N hops.
+- `STORY-6.5.3` · `Done` · `P0` · `S` — `trace_dependency(from, to)` — shortest path in CALLS/IMPORTS graph. Recursive CTE BFS w/ cycle blocking + up-to-5-paths return. *(Done 2026-05-16.)*
+- `STORY-6.5.4` · `Done` · `P0` · `S` — `code_neighborhood(node, radius)` — subgraph within N hops. Bidirectional recursive CTE + min-distance dedup + companion edge fetch. *(Done 2026-05-16.)*
 - `STORY-6.5.5` · `Done` · `P0` · `S` — `impact_radius(symbol_or_region)` — files + tests potentially affected by a change. Real impl at `shared/mcp/tools/kg.py` (multi-CTE: callers + tests + importers + tests-via-callers; ≤200ms p95 target). Used by engineer/auditor BuildArtifact verification. *(Done 2026-05-16.)*
-- `STORY-6.5.6` · `Backlog` · `P0` · `S` — `doc_for_region(file:lines)` — REQs / ADRs / lessons touching this code.
-- `STORY-6.5.7` · `Backlog` · `P0` · `S` — `who_owns(node)` — roles / lessons / ADRs claiming ownership.
+- `STORY-6.5.6` · `Done` · `P0` · `S` — `doc_for_region(file:lines)` — REQs / ADRs / lessons touching this code. Two-stage walk: code nodes in file → incoming Document edges (CITES/OWNS/TESTS/TOUCHES/DERIVED_FROM/DECIDED_BY). *(Done 2026-05-16.)*
+- `STORY-6.5.7` · `Done` · `P0` · `S` — `who_owns(node)` — roles / lessons / ADRs claiming ownership. Two-stage: explicit OWNED_BY edges (confidence 1.0) → MemoryLesson fallback (confidence 0.5). Never fabricates. *(Done 2026-05-16.)*
 - `STORY-6.5.8` · `Backlog` · `P1` · `S` — `find_by_satisfies(req_or_story_id)` — code regions claiming to satisfy a given REQ/STORY.
 
 ### EPIC-6.6 — Role-prompt integration
@@ -455,8 +455,8 @@ Maps to REQ FR-8.
 
 ### EPIC-8.4 — Verify ↔ Orchestrator wiring
 - `STORY-8.4.1` · `Done` · `P0` · `S` — Umbrella Makefile dispatches `make verify-*` to TRON's internal Makefile. At `Makefile.v2` with self-documenting `make help`, per-subsystem pattern rules, all v1 targets preserved. *(Done 2026-05-16; rename to Makefile during cutover.)*
-- `STORY-8.5.1` · `Backlog` · `P0` · `M` — Orchestrator invokes Verify via MCP `verify_audit(build_artifact, blueprint)`; returns `VerifyFindings`.
-- `STORY-8.5.2` · `Backlog` · `P0` · `S` — Verify writes findings to `spine_audit`; orchestrator decides route-back-to-Build or surface-to-user.
+- `STORY-8.5.1` · `Done` · `P0` · `M` — Orchestrator invokes Verify via MCP `verify_audit(build_artifact, blueprint)`; returns `VerifyFindings`. At `shared/mcp/tools/verify.py` (10-step pipeline: validate sealed → docker probe → lazy TRON import → build AuditRequest → call AuditManager → map FindingOutput → cost rollup → pass_fail → persist findings). *(Done 2026-05-16; AuditManager call-site stub pending wave 6.)*
+- `STORY-8.5.2` · `Done` · `P0` · `S` — Verify writes findings to `spine_audit`; orchestrator decides route-back-to-Build or surface-to-user. `_persist_findings` writes 1 summary + N per-finding AuditRecords; pass_fail decides route per FR-9. *(Done 2026-05-16.)*
 
 ### EPIC-8.5 — TRON ISO agents in the Build phase
 - `STORY-8.6.1` · `In Progress` · `P1` · `M` — Expose TRON ISO agents (SecurityISO, QAISO, etc.) as MCP tools callable from Build phase for early-detect. Wrapper at `shared/mcp/tools/iso.py` with `iso_invoke` + 6 per-agent convenience tools (lazy TRON import). MCP contract complete; TRON `BaseISO.execute` call-site adapter stubbed pending wave 4. *(Design + scaffold Done 2026-05-16.)*
@@ -498,9 +498,9 @@ Maps to REQ FR-8.
 - `STORY-9.4.3` · `Backlog` · `P1` · `S` — Subsystem reports back via MCP; orchestrator updates state + audit.
 
 ### EPIC-9.5 — Portfolio management
-- `STORY-9.5.1` · `Backlog` · `P1` · `M` — Multiple projects in flight simultaneously; orchestrator routes per-project context.
-- `STORY-9.5.2` · `Backlog` · `P1` · `S` — Per-project resource limits (max parallel directives, max workers).
-- `STORY-9.5.3` · `Backlog` · `P2` · `S` — Cross-project rollups: how many projects in each phase; what's blocked on what.
+- `STORY-9.5.1` · `Done` · `P1` · `M` — Multiple projects in flight simultaneously; orchestrator routes per-project context. At `orchestrator/lib/portfolio.sh` (6 functions: can-dispatch/queue/drain/status/set-limit/blocked) + V17 `portfolio_queue` table. *(Done 2026-05-16.)*
+- `STORY-9.5.2` · `Done` · `P1` · `S` — Per-project resource limits (max parallel directives, max workers). `portfolio_can_dispatch` reads `project.metadata->>'max_parallel_directives'` (default 3); blocks at limit, returns queued. *(Done 2026-05-16.)*
+- `STORY-9.5.3` · `Done` · `P2` · `S` — Cross-project rollups: how many projects in each phase; what's blocked on what. V17 ships 5 views: `v_projects_by_phase`, `v_blocked_projects`, `v_active_directives`, `v_portfolio_health`, `v_project_resource_usage`. *(Done 2026-05-16.)*
 
 ### EPIC-9.6 — Unified cost ledger
 - `STORY-9.6.1` · `Done` · `P0` · `M` — Cost rows from Plan + Build + Verify all aggregate into `spine_recording.costs` with `subsystem` column. At `db/flyway/sql/V16__unified_cost_ledger.sql` (ALTER + CHECK constraint + indexes). *(Done 2026-05-16; legacy `public.cost_row` coexists, backfill is a follow-on data migration.)*
@@ -519,7 +519,7 @@ Maps to REQ FR-8.
 
 ### EPIC-9.9 — Orchestrator API surface
 - `STORY-9.9.1` · `Backlog` · `P0` · `M` — MCP server in `shared/mcp/` exposes orchestrator primitives (`project_create`, `project_status`, `phase_advance`, `approval_grant`).
-- `STORY-9.9.2` · `Backlog` · `P1` · `M` — REST API for UI integration (`/api/v2/projects`, `/api/v2/approvals`, `/api/v2/audit`).
+- `STORY-9.9.2` · `Done` · `P1` · `M` — REST API for UI integration (`/api/v2/projects`, `/api/v2/approvals`, `/api/v2/audit`). At `shared/api/` (8 files, FastAPI app + 3 route modules + in-process MCP dispatch + subprocess-psql DB handle + JSON logging w/ secret redaction + request-id middleware + healthz/readyz/OpenAPI). *(Done 2026-05-16.)*
 - `STORY-9.9.3` · `Done` · `P1` · `S` — CLI: `spine project new`, `spine project status`, `spine project approve <phase>`. At `orchestrator/bin/spine` (250 lines, full subcommand tree, MCP+psql dispatch, --format json|table|brief, --watch, --dry-run, exit codes 0/1/2/3/4/64) + README. *(Done 2026-05-16; chmod +x needed.)*
 - `STORY-9.9.4` · `Backlog` · `P2` · `M` — Dashboard `shared/ui/` shows real-time orchestrator state (phase per project, approvals pending, cost rollup).
 
