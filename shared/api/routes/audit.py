@@ -10,12 +10,19 @@ from __future__ import annotations
 import csv
 import io
 import json as _json
+from datetime import datetime
 from typing import Annotated, Any, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 
 from shared.api.dependencies import DbHandle, get_db_pool
+from shared.audit.exporter import (
+    ExportDestination,
+    ExportFilters,
+    ExportRequest,
+    export_audit as _bulk_export,
+)
 
 router = APIRouter(prefix="/api/v2/audit", tags=["audit"])
 
@@ -99,3 +106,73 @@ async def export_audit(
         except _json.JSONDecodeError:
             continue
     return Response(content=buf.getvalue(), media_type="text/csv", headers=headers)
+
+
+# ──────────────────────────────────────────────────────────────────
+# Bulk export — STORY-3.1.3. Streams via shared.audit.exporter,
+# applies optional PII redaction (STORY-3.1.4), supports CSV / JSON /
+# JSONL / Parquet to a local tmp file then streams the payload back to
+# the client so we never hold the full set in memory.
+# ──────────────────────────────────────────────────────────────────
+
+BulkFormat = Literal["csv", "json", "jsonl", "parquet"]
+_MEDIA = {"csv": "text/csv", "json": "application/json",
+          "jsonl": "application/x-ndjson", "parquet": "application/octet-stream"}
+
+
+@router.get("/export/v2")
+async def export_audit_v2(
+    fmt: BulkFormat = Query(default="jsonl", alias="format"),
+    project_id: Optional[str] = Query(default=None),
+    role: Optional[str] = Query(default=None),
+    subsystem: Optional[str] = Query(default=None),
+    action: Optional[str] = Query(default=None),
+    correlation_id: Optional[str] = Query(default=None),
+    from_ts: Optional[datetime] = Query(default=None, alias="from"),
+    to_ts: Optional[datetime] = Query(default=None, alias="to"),
+    redact: bool = Query(default=True),
+    include_payloads: bool = Query(default=False),
+    chunk_size: int = Query(default=10000, ge=100, le=100000),
+) -> StreamingResponse:
+    """Stream a filtered bulk export through ``shared.audit.exporter``.
+
+    Backed by the same code path as the ``spine audit export`` CLI so
+    behaviour matches across surfaces. Writes through a tmp file and
+    re-streams to the client to keep the request body bounded.
+    """
+    import os
+    import tempfile
+
+    req = ExportRequest(
+        format=fmt,
+        filters=ExportFilters(project_id=project_id, role=role, subsystem=subsystem,
+                              action=action, correlation_id=correlation_id,
+                              from_ts=from_ts, to_ts=to_ts),
+        destination=ExportDestination(kind="file",
+                                      path=tempfile.NamedTemporaryFile(
+                                          suffix=f".{fmt}", delete=False).name),
+        include_payloads=include_payloads,
+        redact_pii=redact,
+        chunk_size=chunk_size,
+    )
+    try:
+        result = _bulk_export(req)
+    except RuntimeError as exc:
+        raise _err(502, "export_error", str(exc)) from exc
+    fname = f"audit-export.{fmt}"
+    headers = {"Content-Disposition": f'attachment; filename="{fname}"',
+               "X-Spine-Audit-Rows": str(result.rows_exported),
+               "X-Spine-Audit-Redactions": str(result.pii_redactions)}
+
+    def _iter() -> Any:
+        try:
+            with open(req.destination.path or "", "rb") as fh:
+                while chunk := fh.read(64 * 1024):
+                    yield chunk
+        finally:
+            try:
+                os.unlink(req.destination.path or "")
+            except OSError:
+                pass
+
+    return StreamingResponse(_iter(), media_type=_MEDIA[fmt], headers=headers)

@@ -3,9 +3,10 @@
 Implements part of STORY-7.5.1 / REQ-INIT-7 FR-5. v1 daemons produce
 free-form markdown reports (PROTOCOL §3b §15c); this module best-effort
 extracts the typed fields a v2 ``BuildArtifact`` needs. ``kg_impact`` is
-always ``[]`` because the v1 engineer daemon never calls ``impact_radius``
-— the auditor (STORY-7.4.3) will flag these, intentionally incentivising
-migration of high-traffic roles first.
+populated post-hoc by ``build/runtime/enrich_artifact.enrich_build_artifact``
+(STORY-7.3.{1,3}) — v1 daemons never call ``impact_radius`` themselves, so
+the bridge fills the field before the auditor (STORY-7.4.3) sees it. Set
+``SPINE_AUTO_ENRICH_KG=false`` to disable and ship empty ``kg_impact``.
 
 CLI: ``python3 report_parser.py parse <file> --role <r> --project-id <p>
 --directive-id <d> --pipeline-version <v>``
@@ -16,6 +17,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import sys
 from datetime import datetime, timezone
@@ -174,12 +176,12 @@ def parse_v1_report(
     status = _sealed_status(report_text)
     now = datetime.now(timezone.utc).isoformat()
 
-    # v1 daemons never call MCP impact_radius — leave kg_impact empty so the
-    # auditor (STORY-7.4.3) flags this artifact for migration prioritisation.
+    # v1 daemons never call MCP impact_radius — start with empty kg_impact,
+    # then post-enrich via build/runtime/enrich_artifact below (STORY-7.3.{1,3}).
     # v2 BuildArtifact restricts role to engineer/operator/datawright; map
     # other v1 roles to "engineer" and stash the original in metadata.
     v2_role = role if role in ("engineer", "operator", "datawright") else "engineer"
-    return {
+    artifact: dict[str, Any] = {
         "version": "build-artifact-v1", "directive_id": directive_id,
         "project_id": str(project_id), "phase": "build_in_progress",
         "role": v2_role, "pipeline_version": pipeline_version,
@@ -194,6 +196,20 @@ def parse_v1_report(
                      "created_at": now, "last_modified": now,
                      "v1_role": role, "v1_bridge": True},
     }
+
+    # STORY-7.3.{1,3}: auto-enrich kg_impact via build/runtime/enrich_artifact
+    # so the v1 bridge stops shipping empty kg_impact to the auditor. Opt-out
+    # with SPINE_AUTO_ENRICH_KG=false (e.g. when debugging the KG schema).
+    if os.environ.get("SPINE_AUTO_ENRICH_KG", "true").lower() != "false":
+        try:
+            from build.runtime.enrich_artifact import enrich_build_artifact
+            from shared.schemas.build.build_artifact import BuildArtifact
+            validated = BuildArtifact.model_validate(artifact)
+            enriched = enrich_build_artifact(validated, mode="fill")
+            artifact = enriched.model_dump(mode="json")
+        except Exception as exc:  # noqa: BLE001 — graceful degradation
+            sys.stderr.write(f"[warn] kg enrichment failed: {exc}\n")
+    return artifact
 
 
 def _main(argv: list[str]) -> int:

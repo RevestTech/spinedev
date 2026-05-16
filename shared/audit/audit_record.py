@@ -91,11 +91,46 @@ def serialize_for_postgres(record: AuditRecord) -> dict[str, Any]:
         if isinstance(v, dict): return json.dumps(v, default=_canon)
         return v
     return {k: _v(v) for k, v in record.model_dump(exclude={"event_id"}, mode="python").items()}
-def write_via_psql(record: AuditRecord, db_url: Optional[str] = None) -> int:
-    """INSERT the record via `psql` subprocess; returns generated event_id."""
+def _redact_enabled() -> bool:
+    """Honour ``SPINE_AUDIT_REDACT`` env var; default ON (STORY-3.1.4)."""
+    val = os.environ.get("SPINE_AUDIT_REDACT", "true").strip().lower()
+    return val not in {"0", "false", "no", "off"}
+
+
+def _apply_redaction(record: AuditRecord) -> AuditRecord:
+    """Run the PII redactor and re-chain the record so content_hash matches.
+
+    Imported lazily to avoid a circular import (redactor.py imports
+    AuditRecord). Stamps ``metadata.audit_redactions`` with the count
+    of fields scrubbed so downstream consumers can spot redacted rows.
+    """
+    from .redactor import redact  # local import — see docstring
+
+    redacted, summary = redact(record)
+    if not summary.redactions_applied:
+        return record  # nothing changed — preserve caller-chained hash exactly.
+    meta = dict(redacted.metadata or {})
+    meta["audit_redactions"] = summary.redactions_applied
+    meta["audit_redacted_fields"] = summary.redacted_fields
+    redacted = redacted.model_copy(update={"metadata": meta, "content_hash": None})
+    return chain_to_previous(redacted, redacted.prev_event_hash)
+
+
+def write_via_psql(record: AuditRecord, db_url: Optional[str] = None,
+                   *, skip_redaction: bool = False) -> int:
+    """INSERT the record via `psql` subprocess; returns generated event_id.
+
+    When ``SPINE_AUDIT_REDACT`` is truthy (default) and ``skip_redaction``
+    is False, the row is passed through ``redactor.redact()`` first to
+    scrub secrets/PII per STORY-3.1.4. Pass ``skip_redaction=True`` for
+    audit rows whose subject IS the redaction event itself (avoid
+    recursion / preserve forensic fidelity).
+    """
     url = db_url or os.environ.get("SPINE_DB_URL")
     if not url:
         raise RuntimeError("SPINE_DB_URL not set and db_url not provided")
+    if not skip_redaction and _redact_enabled():
+        record = _apply_redaction(record)
     payload = json.dumps(serialize_for_postgres(record), default=_canon).replace("'", "''")
     sql = ("INSERT INTO spine_audit.audit_event SELECT * FROM "
            "jsonb_populate_record(NULL::spine_audit.audit_event, "

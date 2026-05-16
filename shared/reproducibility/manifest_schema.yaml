@@ -1,0 +1,70 @@
+# Spine RunManifest — declarative schema (STORY-3.2.1).
+# Format version: 1
+#
+# Source of truth: shared/reproducibility/manifest.py::RunManifest.
+# This file is the human-readable spec + example. CI verifies the two
+# match in test_manifest_schema_sync.py (TODO STORY-3.2.4).
+
+format_version: "1"             # Literal["1"] — pinned; bump on breaking change.
+manifest_uuid: <uuid4>           # Stable identity for this manifest record.
+created_at: <iso8601-utc>        # Capture timestamp.
+project_id: <string>             # spine_lifecycle.project.id (text-cast).
+phase: <string>                  # Phase the directive ran in (free text per phases.yaml).
+directive_id: <string>           # spine_lifecycle.route_history.directive_ref.
+
+inputs:                          # Everything textual that fed the run.
+  directive_text: <string>       # The literal prompt body handed to the role.
+  directive_sha256: <hex>        # SHA-256 of directive_text (verification).
+  prd_ref: <path?>               # Optional path to the PRD that gated this phase.
+  prd_sha256: <hex?>             # SHA-256 of prd_ref contents (drift detection).
+  trd_ref: <path?>               # Optional path to the TRD.
+  trd_sha256: <hex?>
+  roadmap_ref: <path?>           # Optional path to the program-level roadmap.
+  roadmap_sha256: <hex?>
+  org_bundle_id: <string?>       # Active org bundle slug (e.g. "acme-prod").
+  org_bundle_sha256: <hex?>      # SHA-256 of the bundle.yaml.
+  intake_template_ref: <path?>   # Template used at intake (EPIC-1.1).
+
+pipeline:                        # Locked pipeline manifest the project runs against.
+  pipeline_manifest_path: <path> # Filesystem path to sdlc-pipeline.yaml.
+  pipeline_version: <string>     # Locked at project create (EPIC-1.7.5); immutable.
+  pipeline_sha256: <hex>         # SHA-256 of the manifest at capture time.
+
+role:                            # Role + skills active when the directive fired.
+  role_name: <string>            # planner | architect | engineer | qa | ...
+  role_prompt_path: <path>       # lib/role-prompts/<role>.md.
+  role_prompt_sha256: <hex>      # SHA-256 of the prompt body.
+  skills_active: [<slug>, ...]   # Slugs from shared/skills that were triggered.
+  skills_versions: {<slug>: <version>}  # Version map at capture time.
+
+runtime:                         # Model + sampling chosen by shared/cost/router.
+  model_id: <string>             # e.g. claude-opus-4-6, gpt-5.
+  model_provider: <string>       # anthropic | openai | ...
+  temperature: <float?>          # Optional; may be unset for managed providers.
+  max_tokens: <int?>             # Optional; may be unset.
+
+git_state:                       # Repo state at capture time.
+  commit_sha: <hex>              # git rev-parse HEAD.
+  branch: <string>               # git rev-parse --abbrev-ref HEAD.
+  dirty: <bool>                  # Working tree has uncommitted changes.
+  dirty_files: [<path>, ...]     # `git status --porcelain` parsed list (if dirty).
+
+dependencies:                    # Lockfile content hashes (drift signal).
+  python_packages_lockfile_sha: <hex?>  # uv.lock / poetry.lock / requirements.lock.
+  node_packages_lockfile_sha: <hex?>    # pnpm-lock.yaml / yarn.lock / package-lock.json.
+
+metadata: {}                     # Free-form capture extras (caller-defined). May
+                                  # include `output_hash` for deterministic replay diff.
+
+# Drift severity (consumed by `diff.py`):
+#   critical:        role_prompt_sha, pipeline_sha, pipeline_version, model_id,
+#                    inputs.*sha256 — replay output may legitimately differ.
+#   minor:           temperature, max_tokens, lockfile shas, git dirty flags.
+#   informational:   anything else (branch name, role_prompt_path, ...).
+#   ignored:         manifest_uuid, created_at, metadata — always differ.
+
+# Replay invariants (asserted by `replay.py`):
+#   - format_version MUST be in SUPPORTED_FORMATS.
+#   - Critical drift blocks replay unless --force-drift is set.
+#   - Replay dispatches via orchestrator/lib/router.sh (the FR-5 chokepoint).
+#   - New output_hash is compared to manifest.metadata.output_hash (when set).

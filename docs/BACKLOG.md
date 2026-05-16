@@ -209,21 +209,21 @@ Table-stakes for enterprise. Data already exists in `costs.csv`; needs the promp
 
 - `STORY-3.1.1` · `Done` · `P1` · `S` — Audit record schema (prompt hash, output hash, model, cost, role, user, timestamp, directive ref). Pydantic at `shared/audit/audit_record.py` with hash chain. *(Done 2026-05-16.)*
 - `STORY-3.1.2` · `Done` · `P1` · `M` — Storage backend: Postgres `spine_audit` schema with append-only enforcement (role + trigger). At `db/flyway/sql/V15__spine_audit_schema.sql` + README. *(Done 2026-05-16; decision updated from SQLite to Postgres per architecture lock; not yet run.)*
-- `STORY-3.1.3` · `Backlog` · `P2` · `S` — Query / export interface (CSV, JSON, S3 push).
-- `STORY-3.1.4` · `Backlog` · `P2` · `S` — Optional payload redaction (PII scrubbing) before persistence.
+- `STORY-3.1.3` · `Done` · `P2` · `S` — Query / export interface (CSV, JSON, JSONL, Parquet; file / S3 / stdout / HTTP destinations). At `shared/audit/exporter.py` (250 lines, paged streaming) + REST `/api/v2/audit/export/v2` (StreamingResponse). *(Done 2026-05-16 wave 7.)*
+- `STORY-3.1.4` · `Done` · `P2` · `S` — Optional payload redaction (PII scrubbing) before persistence. At `shared/audit/redactor.py` (236 lines, 12 default rules: AWS keys, JWTs, GitHub PATs, Anthropic/OpenAI keys, PEM private keys, bearer tokens, etc.; severity tiers; org bundle merge). Integrated into `audit_record.write_via_psql` (default on; `SPINE_AUDIT_REDACT=false` to disable). *(Done 2026-05-16 wave 7.)*
 
 ### EPIC-3.2 — Reproducible builds
 A Spine run should be replayable from `directive + REQ + role-version + model-version`, like a Dockerfile.
 
-- `STORY-3.2.1` · `Backlog` · `P2` · `M` — Run-manifest format capturing all inputs to a directive.
-- `STORY-3.2.2` · `Backlog` · `P2` · `M` — `spine replay <manifest>` command.
-- `STORY-3.2.3` · `Backlog` · `P3` · `M` — Diff two runs (same manifest, different model → output drift report).
+- `STORY-3.2.1` · `Done` · `P2` · `M` — Run-manifest format capturing all inputs to a directive. At `shared/reproducibility/manifest.py` (`RunManifest` Pydantic w/ 6 sub-models: inputs/pipeline/role/runtime/git_state/dependencies + sha256s + capture_manifest helper). *(Done 2026-05-16 wave 7.)*
+- `STORY-3.2.2` · `Done` · `P2` · `M` — `spine replay <manifest>` command. At `shared/reproducibility/replay.py` + cli.py (drift detection w/ critical vs minor classification; dry-run mode; --force-drift / --override-model flags; routes through router.sh). *(Done 2026-05-16 wave 7.)*
+- `STORY-3.2.3` · `Done` · `P3` · `M` — Diff two runs (same manifest, different model → output drift report). At `shared/reproducibility/diff.py` (manifest + output diff; categorized critical/minor). *(Done 2026-05-16 wave 7.)*
 
 ### EPIC-3.3 — Team-of-models router
 Today user picks the tier hint. Smarter: route automatically by (role, task complexity).
 
-- `STORY-3.3.1` · `Backlog` · `P2` · `M` — Task-complexity scoring heuristic (length, file count, role, history).
-- `STORY-3.3.2` · `Backlog` · `P2` · `M` — Model selection table indexed by (role, complexity).
+- `STORY-3.3.1` · `Done` · `P2` · `M` — Task-complexity scoring heuristic (length, file count, role, history). At `shared/cost/complexity_scorer.py` (8 signal sources → 5-bucket score; pure heuristic ≤5ms). *(Done 2026-05-16 wave 7.)*
+- `STORY-3.3.2` · `Done` · `P2` · `M` — Model selection table indexed by (role, complexity). At `shared/cost/model_selection_table.py` + `default_model_selection.yaml` (~35 entries) + `team_router.py` (composes scorer + table + cost router w/ fallback). *(Done 2026-05-16 wave 7.)*
 - `STORY-3.3.3` · `Backlog` · `P3` · `S` — User override + cost-vs-quality slider in UI.
 
 ### EPIC-3.4 — Eval / regression harness (new — closes survey gap)
@@ -270,19 +270,19 @@ TRON cross-validates severe findings across Anthropic + OpenAI. Spine should do 
 ### EPIC-4.1 — Auto-triggering skills (from superpowers)
 Session-start hooks that fire skill prompts at the right moments inside a role's invocation.
 
-- `STORY-4.1.1` · `Backlog` · `P1` · `M` — Skill auto-trigger mechanism in role prompts (load + register at agent invocation).
-- `STORY-4.1.2` · `Backlog` · `P1` · `S` — Port `verification-before-completion` as an engineer-internal step (engineers self-verify before writing reports; reduces auditor load).
+- `STORY-4.1.1` · `Done` · `P1` · `M` — Skill auto-trigger mechanism in role prompts (load + register at agent invocation). At `shared/skills/registry.py` + `trigger_engine.py` (SKILL.md + SKILL.yaml format; per-role/phase/keyword/context triggers; conflict resolution; token budget). *(Done 2026-05-16 wave 7.)*
+- `STORY-4.1.2` · `Done` · `P1` · `S` — Port `verification-before-completion` as engineer-internal step. At `shared/skills/skills/verification-before-completion/` (triggers on engineer + sealing BuildArtifact). *(Done 2026-05-16 wave 7.)*
 - `STORY-4.1.3` · `Backlog` · `P1` · `M` — Port `using-git-worktrees` to replace scratch dirs (cleaner parallel-worker isolation).
-- `STORY-4.1.4` · `Backlog` · `P1` · `S` — Port `brainstorming` to `product` role (overlaps with `STORY-1.1.4` — dedupe at execution time).
+- `STORY-4.1.4` · `Done` · `P1` · `S` — Port `brainstorming` to `product` role (overlaps with `STORY-1.1.4`). At `shared/skills/skills/brainstorming/`; triggers on short/vague directives + product role. *(Done 2026-05-16 wave 7.)*
 - `STORY-4.1.5` · `Backlog` · `P2` · `M` — Port `subagent-driven-development` pattern as a `conductor` playbook.
 - `STORY-4.1.6` · `Backlog` · `P2` · `S` — Port `systematic-debugging` to `engineer` and `researcher`.
 
 ### EPIC-4.2 — Vector-backed memory (from ruflo)
 Per-role `memory.md` is good but doesn't scale; add semantic recall.
 
-- `STORY-4.2.1` · `Backlog` · `P2` · `M` — Vector store choice + embedding pipeline (local: e.g., sqlite-vss, lance, chromadb local mode).
-- `STORY-4.2.2` · `Backlog` · `P2` · `M` — Per-role lesson retrieval at directive time (inject top-K relevant prior lessons into role prompt).
-- `STORY-4.2.3` · `Backlog` · `P2` · `M` — Cross-project semantic recall (lessons from `~/.spine-development/playbook/` indexed too).
+- `STORY-4.2.1` · `Done` · `P2` · `M` — Vector store choice + embedding pipeline. At `shared/memory/lesson_indexer.py` + V20 `spine_memory.lesson` schema. Reuses `build/kg/embeddings/EmbedderRunner` (no new vector store; pgvector). *(Done 2026-05-16 wave 7.)*
+- `STORY-4.2.2` · `Done` · `P2` · `M` — Per-role lesson retrieval at directive time (inject top-K relevant prior lessons into role prompt). At `shared/memory/lesson_store.py` `recall_lessons` + `format_for_prompt_injection`. *(Done 2026-05-16 wave 7; role-daemon wiring deferred.)*
+- `STORY-4.2.3` · `Done` · `P2` · `M` — Cross-project semantic recall (lessons from `~/.spine-development/playbook/` indexed too). At `shared/memory/playbook_store.py` (project + cross-project unioned; cross-project 0.85× multiplier so project-specific wins ties). *(Done 2026-05-16 wave 7.)*
 - `STORY-4.2.4` · `Backlog` · `P3` · `S` — Eviction / decay policy (lessons fade if never retrieved).
 
 ### EPIC-4.3 — Lite install path (from ruflo)
@@ -305,8 +305,8 @@ Two-tier install: Claude Code plugin only (no daemons, no MCP server) vs full da
 > - **Tree-sitter for code parsing** (no LSP servers required).
 
 ### EPIC-5.1 — Public positioning & competitive narrative
-- `STORY-5.1.1` · `Backlog` · `P1` · `S` — One-page positioning doc: "Spine is the local-deployed virtual team for vibecoders under org control." Use the five-corner moat as the visual.
-- `STORY-5.1.2` · `Backlog` · `P1` · `M` — Comparison page on the README / website: Spine vs Devin vs Factory vs Cursor vs ruflo vs MetaGPT. Honest matrix.
+- `STORY-5.1.1` · `Done` · `P1` · `S` — One-page positioning doc. At `docs/positioning.md` (141 lines, six-corner moat diagram, target users, workflow examples, status). *(Done 2026-05-16 wave 7.)*
+- `STORY-5.1.2` · `Done` · `P1` · `M` — Comparison page. At `docs/comparison.md` (157 lines, 23-capability matrix vs Devin/Factory/Cursor/ruflo/MetaGPT/superpowers/LangGraph; honest about 4 rows where Spine loses; decision matrix). *(Done 2026-05-16 wave 7.)*
 - `STORY-5.1.3` · `Backlog` · `P2` · `S` — Naming / branding decision: "SpineDevelopment" vs "Spine" vs new mark. Resolve before public launch.
 - `STORY-5.1.4` · `Backlog` · `P3` · `M` — Landing page with the requirements-interrogation demo.
 
@@ -316,7 +316,7 @@ Two-tier install: Claude Code plugin only (no daemons, no MCP server) vs full da
 - `STORY-5.2.3` · `Backlog` · `P3` · `S` — Quarterly competitive scan (set as a Spine `seer` recurring directive once the daemon's mature).
 
 ### EPIC-5.3 — Jira / project-tool integration
-- `STORY-5.3.1` · `Backlog` · `P2` · `S` — Script: convert this `BACKLOG.md` to Jira-CSV (one row per story, columns: Type, Summary, Parent, Description, Priority, Labels).
+- `STORY-5.3.1` · `Done` · `P2` · `S` — Script: convert this `BACKLOG.md` to Jira-CSV. At `tools/backlog_to_jira_csv.py` (stdlib state-machine parser; 3 formats: Jira/Linear/GitHub Issues; sprint inheritance + tier labels + filters). *(Done 2026-05-16 wave 7.)*
 - `STORY-5.3.2` · `Backlog` · `P3` · `M` — Bi-directional sync (status updates in Jira reflect back here, or vice versa) — only if/when we actually pick a tool.
 
 ---
@@ -412,9 +412,9 @@ Maps to REQ FR-8.
 - `STORY-7.2.3` · `Backlog` · `P0` · `S` — Build reports completion to orchestrator with artifact manifest (files touched, tests added/run, KG impact node IDs).
 
 ### EPIC-7.3 — Wire Build to KG
-- `STORY-7.3.1` · `Backlog` · `P0` · `S` — Engineer daemon calls `impact_radius` before completing a directive; includes affected nodes in report.
-- `STORY-7.3.2` · `Backlog` · `P1` · `S` — Operator daemon calls `who_owns` before mutating infra; routes to right approver.
-- `STORY-7.3.3` · `Backlog` · `P1` · `S` — Datawright daemon registers pipeline outputs as `Document` nodes linked to source data nodes.
+- `STORY-7.3.1` · `Done` · `P0` · `S` — Engineer daemon calls `impact_radius` before completing a directive; includes affected nodes in report. At `build/runtime/kg_caller.py::EngineerKGHook` + `enrich_artifact.py` (auto-fill kg_impact via MCP). v1 bridge auto-enriches via report_parser hook. *(Done 2026-05-16 wave 7.)*
+- `STORY-7.3.2` · `Done` · `P1` · `S` — Operator daemon calls `who_owns` before mutating infra; routes to right approver. `OperatorKGHook.find_owner` + `warn_if_no_owner`. *(Done 2026-05-16 wave 7.)*
+- `STORY-7.3.3` · `Done` · `P1` · `S` — Datawright daemon registers pipeline outputs as `Document` nodes linked to source data nodes. `DatawrightKGHook.register_output` (direct SQL insert into kg_node + PRODUCED_BY edges). *(Done 2026-05-16 wave 7.)*
 
 ### EPIC-7.4 — Build artifact contract
 - `STORY-7.4.1` · `Done` · `P0` · `M` — Pydantic `BuildArtifact` schema: code_changes[], tests_added[], tests_run[], kg_impact[], cost, duration, rationale. At `shared/schemas/build/build_artifact.py` with refuse-to-seal validator + to_markdown + to_audit_metadata. *(Done 2026-05-16.)*
@@ -449,9 +449,9 @@ Maps to REQ FR-8.
 - `STORY-8.2.6` · `Backlog` · `P1` · `S` — `frontend/` → `shared/ui/`; retire `admin-ui/` per TRON's own roadmap.
 
 ### EPIC-8.3 — Postgres consolidation
-- `STORY-8.3.1` · `Backlog` · `P1` · `M` — Decide single migration tool (Flyway recommended); port TRON's Alembic migrations to Flyway SQL.
-- `STORY-8.3.2` · `Backlog` · `P1` · `M` — Multi-schema layout: `spine_recording` / `spine_kg` / `spine_lifecycle` / `spine_audit` / `spine_verify_*`.
-- `STORY-8.3.3` · `Backlog` · `P1` · `S` — Move `db/` → `shared/db/`; update all paths.
+- `STORY-8.3.1` · `Done` · `P1` · `M` — Decide single migration tool (Flyway recommended); port TRON's Alembic migrations to Flyway SQL. At `db/flyway/sql/V21__spine_verify_schemas.sql` (8 TRON migrations → 8 tables across `spine_verify_audit` + `spine_verify_threat_intel`) + `db/migration-survey.md` (per-revision plan). *(Done 2026-05-16 wave 7.)*
+- `STORY-8.3.2` · `Done` · `P1` · `M` — Multi-schema layout: `spine_recording` / `spine_kg` / `spine_lifecycle` / `spine_audit` / `spine_verify_*` / `spine_calibration` / `spine_eval` / `spine_memory`. At `db/multi-schema-layout.md` (canonical map + privilege model + cross-schema query policy). *(Done 2026-05-16 wave 7.)*
+- `STORY-8.3.3` · `Done` · `P1` · `S` — Move `db/` → `shared/db/`; update all paths. Helper script at `db/migrate-to-shared.sh` (idempotent, --dry-run, --leave-symlink) + README. *(Script Done 2026-05-16; actual mv is operational follow-up.)*
 
 ### EPIC-8.4 — Verify ↔ Orchestrator wiring
 - `STORY-8.4.1` · `Done` · `P0` · `S` — Umbrella Makefile dispatches `make verify-*` to TRON's internal Makefile. At `Makefile.v2` with self-documenting `make help`, per-subsystem pattern rules, all v1 targets preserved. *(Done 2026-05-16; rename to Makefile during cutover.)*

@@ -1,0 +1,33 @@
+slug: brainstorming
+name: "Brainstorming before commit"
+version: 1
+trigger:
+  applies_to_roles: [product]
+  applies_to_phases: [intake, plan_in_progress]
+  applies_when:
+    - directive_short: true
+  applies_when_or:
+    - directive_contains: "vague"
+    - directive_contains: "not sure"
+    - directive_contains: "kind of"
+    - directive_contains: "something like"
+    - directive_contains: "build me"
+    - directive_contains: "fix it"
+    - directive_contains: "make it better"
+priority: 250
+max_token_overhead: 1100
+incompatible_with: []
+inherits_from: []
+metadata:
+  author: spine
+  source_pattern: obra/superpowers
+  story: STORY-4.1.4
+  why: >-
+    The product role exists to drag real requirements out of vague briefs.
+    This skill fires when the directive itself looks vague (short, or full of
+    hedge words), making the 5-move protocol the *first* thing the role does
+    instead of an option it might skip under time pressure.
+  cross_refs:
+    - REQ-INIT-1 §1.5 FR-2 (interrogation as the front door)
+    - STORY-1.1.4 (front-door interrogation — execution-time dedupe)
+    - lib/role-prompts/product.md (the 5-move protocol body)

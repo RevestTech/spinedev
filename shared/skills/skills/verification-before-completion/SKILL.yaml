@@ -1,0 +1,23 @@
+slug: verification-before-completion
+name: "Verification before completion"
+version: 1
+trigger:
+  applies_to_roles: [engineer, datawright]
+  applies_to_phases: [build_in_progress, build_complete]
+  applies_when:
+    - artifact_about_to_be_emitted: BuildArtifact
+priority: 200
+max_token_overhead: 900
+incompatible_with: []
+inherits_from: []
+metadata:
+  author: spine
+  source_pattern: obra/superpowers
+  story: STORY-4.1.2
+  why: >-
+    Engineers (and datawrights) should self-verify before reporting "done" —
+    catches the easy stuff before the auditor wastes a cycle on it. Closes the
+    kg_impact gap from REQ-INIT-7 FR-3 by making self-check a first-class step.
+  cross_refs:
+    - REQ-INIT-7 FR-3 (BuildArtifact refuse-to-emit on empty kg_impact)
+    - STORY-7.4.3 (auditor verifies kg_impact claim)

@@ -1,0 +1,53 @@
+# Default (role, complexity) → tier model-selection table — STORY-3.3.2.
+# Consumed by shared/cost/model_selection_table.py via load_default_table().
+# Org bundles may override entries via cost.model_selection_table.entries;
+# merge_tables() does per-(role, complexity) replacement.
+#
+# Tiers align with shared/cost/router.py Tier:
+#   low (Haiku) | medium (Sonnet) | high (Opus) | premium (top Opus / GPT-5)
+# cost_ceiling_usd is a SOFT hint — hard caps come from bundle.cost.*_caps.
+version: 1
+entries:
+  # product
+  - { role: product, complexity: trivial,      preferred_tier: low,     fallback_tier: medium, cost_ceiling_usd: 0.02, rationale: "intake chitchat / clarifying Q." }
+  - { role: product, complexity: simple,       preferred_tier: low,     fallback_tier: medium, cost_ceiling_usd: 0.05, rationale: "short PRD section / FAQ." }
+  - { role: product, complexity: moderate,     preferred_tier: medium,  fallback_tier: high,   cost_ceiling_usd: 0.30, rationale: "section-level PRD work." }
+  - { role: product, complexity: complex,      preferred_tier: medium,  fallback_tier: high,   cost_ceiling_usd: 0.60, rationale: "multi-section PRD revision." }
+  - { role: product, complexity: very_complex, preferred_tier: high,    fallback_tier: medium, cost_ceiling_usd: 1.50, rationale: "full PRD synthesis." }
+  # architect
+  - { role: architect, complexity: trivial,    preferred_tier: medium,  fallback_tier: low,    cost_ceiling_usd: 0.05, rationale: "even trivial arch deserves Sonnet." }
+  - { role: architect, complexity: simple,     preferred_tier: medium,  fallback_tier: high,   cost_ceiling_usd: 0.15, rationale: "component-level design." }
+  - { role: architect, complexity: moderate,   preferred_tier: medium,  fallback_tier: high,   cost_ceiling_usd: 0.50, rationale: "multi-component design." }
+  - { role: architect, complexity: complex,    preferred_tier: high,    fallback_tier: medium, cost_ceiling_usd: 1.20, rationale: "cross-cutting redesign." }
+  - { role: architect, complexity: very_complex, preferred_tier: premium, fallback_tier: high, cost_ceiling_usd: 3.00, rationale: "TRD synthesis." }
+  # engineer
+  - { role: engineer, complexity: trivial,     preferred_tier: low,     fallback_tier: medium, cost_ceiling_usd: 0.02, rationale: "typo / rename / lint." }
+  - { role: engineer, complexity: simple,      preferred_tier: low,     fallback_tier: medium, cost_ceiling_usd: 0.05, rationale: "single-file bugfix." }
+  - { role: engineer, complexity: moderate,    preferred_tier: medium,  fallback_tier: high,   cost_ceiling_usd: 0.30, rationale: "multi-file feature." }
+  - { role: engineer, complexity: complex,     preferred_tier: medium,  fallback_tier: high,   cost_ceiling_usd: 0.80, rationale: "cross-module feature." }
+  - { role: engineer, complexity: very_complex, preferred_tier: premium, fallback_tier: high,  cost_ceiling_usd: 2.50, rationale: "large refactor / migration." }
+  # planner
+  - { role: planner, complexity: trivial,      preferred_tier: low,     fallback_tier: medium, cost_ceiling_usd: 0.02, rationale: "quick split." }
+  - { role: planner, complexity: moderate,     preferred_tier: medium,  fallback_tier: high,   cost_ceiling_usd: 0.30, rationale: "sprint-scale decomposition." }
+  - { role: planner, complexity: very_complex, preferred_tier: high,    fallback_tier: medium, cost_ceiling_usd: 1.20, rationale: "roadmap synthesis." }
+  # auditor (read/grep — cheap by default)
+  - { role: auditor, complexity: trivial,      preferred_tier: low,     fallback_tier: medium, cost_ceiling_usd: 0.02, rationale: "pure read/grep." }
+  - { role: auditor, complexity: moderate,     preferred_tier: low,     fallback_tier: medium, cost_ceiling_usd: 0.10, rationale: "multi-file audit." }
+  - { role: auditor, complexity: complex,      preferred_tier: medium,  fallback_tier: high,   cost_ceiling_usd: 0.40, rationale: "cross-cutting audit." }
+  - { role: auditor, complexity: very_complex, preferred_tier: high,    fallback_tier: medium, cost_ceiling_usd: 0.80, rationale: "compliance/security cross-cutting." }
+  # qa
+  - { role: qa, complexity: simple,            preferred_tier: low,     fallback_tier: medium, cost_ceiling_usd: 0.05, rationale: "single-test triage." }
+  - { role: qa, complexity: moderate,          preferred_tier: medium,  fallback_tier: high,   cost_ceiling_usd: 0.20, rationale: "test plan / failure analysis." }
+  - { role: qa, complexity: very_complex,      preferred_tier: high,    fallback_tier: medium, cost_ceiling_usd: 1.00, rationale: "root-cause across suites." }
+  # operator (mostly shell — cheap)
+  - { role: operator, complexity: trivial,     preferred_tier: low,     fallback_tier: medium, cost_ceiling_usd: 0.02, rationale: "shell script edit." }
+  - { role: operator, complexity: moderate,    preferred_tier: low,     fallback_tier: medium, cost_ceiling_usd: 0.10, rationale: "routine multi-step deploy." }
+  - { role: operator, complexity: very_complex, preferred_tier: high,   fallback_tier: medium, cost_ceiling_usd: 1.00, rationale: "major infra migration." }
+  # datawright (synthesis-heavy)
+  - { role: datawright, complexity: trivial,   preferred_tier: medium,  fallback_tier: low,    cost_ceiling_usd: 0.10, rationale: "even trivial data → Sonnet." }
+  - { role: datawright, complexity: moderate,  preferred_tier: high,    fallback_tier: medium, cost_ceiling_usd: 0.50, rationale: "pipeline / schema design." }
+  - { role: datawright, complexity: very_complex, preferred_tier: premium, fallback_tier: high, cost_ceiling_usd: 2.50, rationale: "end-to-end ML / data arch." }
+  # ux
+  - { role: ux, complexity: trivial,           preferred_tier: low,     fallback_tier: medium, cost_ceiling_usd: 0.02, rationale: "copy tweak." }
+  - { role: ux, complexity: moderate,          preferred_tier: medium,  fallback_tier: high,   cost_ceiling_usd: 0.25, rationale: "flow / wireframe critique." }
+  - { role: ux, complexity: very_complex,      preferred_tier: high,    fallback_tier: medium, cost_ceiling_usd: 0.80, rationale: "full IA / journey synthesis." }
