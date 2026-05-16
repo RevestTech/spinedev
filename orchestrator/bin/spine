@@ -6,7 +6,11 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-SPINE_DB_URL="${SPINE_DB_URL:-postgresql://spine:spine@localhost:33000/spine}"
+# Load db/.env (POSTGRES_*) → SPINE_DB_URL. Sourcing the loader keeps the
+# bash CLI in sync with the `make up` Postgres regardless of which port +
+# password the operator chose. Fixes wave-8 smoke F6/F8/F9.
+# shellcheck source=../lib/_env_loader.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")/../lib" && pwd)/_env_loader.sh"
 SPINE_MCP_HTTP_URL="${SPINE_MCP_HTTP_URL:-http://127.0.0.1:8765}"
 SPINE_DEFAULT_BUNDLE="${SPINE_DEFAULT_BUNDLE:-}"
 SPINE_DEFAULT_OWNER="${SPINE_DEFAULT_OWNER:-${USER:-unknown}}"

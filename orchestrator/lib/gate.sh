@@ -22,7 +22,8 @@ IFS=$'\n\t'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PHASES_YAML="${SPINE_PHASES_YAML:-$SCRIPT_DIR/../state/phases.yaml}"
 APPROVAL_PY="${SPINE_APPROVAL_PY:-$SCRIPT_DIR/approval.py}"
-SPINE_DB_URL="${SPINE_DB_URL:-postgresql://spine:spine@localhost:33000/spine}"
+# shellcheck source=_env_loader.sh
+. "$SCRIPT_DIR/_env_loader.sh"
 ROUTER_SH="${SPINE_ROUTER_SH:-$SCRIPT_DIR/router.sh}"
 TRANSITION_SH="${SPINE_TRANSITION_SH:-$SCRIPT_DIR/transition.sh}"
 SPINE_AUDIT_CLI="${SPINE_AUDIT_CLI:-$SCRIPT_DIR/../../shared/audit/audit_record.py}"
@@ -48,8 +49,11 @@ _load_gate_config() {
   gate="$(_phase_field_scalar "$phase" gate)"
   rl="$(_phase_field_scalar "$phase" role_lead)"
   art="$(_phase_field_scalar "$phase" artifact)"
-  rb="$(_phase_field_list "$phase" rollback_to | awk '{print $1}')"
-  apps="$(_phase_field_list "$phase" required_approvers)"
+  # _phase_field_list now emits one item per line (F10 fix). `head -n 1`
+  # picks the first rollback target; `tr` flattens the approver list into
+  # space-separated so the existing IFS=' ' counters below keep working.
+  rb="$(_phase_field_list "$phase" rollback_to | head -n 1)"
+  apps="$(_phase_field_list "$phase" required_approvers | tr '\n' ' ')"
   mn="$(_phase_field_scalar "$phase" min_approvers)"
   ma="$(_phase_field_scalar "$phase" min_approvals)"
   aa="$(_phase_field_scalar "$phase" auto_advance)"
@@ -215,7 +219,7 @@ gate_approve() {
   fi
 
   if [[ "$satisfied" == "true" && "$aa" == "true" ]]; then
-    new="$(_phase_field_list "$phase" next | awk '{print $1}')"
+    new="$(_phase_field_list "$phase" next | head -n 1)"
     if [[ -n "$new" ]] \
         && transition_execute "$pid" "$new" "gate.approve:$approver" \
              "gate satisfied (matched=$matched/${ma:-1})" >/dev/null; then

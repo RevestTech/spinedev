@@ -1,0 +1,118 @@
+# Spine recording database — local Docker stack.
+#
+# Services:
+#   postgres : Postgres 16 (pgvector/pgvector:pg16) with a named volume for
+#              data. The pgvector image ships the `vector` extension that
+#              V2 (KG embeddings) and V20 (memory lessons) need. See
+#              db/PGVECTOR_NOTE.md.
+#   flyway   : one-shot migrator; depends on postgres being healthy
+#   watcher  : Python daemon that drains per-role outbox.jsonl files
+#              into Postgres (Pass B). Read-only on the team workspace.
+#
+# Usage: see ../db/README.md and ../db/Makefile.
+
+services:
+  postgres:
+    # NOTE: pgvector/pgvector:pg16 (NOT stock postgres:16-alpine). The V2
+    # KG schema (`spine_kg.embeddings`) and the V20 memory schema
+    # (`spine_memory.lessons.embedding vector(...)`) both depend on the
+    # `vector` extension shipped by ankane/pgvector. Stock alpine has no
+    # pgvector, which is why the wave-8 smoke test (F3 in docs/STATUS.md
+    # §5) couldn't apply V2 and silently dropped the embedding column on
+    # V20. The pgvector image is otherwise a drop-in (same Postgres 16
+    # base + same data dir layout) so the named volume `spine_pgdata`
+    # carries over on `make down && make up`.
+    image: pgvector/pgvector:pg16
+    container_name: spine_postgres
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    # Bind interface defaults to 127.0.0.1 (localhost-only). Set
+    # POSTGRES_BIND_HOST=0.0.0.0 in .env to expose Postgres on your LAN
+    # so other machines can join the fleet (see `make share-pg` and
+    # scripts/spine-connect.sh). For central-server mode, expose via a
+    # reverse proxy with TLS. Host port defaults to 33000 so we stay out
+    # of the way of any host Postgres on 5432 or 5433. Override with
+    # POSTGRES_HOST_PORT in .env.
+    ports:
+      - "${POSTGRES_BIND_HOST:-127.0.0.1}:${POSTGRES_HOST_PORT:-33000}:5432"
+    volumes:
+      - spine_pgdata:/var/lib/postgresql/data
+    networks:
+      - spine_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  flyway:
+    image: flyway/flyway:10-alpine
+    container_name: spine_flyway
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      FLYWAY_URL: ${FLYWAY_URL}
+      FLYWAY_USER: ${FLYWAY_USER}
+      FLYWAY_PASSWORD: ${FLYWAY_PASSWORD}
+    command: ["migrate"]
+    volumes:
+      - ./flyway/sql:/flyway/sql:ro
+      - ./flyway/conf:/flyway/conf:ro
+    networks:
+      - spine_net
+    restart: "no"
+
+  watcher:
+    build:
+      context: ./watcher
+    image: spine_watcher:latest
+    container_name: spine_watcher
+    depends_on:
+      flyway:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      # TEAM_BASE points at the teams/ subdir INSIDE the agent-handoff
+      # mount so the watcher's `team_base.parent` resolves to the
+      # agent-handoff dir, which is where .instance-outbox.jsonl lives.
+      # The old `/spine-teams` path is gone; everything routes through
+      # `/spine-agent-handoff`.
+      TEAM_BASE: /spine-agent-handoff/teams
+      CURSOR_BASE: /spine-cursors
+      POLL_INTERVAL_S: "5"
+      LOG_LEVEL: INFO
+    volumes:
+      # The entire agent-handoff directory is mounted READ-ONLY. The
+      # watcher must never touch outbox.jsonl or the .instance-outbox
+      # file - the daemon owns those - and this mount makes that
+      # impossible by construction. Mounting the parent (not just
+      # teams/) lets the watcher find the instance outbox at
+      # /spine-agent-handoff/.instance-outbox.jsonl.
+      - ../.planning/orchestration/agent-handoff:/spine-agent-handoff:ro
+      # Cursors live in a separate writable named volume so we keep
+      # the agent-handoff mount strictly read-only. The watcher
+      # computes a cursor path under CURSOR_BASE keyed by role.
+      - spine_cursors:/spine-cursors
+    networks:
+      - spine_net
+    restart: unless-stopped
+
+volumes:
+  spine_pgdata:
+  spine_cursors:
+
+networks:
+  spine_net:
+    driver: bridge

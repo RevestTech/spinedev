@@ -28,7 +28,8 @@ IFS=$'\n\t'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PHASES_YAML="${SPINE_PHASES_YAML:-$SCRIPT_DIR/../state/phases.yaml}"
 PIPELINE_YAML="${SPINE_PIPELINE_YAML:-$SCRIPT_DIR/../../plan/artifacts/sdlc-pipeline-default.yaml}"
-SPINE_DB_URL="${SPINE_DB_URL:-postgresql://spine:spine@localhost:33000/spine}"
+# shellcheck source=_env_loader.sh
+. "$SCRIPT_DIR/_env_loader.sh"
 ROUTER_SH="${SPINE_ROUTER_SH:-$SCRIPT_DIR/router.sh}"
 TRANSITION_SH="${SPINE_TRANSITION_SH:-$SCRIPT_DIR/transition.sh}"
 REMEDIATION_SH="${SPINE_REMEDIATION_SH:-$SCRIPT_DIR/remediation.sh}"

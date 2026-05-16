@@ -24,7 +24,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # v1 team file layout (PROTOCOL §2). Override SPINE_TEAMS_DIR to retarget
 # (e.g., installed projects keep daemons under their own repo root).
 SPINE_TEAMS_DIR="${SPINE_TEAMS_DIR:-.planning/orchestration/agent-handoff/teams}"
-SPINE_DB_URL="${SPINE_DB_URL:-postgresql://spine:spine@localhost:33000/spine}"
+# Pick up POSTGRES_* from db/.env so the bridge talks to the same DB the
+# Docker stack publishes. Fixes wave-8 smoke F8/F9.
+# shellcheck source=../../orchestrator/lib/_env_loader.sh
+. "$(cd "$SCRIPT_DIR/../../orchestrator/lib" && pwd)/_env_loader.sh"
 
 # Role manifest mirrors lib/roles.sh::SPINE_TEAM_ROLES. Hard-coded here so
 # the bridge stays read-only against lib/ (sourcing roles.sh would couple

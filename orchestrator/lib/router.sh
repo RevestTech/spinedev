@@ -23,12 +23,24 @@ IFS=$'\n\t'
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PHASES_YAML="${SPINE_PHASES_YAML:-$SCRIPT_DIR/../state/phases.yaml}"
-SPINE_DB_URL="${SPINE_DB_URL:-postgresql://spine:spine@localhost:33000/spine}"
+# shellcheck source=_env_loader.sh
+. "$SCRIPT_DIR/_env_loader.sh"
 SPINE_MCP_HTTP_URL="${SPINE_MCP_HTTP_URL:-http://localhost:8765/tools}"
 SPINE_AUDIT_CLI="${SPINE_AUDIT_CLI:-$SCRIPT_DIR/../../shared/audit/audit_record.py}"
 
 # Manifest: subsystem -> MCP tool. Single source of truth for FR-5 mapping.
-declare -A SPINE_MCP_TOOL=([plan]=plan_dispatch [build]=build_dispatch [verify]=verify_audit)
+# NOTE: declare the associative array empty FIRST, then assign keys one at
+# a time. The inline `declare -A X=([k]=v ...)` form triggers an
+# "unbound variable" error on some bash builds (e.g. macOS bash 3.2 or
+# bash 5 under `set -u` when the file is sourced rather than executed —
+# the parser tries to expand `[plan]` as a glob/parameter ref before the
+# array exists). The explicit form below is portable + diagnoseable and
+# fixes wave-8 smoke test F11 (`gate.sh status` → `plan: unbound variable`
+# from router.sh:31 when gate.sh sources router.sh).
+declare -A SPINE_MCP_TOOL=()
+SPINE_MCP_TOOL[plan]=plan_dispatch
+SPINE_MCP_TOOL[build]=build_dispatch
+SPINE_MCP_TOOL[verify]=verify_audit
 
 _psql() { psql "$SPINE_DB_URL" -v ON_ERROR_STOP=1 -A -t -X -q "$@"; }
 _log()  { printf '%s router.sh %s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "${*:2}" >&2; }

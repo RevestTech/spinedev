@@ -1,8 +1,8 @@
 # Spine v2 — Status & Handoff
 
-> **Last updated:** 2026-05-16 (end of wave 8 + integration smoke test)
+> **Last updated:** 2026-05-16 (end of wave 9 — Tier 1 bug fixes + smoke harness)
 > **Branch:** `main`
-> **Latest commit:** `7e88328` (wave 8) — see `git log --oneline -15` for full history
+> **Latest commit:** wave 9 (see `git log --oneline -15` for full history)
 > **For: anyone picking up Spine v2 development.**
 
 This is the single doc for "where are we, what's next, what to test." Complements (not replaces) `docs/BACKLOG.md` (the per-story tracker) and `docs/ARCHITECTURE.md` (the architecture plan).
@@ -183,6 +183,21 @@ For per-story detail: `grep -c '· `Done`' docs/BACKLOG.md` and similar greps.
 ### Tier 1 fix budget
 
 All 5 Tier 1 fixes are bash/yaml line-level changes. **Recommended wave 9** = these 5 fixes + a smoke-test harness as `tools/smoke-test.sh` that runs this exact sequence and reports pass/fail. ~1 agent for fixes + 1 agent for harness = 2 agents.
+
+### Wave 9 outcome (2026-05-16)
+
+All 5 Tier 1 fixes shipped + smoke harness automates the §5 sequence.
+
+| Fix | Status | Where |
+|---|---|---|
+| F3 pgvector | ✅ | `db/docker-compose.yml` → `pgvector/pgvector:pg16`; rationale in `db/PGVECTOR_NOTE.md` |
+| F8 hardcoded port | ✅ | New `orchestrator/lib/_env_loader.sh`; 13 scripts source it instead of defaulting `SPINE_DB_URL` |
+| F9 default password | ✅ | Same `_env_loader.sh` reads `db/.env` |
+| F10 awk inline-array | ✅ | `transition.sh` `_phase_field_list` rewritten — one item per line; `_in_list` IFS hardened; `gate.sh` call sites adjusted (`head -n1` / `tr '\n' ' '`) |
+| F11 unbound `plan` | ✅ | `router.sh` array switched from inline `[plan]=…` literal to per-key assignment (set -u + source-time safe) |
+| Smoke harness | ✅ | `tools/smoke-test.sh` (373 lines, 7 phases, text/json/junit, exit codes 0/1/2/3/64) + `tools/smoke-test_README.md` |
+
+**To verify:** `bash tools/smoke-test.sh` (after `make up` if not running). Tier 2 (F2/F4/F5/F6/F7) still pending — non-blocking.
 
 ### Cleanup
 

@@ -10,7 +10,8 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-SPINE_DB_URL="${SPINE_DB_URL:-postgresql://spine:spine@localhost:33000/spine}"
+# shellcheck source=../../orchestrator/lib/_env_loader.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../orchestrator/lib" && pwd)/_env_loader.sh"
 
 _log() { printf '%s budget_rollup.sh %s %s\n' \
   "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "${*:2}" >&2; }

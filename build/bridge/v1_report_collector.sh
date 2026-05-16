@@ -20,7 +20,8 @@ IFS=$'\n\t'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 SPINE_TEAMS_DIR="${SPINE_TEAMS_DIR:-.planning/orchestration/agent-handoff/teams}"
-SPINE_DB_URL="${SPINE_DB_URL:-postgresql://spine:spine@localhost:33000/spine}"
+# shellcheck source=../../orchestrator/lib/_env_loader.sh
+. "$(cd "$SCRIPT_DIR/../../orchestrator/lib" && pwd)/_env_loader.sh"
 SPINE_MCP_HTTP_URL="${SPINE_MCP_HTTP_URL:-http://localhost:8765/tools}"
 COLLECTOR_POLL_S="${COLLECTOR_POLL_S:-8}"   # matches v1 daemon POLL_INTERVAL
 

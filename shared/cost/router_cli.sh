@@ -10,6 +10,10 @@
 #   router_cli.sh route       --project N --phase P --role R --tier T
 #                             [--est-in N] [--est-out N] [--actor U]
 #                             [--override MODEL] [--justification TEXT] [--granted-by U]
+#   router_cli.sh team-route  --project N --phase P --role R --directive TEXT
+#                             [--est-in N] [--est-out N] [--actor U]
+#                             [--files N] [--loc N] [--artifact TYPE]
+#                             [--retries N] [--override-tier TIER]
 #   router_cli.sh budget      [--project N] [--user U] [--org O]
 #   router_cli.sh list-models [--tier T]
 #   router_cli.sh check       --project N --phase P --tier T [--est-in N] [--est-out N]
@@ -21,7 +25,8 @@ IFS=$'\n\t'
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-export SPINE_DB_URL="${SPINE_DB_URL:-postgresql://spine:spine@localhost:33000/spine}"
+# shellcheck source=../../orchestrator/lib/_env_loader.sh
+. "$REPO_ROOT/orchestrator/lib/_env_loader.sh"
 export PYTHONPATH="$REPO_ROOT${PYTHONPATH:+:$PYTHONPATH}"
 
 _log() { printf '%s router_cli.sh %s %s\n' \
@@ -115,14 +120,63 @@ cmd_check() {
   cmd_route --role check "$@" >/dev/null
 }
 
+cmd_team_route() {
+  # STORY-3.3.1 + 3.3.2 — auto-route by (role, task complexity).
+  local project="" phase="" role="" directive="" estin=0 estout=0
+  local actor="${USER:-unknown}" files=0 loc=0 artifact="" retries=0
+  local override_tier=""
+  while [[ $# -gt 0 ]]; do case "$1" in
+    --project)        project="$2";       shift 2 ;;
+    --phase)          phase="$2";         shift 2 ;;
+    --role)           role="$2";          shift 2 ;;
+    --directive)      directive="$2";     shift 2 ;;
+    --est-in)         estin="$2";         shift 2 ;;
+    --est-out)        estout="$2";        shift 2 ;;
+    --actor)          actor="$2";         shift 2 ;;
+    --files)          files="$2";         shift 2 ;;
+    --loc)            loc="$2";           shift 2 ;;
+    --artifact)       artifact="$2";      shift 2 ;;
+    --retries)        retries="$2";       shift 2 ;;
+    --override-tier)  override_tier="$2"; shift 2 ;;
+    *) _err invalid_input "unknown arg: $1" ;;
+  esac; done
+  for v in project phase role directive; do
+    [[ -z "${!v}" ]] && _err invalid_input "--${v} required"
+  done
+  PROJECT_ID="$project" PHASE="$phase" ROLE="$role" DIRECTIVE="$directive" \
+    EST_IN="$estin" EST_OUT="$estout" ACTOR="$actor" \
+    FILES="$files" LOC="$loc" ARTIFACT="$artifact" RETRIES="$retries" \
+    OVERRIDE_TIER="$override_tier" _py <<'PY'
+import json, os, sys
+from shared.cost.team_router import TeamRouteRequest, team_route
+req = TeamRouteRequest(
+    role=os.environ["ROLE"], phase=os.environ["PHASE"],
+    directive_text=os.environ["DIRECTIVE"],
+    project_id=int(os.environ.get("PROJECT_ID") or 0),
+    actor=os.environ["ACTOR"],
+    estimated_input_tokens=int(os.environ.get("EST_IN") or 0),
+    estimated_output_tokens=int(os.environ.get("EST_OUT") or 0),
+    file_count_touched=int(os.environ.get("FILES") or 0),
+    estimated_loc=int(os.environ.get("LOC") or 0),
+    artifact_type=(os.environ.get("ARTIFACT") or None),
+    prior_attempts=int(os.environ.get("RETRIES") or 0),
+    user_override_tier=(os.environ.get("OVERRIDE_TIER") or None),
+)
+d = team_route(req)
+print(d.model_dump_json())
+sys.exit(2 if d.blocked else 0)
+PY
+}
+
 main() {
   local cmd="${1:-}"; shift || true
   case "$cmd" in
     route)        cmd_route        "$@" ;;
+    team-route)   cmd_team_route   "$@" ;;
     budget)       cmd_budget       "$@" ;;
     list-models)  cmd_list_models  "$@" ;;
     check)        cmd_check        "$@" ;;
-    -h|--help|"") sed -n '2,22p' "${BASH_SOURCE[0]}" >&2; exit 0 ;;
+    -h|--help|"") sed -n '2,26p' "${BASH_SOURCE[0]}" >&2; exit 0 ;;
     *) _err unknown_command "no such subcommand: $cmd" 64 ;;
   esac
 }

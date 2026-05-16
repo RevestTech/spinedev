@@ -28,7 +28,8 @@ IFS=$'\n\t'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PHASES_YAML="${SPINE_PHASES_YAML:-$SCRIPT_DIR/../state/phases.yaml}"
 APPROVAL_PY="${SPINE_APPROVAL_PY:-$SCRIPT_DIR/approval.py}"
-SPINE_DB_URL="${SPINE_DB_URL:-postgresql://spine:spine@localhost:33000/spine}"
+# shellcheck source=_env_loader.sh
+. "$SCRIPT_DIR/_env_loader.sh"
 
 # Single-roundtrip psql wrapper. `-1` wraps the input in a single transaction
 # (atomicity, NFR-1); `ON_ERROR_STOP=1` aborts immediately so we never write
@@ -90,16 +91,62 @@ _load_phase_def() {
 }
 
 _phase_field_list() {
-  # _phase_field_list <phase> <field>  → space-separated list of values for
-  # `next:` / `rollback_to:` style arrays. Tolerates `[a, b]` and block form.
+  # _phase_field_list <phase> <field>  → ONE value per line for `next:` /
+  # `rollback_to:` style arrays. Tolerates inline `[a, b, c]` AND multi-line
+  # `- a` block form. Empty output when the field is missing or the list is
+  # empty (e.g. `rollback_to: []`).
+  #
+  # Newline-separated (rather than space-separated) so callers can iterate
+  # under the file-level `IFS=$'\n\t'` without leaking the wrapping spaces
+  # that the old `gsub(/[\[\],]/, " ")` left behind — that was the F10 bug
+  # the wave-8 smoke test hit (`_in_list "plan_in_progress" " plan_in_progress "`
+  # never matched).
   local block field
   block="$(_load_phase_def "$1")"
   field="$2"
   printf '%s\n' "$block" \
     | awk -v f="$field" '
+        BEGIN { in_field = 0 }
         $0 ~ "^[[:space:]]*" f ":" {
-          sub("^[[:space:]]*" f ":[[:space:]]*", "")
-          gsub(/[\[\],]/, " "); print; exit
+          rest = $0
+          sub("^[[:space:]]*" f ":[[:space:]]*", "", rest)
+          # Strip trailing comment + whitespace.
+          sub(/[[:space:]]*#.*$/, "", rest)
+          gsub(/^[[:space:]]+|[[:space:]]+$/, "", rest)
+          if (rest ~ /^\[/) {
+            # Inline array: [a, b, c]  or  []
+            gsub(/^\[|\][[:space:]]*$/, "", rest)
+            n = split(rest, items, /[[:space:]]*,[[:space:]]*/)
+            for (i = 1; i <= n; i++) {
+              item = items[i]
+              gsub(/^[[:space:]"\047]+|[[:space:]"\047]+$/, "", item)
+              if (length(item) > 0) print item
+            }
+            in_field = 0
+            exit                                   # field found + emitted
+          } else if (length(rest) == 0) {
+            # Multi-line list follows on subsequent lines.
+            in_field = 1
+            next
+          } else {
+            # Scalar masquerading as a list — emit and stop.
+            gsub(/["\047]/, "", rest); print rest; in_field = 0; exit
+          }
+        }
+        in_field && /^[[:space:]]*-[[:space:]]+/ {
+          item = $0
+          sub(/^[[:space:]]*-[[:space:]]+/, "", item)
+          sub(/[[:space:]]*#.*$/, "", item)
+          gsub(/^[[:space:]"\047]+|[[:space:]"\047,]+$/, "", item)
+          if (length(item) > 0) print item
+          next
+        }
+        in_field {
+          # In multi-line-list mode: any line that is NOT a `- item` row
+          # (handled above by the rule with `next`) means the list ended.
+          # We get here only when the prior rule did not `next`, so this
+          # line is a sibling key or a new block.
+          if ($0 !~ /^[[:space:]]*$/) exit
         }'
 }
 
@@ -117,10 +164,17 @@ _phase_field_scalar() {
 }
 
 _in_list() {
-  # _in_list <needle> <space-separated list> → 0 if present.
+  # _in_list <needle> <list-string> → 0 if present. The list is whatever
+  # `_phase_field_list` produced (one item per line) OR a space-separated
+  # legacy list. We force IFS in a subshell-style local scope so word
+  # splitting picks up both newlines AND spaces regardless of the caller's
+  # file-level IFS (which is `$'\n\t'` here, and would otherwise miss the
+  # trailing whitespace the old awk path left around `[a, b]` values).
   local needle="$1"; shift
-  local item
-  for item in $*; do
+  local list="$*" item
+  local IFS=$' \t\n'
+  for item in $list; do
+    [[ -z "$item" ]] && continue
     [[ "$item" == "$needle" ]] && return 0
   done
   return 1
