@@ -1,0 +1,101 @@
+project_type: web-app
+description: User-facing web application served from a browser (SaaS, marketing site, portal).
+swarm_composition: [researcher, engineer, operator, qa]
+questions:
+  - id: target_users
+    section: discovery
+    type: open
+    prompt: Who are the primary users and what is the one job they hire this app to do?
+    why_asked: Anchors persona-driven scope; drives auth, UX, and analytics decisions.
+    examples: ["SMB owners tracking inventory", "Internal sales reps quoting deals", "Public-facing consumers booking appointments"]
+    required: true
+  - id: auth_model
+    section: scope
+    type: single_choice
+    prompt: What authentication model do users need?
+    why_asked: Gates which identity stack the engineer/operator plan for; security review depth.
+    options: [none_public, email_password, social_oauth, sso_saml_oidc, magic_link, passkeys]
+    required: true
+  - id: data_persistence
+    section: scope
+    type: open
+    prompt: What data does the app store on behalf of users, and how sensitive is it?
+    why_asked: Drives DB choice, encryption posture, backup needs, compliance scope.
+    examples: ["User profiles + uploaded PDFs (low sensitivity)", "PHI under HIPAA", "Payment tokens only"]
+    required: true
+  - id: hosting_target
+    section: constraints
+    type: single_choice
+    prompt: Where will this be hosted?
+    why_asked: Constrains framework, deployment, and cost-projection assumptions.
+    options: [vercel_netlify, aws, gcp, azure, self_hosted_vps, on_prem_kubernetes, undecided]
+    required: true
+  - id: rendering_model
+    section: scope
+    type: single_choice
+    prompt: Does the app need SSR (SEO/first-paint critical) or can it be a pure SPA?
+    why_asked: Locks framework family (Next/Remix vs Vite/CRA) and infra shape.
+    options: [ssr_required, spa_acceptable, ssg_static, hybrid_islands]
+    required: true
+  - id: realtime_needs
+    section: scope
+    type: yes_no
+    prompt: Does any feature require live updates (websockets, presence, collaborative editing)?
+    why_asked: Realtime adds infra (pub/sub, sticky sessions) and changes architecture.
+    required: true
+  - id: responsive_mobile
+    section: quality
+    type: single_choice
+    prompt: Must this work on mobile browsers, and to what fidelity?
+    why_asked: Drives responsive testing scope and design-system depth.
+    options: [desktop_only, responsive_basic, mobile_first, pwa_installable]
+    required: true
+  - id: analytics_and_seo
+    section: quality
+    type: multi_choice
+    prompt: Which of these are required at launch? (pick all that apply)
+    why_asked: SEO/analytics requirements feed back into rendering and tag-management decisions.
+    options: [product_analytics, marketing_seo, conversion_tracking, error_monitoring, none]
+    required: true
+  - id: deployment_cadence
+    section: constraints
+    type: single_choice
+    prompt: How often do you expect to ship changes once live?
+    why_asked: Sets CI/CD complexity, preview-env need, release rituals.
+    options: [continuous_per_merge, daily, weekly, monthly_or_less]
+    required: true
+  - id: cost_ceiling
+    section: constraints
+    type: numeric
+    prompt: What is your monthly infrastructure + tooling cost ceiling (USD)?
+    why_asked: Hard budget the operator scout uses to vet hosting + 3P services.
+    required: true
+  - id: must_should_could
+    section: scope
+    type: open
+    prompt: List the features as MUST (cannot ship without), SHOULD (strongly want), COULD (defer if needed).
+    why_asked: Forces the 5-move tiering; produces the cut-line for v1 scope.
+    examples: ["MUST: login, dashboard, export CSV / SHOULD: invites, dark mode / COULD: webhooks"]
+    required: true
+    tier_forcer: true
+  - id: out_of_scope
+    section: out_of_scope
+    type: open
+    prompt: What is explicitly out of scope for v1? Name at least three things.
+    why_asked: Locks the no-list so scope creep is detectable.
+    examples: ["Native mobile apps", "Multi-tenant white-labeling", "Self-serve billing"]
+    required: true
+acceptance_criteria_template: |
+  ## Acceptance criteria (web-app)
+  - [ ] A {target_users} can complete the primary job-to-be-done end-to-end in the browser.
+  - [ ] Authentication via {auth_model} works on supported browsers.
+  - [ ] Core flows render correctly on {responsive_mobile} viewports.
+  - [ ] Monthly run-rate stays at or below ${cost_ceiling}.
+  - [ ] All MUST items shipped; no SHOULD item is half-implemented.
+out_of_scope_template: |
+  ## Out of scope (v1)
+  - Native mobile apps (iOS/Android shells); responsive web only.
+  - Offline mode and service-worker sync (unless explicitly listed as MUST).
+  - Internationalization beyond the launch locale.
+  - Multi-tenant org-isolation features unless {auth_model} requires SSO.
+  - Items listed by user: {out_of_scope}

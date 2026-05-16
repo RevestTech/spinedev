@@ -1,0 +1,141 @@
+# bundle-regulated-enterprise.yaml — reference bundle for a regulated enterprise.
+# Conforms to bundle-schema.yaml v1. Implements STORY-2.1.6 (regulated archetype).
+# Profile: healthcare/finance/defense org; SOC 2 + HIPAA + ISO 27001 in scope;
+# 2 reviewers + Compliance label; AWS-only; change approval mandatory.
+# Install: spine install --org-bundle shared/standards/bundle-regulated-enterprise.yaml
+
+$schema: spine.org-bundle/v1
+
+identity:
+  bundle_version:  1
+  bundle_id:       regulated-enterprise-reference
+  display_name:    "Regulated Enterprise — reference bundle"
+  org_name:        "Globex Health (reference)"
+  inherits_from:   null
+  scope:           org
+  created_at:      2026-05-16T00:00:00Z
+  last_updated_at: 2026-05-16T00:00:00Z
+  last_updated_by: spine-reference
+  rationale:       "Initial reference template for a regulated enterprise. Encodes minimum controls required to operate under SOC 2 Type II, HIPAA, and ISO 27001 simultaneously. Deviations require Compliance sign-off (recorded in this rationale field on every edit per EPIC-1.7.4)."
+
+# Standards — strict review, conventional commits w/ ticket ref, 85% coverage
+standards:
+  naming_conventions: { snake_case_funcs: true, PascalCase_classes: true, no_abbreviations: true }   # auditability: names must read as English
+  style_guides:       [.ruff.toml, .eslintrc.json, .editorconfig]
+  commit_message_format: "^(feat|fix|chore|docs|test|refactor|security|compliance)(\\(.+\\))?: .+ \\[(JIRA|TICKET)-\\d+\\]$"
+  pr_review_requirements:
+    min_reviewers:   2                                 # 4-eyes principle
+    required_checks: [lint, unit-tests, sast, secret-scan, sbom-diff]
+    required_labels: [Compliance, RiskReviewed]
+  test_coverage_threshold: 85
+  documentation_requirements:
+    readme_required:  true
+    adr_required_for: [architecture, security, data, integration]
+
+# Security — three packs, SAST mandatory, custom seccomp. Maps to TRON
+# tron/standards/packs/{soc2,hipaa,iso27001}_reference.json. iso_agents_required
+# wins over verify_overrides.iso_agents_disabled (cannot kill a mandated agent).
+security:
+  compliance_packs:        [OWASP_Top_10, SOC_2_Type_II, ISO_27001, HIPAA]
+  secret_scanning:         { enabled: true, scanners: [gitleaks, trufflehog] }
+  dependency_scanning:     { enabled: true, fail_on: [critical, high] }   # block on high+
+  sast_required:           true
+  iso_agents_required:     [SecurityISO, ComplianceISO, DocumentationISO]
+  sandbox_seccomp_profile: "shared/standards/seccomp/regulated-strict.json"   # STORY-3.5.4
+
+# Cost — high org caps but disciplined per-phase ceilings (compliance work is expensive)
+cost:
+  daily_cap_usd:        500.0
+  weekly_cap_usd:       3000.0
+  monthly_cap_usd:      12000.0
+  per_project_cap_usd:  500.0
+  per_phase_caps:
+    intake:            3.0
+    plan_in_progress:  20.0                            # TRD swarm + Compliance review
+    plan_approved:     5.0
+    build_in_progress: 40.0
+    verify_in_progress: 30.0                           # cross-LLM ~2× cost (STORY-3.7.4)
+    verify_approved:   5.0
+  model_menu:
+    allowed:    [claude-sonnet-4, claude-opus-4]       # no Haiku for synthesis-critical work
+    disallowed: [gpt-4o, gemini-1.5-pro]               # data-residency policy
+
+# Approved libs — allowlist only; anything else needs Compliance grant
+approved_libs:
+  python:     [fastapi, pydantic, sqlalchemy, pytest, httpx, cryptography, anthropic]
+  typescript: [react, next, zod, vitest, "@anthropic-ai/sdk"]
+  go:         [chi, sqlx, testify]
+
+# Banned patterns — insecure deserialization, weak crypto, plain HTTP, command injection
+banned_patterns:
+  - { pattern: "pickle\\.loads?\\(",     language: python,     severity: critical,
+      message: "Insecure deserialization (pickle). Use JSON or msgpack with a typed schema.",
+      source:  "OWASP A08:2021" }
+  - { pattern: "yaml\\.load\\(",         language: python,     severity: critical,
+      message: "yaml.load is unsafe; use yaml.safe_load." }
+  - { pattern: "subprocess\\..*shell=True", language: python,  severity: high,
+      message: "shell=True invites command injection; pass argv list instead." }
+  - { pattern: "md5|sha1",               language: any,        severity: high,
+      message: "MD5/SHA1 banned for security contexts; use SHA-256 or BLAKE2." }
+  - { pattern: "eval\\(",                language: any,        severity: critical,
+      message: "eval() forbidden organization-wide." }
+  - { pattern: "dangerouslySetInnerHTML", language: typescript, severity: high,
+      message: "Sanitize via DOMPurify or render structurally; never trust HTML input." }
+  - { pattern: "http://(?!localhost|127\\.0\\.0\\.1)", language: any, severity: high,
+      message: "Plain HTTP banned for non-loopback URLs (HIPAA §164.312(e))." }
+
+# Deployment — AWS-only, change-approved, prod walled off
+deployment_targets:
+  allowed_environments:    [dev, staging, prod]
+  cloud_providers:         [aws]                       # no GCP/Azure under current BAA
+  infra_as_code:           { tool: terraform, state_backend: "s3://globex-tf-state-prod-encrypted" }
+  requires_change_approval: true                       # every prod change gates on CAB
+
+# Compliance tags — all flags asserted true
+compliance_tags:
+  pii_data_handled:  true
+  pci_dss_scope:     true
+  hipaa_scope:       true
+  gdpr_scope:        true
+  regulated_industry: healthcare
+
+# Capabilities — tight grants; security floor is absolute (nobody overrides)
+capabilities:
+  grants:
+    can_modify_sdlc_pipeline: ["role:cto", "role:cco"]
+    can_modify_cost_policy:   ["role:cfo", "role:cto"]
+    can_grant_capabilities:   ["role:cco"]             # only CCO can hand out caps
+    can_override_security:    []                       # NOBODY — not even CTO; security floor is absolute
+  revokes:
+    - "user:contractor-*"                              # contractors hold no edit caps by default
+
+# Pipeline overrides — add Compliance gate; raise approver counts
+pipeline_overrides:
+  phases:
+    append:
+      - id: compliance_review
+        ownership: verify
+        role_lead: qa
+        role_support: [auditor]
+        artifact: Findings
+        template: findings-v1
+        tier_default: high
+        gate: { type: multi_approver, approvers: [user, qa, compliance_officer], min_approvals: 2, on_reject: request_changes }
+    modify:
+      verify_approved: { gate: { type: multi_approver, approvers: [user, qa, compliance_officer], min_approvals: 2, on_reject: request_changes } }
+      acceptance:      { gate: { type: multi_approver, approvers: [user, compliance_officer],     min_approvals: 2, on_reject: revert } }
+  gates:
+    plan_in_progress: { approvers: [user, architect, compliance_officer], min_approvals: 2 }
+  tier_routing:
+    budget_caps:      { per_project: { amount: 500.00, currency: USD }, enforcement: hard }
+
+# Verify overrides — 3 ISO agents, cross-LLM mandatory, capped confidence.
+# Regulated workloads can't accept LLM self-confidence on critical findings;
+# cross-LLM (EPIC-3.7) cuts single-provider failure modes; calibration cap
+# (EPIC-3.6) forces honest confidence reporting.
+verify_overrides:
+  iso_agents_enabled:            [SecurityISO, ComplianceISO, DocumentationISO]
+  iso_agents_disabled:           []
+  cross_llm_validation_required: true                  # PRD-final, TRD-final, security findings
+  calibration_confidence_cap:    0.75                  # honest until corpus N ≥ 500
+  blueprint_overrides: { require_taint_analysis: true, require_sbom: true, require_provenance_record: true }

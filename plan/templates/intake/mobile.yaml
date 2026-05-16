@@ -1,0 +1,101 @@
+project_type: mobile
+description: Mobile application targeting iOS, Android, or both, distributed via stores or enterprise channels.
+swarm_composition: [researcher, engineer, qa, operator]
+questions:
+  - id: platforms
+    section: scope
+    type: single_choice
+    prompt: Which platforms must v1 ship on?
+    why_asked: Locks tech (native vs cross-platform) and doubles QA scope if both.
+    options: [ios_only, android_only, both_at_launch, both_phased]
+    required: true
+  - id: build_approach
+    section: constraints
+    type: single_choice
+    prompt: Native, hybrid/cross-platform, or web-wrapper?
+    why_asked: Drives stack (Swift/Kotlin vs RN/Flutter vs Capacitor); huge perf + cost implication.
+    options: [native_per_platform, react_native, flutter, capacitor_webview, kotlin_multiplatform]
+    required: true
+  - id: offline_support
+    section: scope
+    type: single_choice
+    prompt: How much offline capability is required?
+    why_asked: Offline support is a multiplier on data-layer complexity.
+    options: [online_only, cache_read_only, queue_writes_sync_later, full_offline_with_conflict_resolution]
+    required: true
+  - id: push_notifications
+    section: scope
+    type: yes_no
+    prompt: Are push notifications required at launch?
+    why_asked: Adds APNs/FCM setup, server-side scheduling, and permission UX.
+    required: true
+  - id: distribution
+    section: constraints
+    type: single_choice
+    prompt: How will users get the app?
+    why_asked: Distribution shapes signing, review timeline, and update cadence.
+    options: [public_app_stores, enterprise_mdm_internal, testflight_play_beta_only, sideload_apk_direct]
+    required: true
+  - id: auth_model
+    section: scope
+    type: single_choice
+    prompt: How do users authenticate?
+    why_asked: Drives keychain/keystore + biometric + SSO library choices.
+    options: [no_auth_anonymous, email_password, social_oauth, sso_saml_oidc, biometric_local, passkeys]
+    required: true
+  - id: backend_integrations
+    section: scope
+    type: open
+    prompt: What backend services does the app talk to (yours + third parties)?
+    why_asked: Defines API contracts, rate limits, and offline-sync surface.
+    examples: ["Our REST API + Stripe SDK + Segment analytics", "Firebase only", "GraphQL gateway + native maps"]
+    required: true
+  - id: min_os_version
+    section: constraints
+    type: open
+    prompt: What is the minimum OS version you will support on each platform?
+    why_asked: Lower minimums multiply test matrix and constrain SDK choices.
+    examples: ["iOS 16+, Android 10+ (API 29)", "iOS 17+ only", "iOS 15+, Android 8+"]
+    required: true
+  - id: device_capabilities
+    section: scope
+    type: multi_choice
+    prompt: Which device capabilities does the app rely on?
+    why_asked: Each capability adds a permission flow + review surface.
+    options: [camera, microphone, location_background, contacts, calendar, bluetooth, ar_kit_core, none]
+    required: true
+  - id: cost_ceiling
+    section: constraints
+    type: numeric
+    prompt: What is the annual cost ceiling for backend + store fees + crash reporting (USD)?
+    why_asked: Mobile total cost is often underestimated; lock it now.
+    required: true
+  - id: must_should_could
+    section: scope
+    type: open
+    prompt: Tier features as MUST / SHOULD / COULD.
+    why_asked: Forces tiering; mobile scope tends to "and also" before store review.
+    examples: ["MUST: login + offline read / SHOULD: push / COULD: widgets"]
+    required: true
+    tier_forcer: true
+  - id: out_of_scope
+    section: out_of_scope
+    type: open
+    prompt: What is explicitly out of scope for v1?
+    why_asked: Locks the no-list; review cycles punish surprise scope.
+    examples: ["Tablet-optimized layout", "Apple Watch / Wear OS", "In-app purchases"]
+    required: true
+acceptance_criteria_template: |
+  ## Acceptance criteria (mobile)
+  - [ ] App ships on {platforms} at {min_os_version}; passes store review (if {distribution} requires).
+  - [ ] Authentication via {auth_model} works including session restore.
+  - [ ] Offline behavior matches {offline_support} on a flaky-network test.
+  - [ ] Push notifications deliver end-to-end if required.
+  - [ ] Annual ops cost projects at or below ${cost_ceiling}.
+out_of_scope_template: |
+  ## Out of scope (v1)
+  - Platforms not listed; companion wearables (Watch, Wear OS) unless explicit.
+  - Tablet- and foldable-specific layouts beyond responsive scaling.
+  - In-app purchases / subscription paywalls unless listed as MUST.
+  - Web or desktop ports of the same product.
+  - Items listed by user: {out_of_scope}

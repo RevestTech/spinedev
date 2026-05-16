@@ -1,0 +1,100 @@
+project_type: data-pipeline
+description: Batch or streaming data movement, transformation, and loading between systems.
+swarm_composition: [researcher, engineer, datawright, operator]
+questions:
+  - id: sources
+    section: discovery
+    type: open
+    prompt: List every source system, its format, and how you access it (push/pull, API/file/CDC).
+    why_asked: Sources determine connector work, the bulk of pipeline cost.
+    examples: ["Postgres CDC via Debezium", "S3 daily Parquet drops", "Salesforce Bulk API hourly pull"]
+    required: true
+  - id: sinks
+    section: discovery
+    type: open
+    prompt: List every sink (warehouse, lake, downstream service) and the contract it expects.
+    why_asked: Sink contracts (schema, SLAs) define correctness.
+    examples: ["Snowflake ANALYTICS.RAW.*", "BigQuery dataset prod_events", "Kafka topic billing.invoices.v1"]
+    required: true
+  - id: latency_target
+    section: quality
+    type: single_choice
+    prompt: What is the end-to-end latency target from source event to sink availability?
+    why_asked: Latency drives batch-vs-stream and the entire infra topology.
+    options: [realtime_sub_minute, near_realtime_under_15min, hourly, daily, weekly]
+    required: true
+  - id: volume
+    section: constraints
+    type: open
+    prompt: What is the steady-state and peak volume (rows/day, GB/day, events/sec)?
+    why_asked: Volume sizes compute, storage, and partitioning strategy.
+    examples: ["~50M rows/day, peak 5k events/sec", "~200 GB/day, mostly overnight"]
+    required: true
+  - id: schedule_or_mode
+    section: scope
+    type: single_choice
+    prompt: Is this batch (scheduled), micro-batch, or continuous streaming?
+    why_asked: Mode locks orchestration tool (Airflow vs Flink vs lambda vs cron).
+    options: [batch_scheduled, micro_batch, streaming_continuous, hybrid_lambda]
+    required: true
+  - id: transformation_complexity
+    section: scope
+    type: single_choice
+    prompt: How complex is the transformation logic?
+    why_asked: Determines whether SQL/dbt is enough or custom code is needed.
+    options: [passthrough_minimal_typing, sql_joins_and_aggregations, custom_business_logic, ml_inference_inline]
+    required: true
+  - id: lineage_tracking
+    section: quality
+    type: yes_no
+    prompt: Is column-level lineage required (for audit, debugging, or governance)?
+    why_asked: Lineage requirements change tooling (add OpenLineage/Marquez/Atlan).
+    required: true
+  - id: failure_handling
+    section: quality
+    type: single_choice
+    prompt: What is the expected behavior on transient and permanent failures?
+    why_asked: Drives retry policy, DLQ design, and on-call burden.
+    options: [retry_and_dlq, fail_fast_alert, skip_and_log, pause_pipeline_block_downstream]
+    required: true
+  - id: backfill_needed
+    section: scope
+    type: yes_no
+    prompt: Will you need to backfill historical data (months or years), and how often going forward?
+    why_asked: Backfill is a separate execution path with its own perf budget.
+    required: true
+  - id: cost_per_run
+    section: constraints
+    type: numeric
+    prompt: What is the cost ceiling per run (or per day for streaming) in USD?
+    why_asked: Pipelines silently bleed money; cap is enforced by operator scout.
+    required: true
+  - id: must_should_could
+    section: scope
+    type: open
+    prompt: Tier the requirements as MUST / SHOULD / COULD.
+    why_asked: Forces tiering; data projects creep into "and also export to..." without it.
+    examples: ["MUST: hourly sync to Snowflake / SHOULD: dbt tests / COULD: dashboard"]
+    required: true
+    tier_forcer: true
+  - id: out_of_scope
+    section: out_of_scope
+    type: open
+    prompt: What is explicitly out of scope (which sources, sinks, transforms, or use cases)?
+    why_asked: Locks the no-list; data consumers tend to assume "while you're at it...".
+    examples: ["No reverse-ETL", "No ML feature store", "No PII data in this pipeline"]
+    required: true
+acceptance_criteria_template: |
+  ## Acceptance criteria (data-pipeline)
+  - [ ] Source-to-sink latency meets {latency_target} at steady-state {volume}.
+  - [ ] Transformation logic produces sink rows matching the contract; spot-checked against {sources}.
+  - [ ] Failure mode {failure_handling} verified with injected fault test.
+  - [ ] Backfill path executes if {backfill_needed} = yes; idempotent on re-run.
+  - [ ] Cost per run / per day stays at or below ${cost_per_run}.
+out_of_scope_template: |
+  ## Out of scope (v1)
+  - Sources or sinks not enumerated above; adding any requires a new directive.
+  - Reverse-ETL back into operational systems unless explicitly listed.
+  - GUI for non-engineers to author or modify the pipeline.
+  - ML feature engineering or model-serving layers.
+  - Items listed by user: {out_of_scope}

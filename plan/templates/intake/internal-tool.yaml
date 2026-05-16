@@ -1,0 +1,94 @@
+project_type: internal-tool
+description: Software built for internal staff use (ops tools, admin panels, workflow helpers).
+swarm_composition: [researcher, engineer, qa]
+questions:
+  - id: audience_scope
+    section: discovery
+    type: single_choice
+    prompt: Who is the audience and what scale?
+    why_asked: Drives access model, polish bar, and support expectations.
+    options: [single_team_under_10, department_10_to_100, org_wide_100_plus, multi_org_partners]
+    required: true
+  - id: workflow_replaced
+    section: discovery
+    type: open
+    prompt: What manual process or existing tool does this replace, and what is broken about it today?
+    why_asked: Anchors the "why now"; gives the strawman concrete shape.
+    examples: ["A spreadsheet emailed weekly", "A legacy Access DB", "A vendor tool we're churning from"]
+    required: true
+  - id: system_integrations
+    section: scope
+    type: open
+    prompt: Which internal systems must it read from or write to? (list each + read/write)
+    why_asked: Integrations are the largest source of internal-tool risk and cost.
+    examples: ["Salesforce (read+write)", "Snowflake (read)", "Okta (read identity)", "JIRA (write tickets)"]
+    required: true
+  - id: sso_required
+    section: constraints
+    type: yes_no
+    prompt: Is SSO (SAML/OIDC against the org IdP) required at launch?
+    why_asked: SSO at v1 dramatically reshapes auth + ops effort vs add-later.
+    required: true
+  - id: read_or_write
+    section: scope
+    type: single_choice
+    prompt: Is the tool read-only (dashboards/reports) or does it mutate systems of record?
+    why_asked: Write paths trigger audit, approval, and rollback design.
+    options: [read_only, write_low_risk, write_with_approval, write_destructive_possible]
+    required: true
+  - id: audit_requirements
+    section: quality
+    type: multi_choice
+    prompt: Which audit obligations apply?
+    why_asked: Audit needs determine logging schema and retention.
+    options: [sox, hipaa, soc2, gdpr_pii, internal_change_log_only, none]
+    required: true
+  - id: allowed_stack
+    section: constraints
+    type: open
+    prompt: What is the org's allowed/standard stack you must build within?
+    why_asked: Internal tools are often constrained to a paved-road stack; surface it now.
+    examples: ["Python + Django + Postgres on internal k8s", "Retool", "Internal Next.js platform"]
+    required: true
+  - id: lifecycle_expectation
+    section: constraints
+    type: single_choice
+    prompt: Is this a one-off helper, a maintained tool, or a long-lived platform?
+    why_asked: Drives test coverage bar, docs depth, on-call expectations.
+    options: [one_off_no_maintenance, maintained_quarterly, long_lived_with_owner, platform_with_sla]
+    required: true
+  - id: cost_ceiling
+    section: constraints
+    type: numeric
+    prompt: What is your annual TCO ceiling for build + run (USD)?
+    why_asked: Hard budget; internal-tool ROI is judged against the manual cost it replaces.
+    required: true
+  - id: must_should_could
+    section: scope
+    type: open
+    prompt: List the capabilities as MUST / SHOULD / COULD.
+    why_asked: Tiering forces the cut-line; internal tools especially balloon without this.
+    examples: ["MUST: bulk import, SSO / SHOULD: scheduled reports / COULD: Slack notifs"]
+    required: true
+    tier_forcer: true
+  - id: out_of_scope
+    section: out_of_scope
+    type: open
+    prompt: What is explicitly out of scope for v1?
+    why_asked: Locks the no-list so internal stakeholders cannot quietly expand scope.
+    examples: ["External partner access", "Mobile app", "Replacing the source-of-truth system"]
+    required: true
+acceptance_criteria_template: |
+  ## Acceptance criteria (internal-tool)
+  - [ ] Target {audience_scope} can log in via {sso_required} and perform the primary task.
+  - [ ] All listed integrations function in the declared direction (read/write).
+  - [ ] Audit obligations from {audit_requirements} produce verifiable log rows.
+  - [ ] Tool fits the {allowed_stack} paved road; no unapproved dependencies.
+  - [ ] Annual TCO projects at or below ${cost_ceiling}.
+out_of_scope_template: |
+  ## Out of scope (v1)
+  - External (non-employee) access; no partner or customer login surface.
+  - Mobile-native app; web responsive only if needed at all.
+  - Replacing or migrating data out of any system-of-record listed under integrations.
+  - Public documentation site; internal wiki page only.
+  - Items listed by user: {out_of_scope}

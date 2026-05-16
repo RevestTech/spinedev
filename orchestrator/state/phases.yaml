@@ -1,0 +1,134 @@
+# Spine canonical SDLC phase set (STORY-9.1.3).
+#
+# This file is the DEFAULT pipeline shape shipped with stock Spine. Org
+# bundles may override or extend it (EPIC-1.7 / STORY-9.1.4) by placing
+# their own `sdlc-pipeline.yaml` higher in the manifest precedence chain.
+# A project locks the resolved manifest at creation time and stores its
+# version in `spine_lifecycle.project.pipeline_version`.
+#
+# The transition engine (STORY-9.2.1) treats this file as data:
+#   - A move from phase X -> phase Y is valid only if Y appears in
+#     phases[X].next (forward) or phases[X].rollback_to (reverse).
+#   - If `gate:` is set on the TARGET phase, the engine requires at least
+#     one matching `approved` row in `spine_lifecycle.approval` whose
+#     `token` verifies and whose `expires_at` is in the future.
+#
+# Phases are free text in the database, so adding a phase here is a
+# zero-migration change for downstream installs.
+
+version: 1
+metadata:
+  name: "spine-default-sdlc"
+  description: "Stock Spine SDLC pipeline: plan -> build -> verify -> acceptance -> release -> operate -> retro."
+  owner: "spine-core"
+
+phases:
+  - id: intake
+    label: "Project Intake"
+    subsystem: plan
+    artifact: null            # no artifact yet
+    role_lead: product
+    next: [plan_in_progress]
+    rollback_to: []
+
+  - id: plan_in_progress
+    label: "Plan in Progress"
+    subsystem: plan
+    artifact: null
+    role_lead: product
+    next: [plan_approved, intake]   # can rollback to intake
+    rollback_to: [intake]
+
+  - id: plan_approved
+    label: "Plan Approved (PRD/TRD/Roadmap signed)"
+    subsystem: plan
+    artifact: roadmap
+    role_lead: product
+    gate: user_approval
+    next: [build_in_progress]
+    rollback_to: [plan_in_progress]
+
+  - id: build_in_progress
+    label: "Build in Progress"
+    subsystem: build
+    artifact: null
+    role_lead: engineer
+    next: [build_complete, plan_approved]
+    rollback_to: [plan_approved]
+
+  - id: build_complete
+    label: "Build Complete (BuildArtifact emitted)"
+    subsystem: build
+    artifact: build_artifact
+    role_lead: engineer
+    next: [verify_in_progress]
+    rollback_to: [build_in_progress]
+
+  - id: verify_in_progress
+    label: "Verify in Progress"
+    subsystem: verify
+    artifact: null
+    role_lead: auditor        # Spine role; TRON AuditManager underneath
+    next: [verify_approved, build_in_progress]   # verify-fail loops to build
+    rollback_to: [build_complete]
+
+  - id: verify_approved
+    label: "Verify Approved (VerifyFindings green or accepted)"
+    subsystem: verify
+    artifact: verify_findings
+    role_lead: auditor
+    gate: user_approval
+    next: [acceptance]
+    rollback_to: [build_in_progress]
+
+  - id: acceptance
+    label: "User Acceptance"
+    subsystem: plan
+    artifact: acceptance_record
+    role_lead: product
+    gate: user_approval
+    next: [released]
+    rollback_to: [build_in_progress]
+
+  - id: released
+    label: "Released"
+    subsystem: build
+    artifact: release_notes
+    role_lead: operator
+    gate: user_approval
+    next: [operate]
+    rollback_to: [acceptance]
+
+  - id: operate
+    label: "Operating"
+    subsystem: build
+    artifact: null
+    role_lead: operator
+    next: [retro, build_in_progress]   # incident -> build remediation
+    rollback_to: [released]
+
+  - id: retro
+    label: "Retrospective"
+    subsystem: plan
+    artifact: retro_notes
+    role_lead: memory
+    next: []                   # terminal
+    rollback_to: []
+
+# ─────────────────────────────────────────────────────────────────────
+# Engine-wide metadata
+# ─────────────────────────────────────────────────────────────────────
+
+transitions_metadata:
+  invalid_transition_error: "phase X cannot transition directly to phase Y; allowed next phases: [...]"
+  retry_policy:
+    default_max_retries: 3
+    verify_build_loop_max: 5  # build_in_progress <-> verify_in_progress
+  rollback_policy:
+    requires_rationale: true
+    audit_actor_required: true
+  gate_policy:
+    user_approval:
+      verifier: hmac
+      multi_approver_allowed: true   # STORY-9.3.3
+      default_expiry_hours: 168      # 7 days

@@ -1,0 +1,120 @@
+# bundle-schema.yaml — structural schema for a Spine org policy bundle.
+# Implements STORY-2.1.1 (BACKLOG INIT-2 EPIC-2.1). See: PRD REQ-INIT-1 FR-7,
+# plan/artifacts/sdlc-pipeline-schema.yaml, memory/spine_flexibility_principle.md.
+# Compatible-with: TRON Standards Hierarchy (EPIC-2.4) — security.compliance_packs
+# map 1:1 to tron/standards/packs/*.json. WHY each section exists is in the
+# inline comments — keep them; they are the audit-trail rationale.
+
+$schema: spine.org-bundle/v1
+$kind:   schema-definition
+$id:     org-bundle-schema-v1
+# Identity & lineage — chain org → team → project; most-specific wins.
+# bundle_version monotonic (drift-detect, STORY-2.1.5). rationale required on
+# every edit per spine-flexibility-principle / EPIC-1.7.4.
+identity:
+  bundle_version:  { $type: integer,           required: true, monotonic: true }
+  bundle_id:       { $type: string,            required: true, pattern: "^[a-z0-9][a-z0-9_-]*$" }
+  display_name:    { $type: string,            required: true }
+  org_name:        { $type: string,            required: true }
+  inherits_from:   { $type: string,            required: false, nullable: true }   # parent bundle_id
+  scope:           { $type: enum,              required: true, values: [org, team, project] }
+  created_at:      { $type: iso8601_timestamp, required: true }
+  last_updated_at: { $type: iso8601_timestamp, required: true }
+  last_updated_by: { $type: string,            required: true }                    # user/role id
+  rationale:       { $type: string,            required: true, min_length: 8 }     # audit anchor
+
+# standards — coding/quality/review. engineer + auditor inject this slice into
+# their prompt so rules are *applied*, not just documented somewhere.
+standards:
+  naming_conventions:      { $type: map<string, string>, required: false }
+  style_guides:            { $type: array<link>,         required: false }         # .ruff.toml, .eslintrc, ...
+  commit_message_format:   { $type: regex,               required: false }
+  pr_review_requirements:
+    min_reviewers:         { $type: integer,       required: true, default: 1 }
+    required_checks:       { $type: array<string>, required: false }
+    required_labels:       { $type: array<string>, required: false }               # e.g. ["Compliance"]
+  test_coverage_threshold: { $type: integer, required: false, range: [0, 100] }
+  documentation_requirements:
+    readme_required:       { $type: boolean,     required: true, default: true }
+    adr_required_for:      { $type: array<enum>, required: false, values: [architecture, security, data, integration] }
+
+# security — TRON-Standards-Hierarchy compatible. Feeds Build (engineer
+# banned-call guard) + Verify (TRON ISO agents, REQ-INIT-8 FR-6, STORY-8.7.2).
+# compliance_packs map to TRON reference packs.
+security:
+  compliance_packs:        { $type: array<enum>, required: false,
+                             values: [OWASP_Top_10, SOC_2_Type_II, ISO_27001, HIPAA, PCI_DSS, GDPR, FedRAMP] }
+  secret_scanning:         { enabled: bool=true, scanners: array<string>=[gitleaks] }
+  dependency_scanning:     { enabled: bool=true, fail_on: array<enum [critical, high, medium, low]> }
+  sast_required:           { $type: boolean,       required: true, default: false }
+  iso_agents_required:     { $type: array<string>, required: false }               # e.g. [SecurityISO, ComplianceISO]
+  sandbox_seccomp_profile: { $type: path,          required: false, nullable: true }  # STORY-3.5.4
+
+# cost — budget controls (EPIC-2.3); caps are *hard*, not warn (NFR-1).
+# per_phase_caps overrides sdlc-pipeline tier budgets; model_menu restricts the
+# cost-aware tier router (EPIC-1.5).
+cost:
+  daily_cap_usd:           { $type: float, required: false, nullable: true }
+  weekly_cap_usd:          { $type: float, required: false, nullable: true }
+  monthly_cap_usd:         { $type: float, required: false, nullable: true }
+  per_project_cap_usd:     { $type: float, required: false, nullable: true }
+  per_phase_caps:          { $type: map<phase_id, float>, required: false }
+  model_menu:              { allowed: array<string>, disallowed: array<string> }   # canonical model ids
+
+# approved_libs & banned_patterns — per-language allowlist + regex denylist.
+# Auditor blocks violators; engineer prompt receives the language slice.
+approved_libs:             { $type: map<language, array<string>>, required: false }
+banned_patterns:           { $type: array<banned_pattern>, required: false }
+banned_pattern:
+  pattern:                 { $type: regex,  required: true }
+  language:                { $type: enum,   required: true, values: [python, typescript, javascript, go, rust, sql, bash, any] }
+  severity:                { $type: enum,   required: true, values: [critical, high, medium, low] }
+  message:                 { $type: string, required: true }                       # surfaced in auditor finding
+  source:                  { $type: link,   required: false }                      # link to org policy doc
+
+# deployment_targets — where outputs may ship.
+deployment_targets:
+  allowed_environments:    { $type: array<enum>, required: true,  values: [dev, staging, prod] }
+  cloud_providers:         { $type: array<enum>, required: false, values: [aws, gcp, azure, on_prem] }
+  infra_as_code:           { tool: enum [terraform, pulumi, cdk, ansible, none], state_backend: string }
+  requires_change_approval:{ $type: boolean, required: true, default: false }
+
+# compliance_tags — annotations consumed by Plan + Verify.
+compliance_tags:
+  pii_data_handled:        { $type: boolean, required: true, default: false }
+  pci_dss_scope:           { $type: boolean, required: true, default: false }
+  hipaa_scope:             { $type: boolean, required: true, default: false }
+  gdpr_scope:              { $type: boolean, required: true, default: false }
+  regulated_industry:      { $type: enum, required: true, default: none, values: [finance, healthcare, defense, government, none] }
+
+# capabilities — grants + revokes (EPIC-1.7.2). Capabilities (not titles) gate
+# edits. Team bundles inherit org grants, may narrow, never widen.
+capabilities:
+  grants:
+    can_modify_sdlc_pipeline: { $type: array<principal>, required: false }
+    can_modify_cost_policy:   { $type: array<principal>, required: false }
+    can_grant_capabilities:   { $type: array<principal>, required: false }
+    can_override_security:    { $type: array<principal>, required: false }
+  revokes:                    { $type: array<principal>, required: false }         # explicit denies
+
+# pipeline_overrides — surgical edits to sdlc-pipeline-default.yaml (append a
+# phase, remove one, modify approvers) without forking. Validated against
+# sdlc-pipeline-schema v1.
+pipeline_overrides:
+  phases:
+    append:        { $type: array<phase>,    required: false }
+    remove:        { $type: array<phase_id>, required: false }
+    modify:        { $type: map<phase_id, partial<phase>>, required: false }
+  project_types:   { append: array<project_type>, modify: map<project_type_id, partial<project_type>> }
+  tier_routing:    { $type: partial<tier_routing>, required: false }
+  gates:           { $type: map<phase_id, partial<gate>>, required: false }        # raise min_approvals, add approvers
+
+# verify_overrides — TRON-Verify-specific (EPIC-2.4.5 + REQ-INIT-8 FR-6). Drives
+# TRON's blueprint: which ISO agents fire, cross-LLM validation (EPIC-3.7),
+# calibration cap (EPIC-3.6) preventing over-confidence on small corpora.
+verify_overrides:
+  iso_agents_enabled:            { $type: array<string>, required: false }         # union with security.iso_agents_required
+  iso_agents_disabled:           { $type: array<string>, required: false }         # cannot remove iso_agents_required entries
+  cross_llm_validation_required: { $type: boolean, required: false, default: false }
+  calibration_confidence_cap:    { $type: float,   required: false, nullable: true, range: [0.0, 1.0] }
+  blueprint_overrides:           { $type: map<string, any>, required: false }      # passes through to TRON blueprint loader

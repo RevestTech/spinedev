@@ -1,0 +1,114 @@
+# bundle-startup-saas.yaml — reference bundle for a small SaaS startup org.
+# Conforms to bundle-schema.yaml v1. Implements STORY-2.1.6 (startup archetype).
+# Profile: <50 engineers, no regulated workloads, ship-fast, cost-sensitive.
+# Security floor = OWASP Top 10; 1 reviewer; broad library latitude.
+# Install: spine install --org-bundle shared/standards/bundle-startup-saas.yaml
+
+$schema: spine.org-bundle/v1
+
+identity:
+  bundle_version:  1
+  bundle_id:       startup-saas-reference
+  display_name:    "Startup SaaS — reference bundle"
+  org_name:        "Acme Startup (reference)"
+  inherits_from:   null                                # root bundle; no parent
+  scope:           org
+  created_at:      2026-05-16T00:00:00Z
+  last_updated_at: 2026-05-16T00:00:00Z
+  last_updated_by: spine-reference
+  rationale:       "Initial reference template for a small SaaS startup. Optimizes for speed and cost; assumes no regulated data."
+
+# Standards — light review, conventional commits, 70% coverage
+standards:
+  naming_conventions: { snake_case_funcs: true, PascalCase_classes: true }
+  style_guides: [.ruff.toml, .eslintrc.json]
+  commit_message_format: "^(feat|fix|chore|docs|test|refactor)(\\(.+\\))?: .+"
+  pr_review_requirements:
+    min_reviewers:   1
+    required_checks: [lint, unit-tests]
+    required_labels: []
+  test_coverage_threshold: 70
+  documentation_requirements:
+    readme_required:  true
+    adr_required_for: [architecture]                   # only architecture decisions need ADRs
+
+# Security — OWASP-only; no SAST gate. Minimum responsible floor for unregulated SaaS.
+security:
+  compliance_packs:        [OWASP_Top_10]
+  secret_scanning:     { enabled: true, scanners: [gitleaks] }
+  dependency_scanning: { enabled: true, fail_on: [critical] }   # block on critical CVEs only
+  sast_required:           false
+  iso_agents_required:     [SecurityISO]               # the bare minimum at Verify
+  sandbox_seccomp_profile: null                        # default TRON sandbox profile
+
+# Cost — $50/day, $1500/mo; cheap models preferred
+cost:
+  daily_cap_usd:        50.0
+  weekly_cap_usd:       300.0
+  monthly_cap_usd:      1500.0
+  per_project_cap_usd:  100.0
+  per_phase_caps:
+    intake:            1.0
+    plan_in_progress:  5.0
+    plan_approved:     1.0
+    build_in_progress: 10.0
+    verify_in_progress: 5.0
+  model_menu:
+    allowed:    [claude-haiku-3.5, claude-sonnet-4, claude-opus-4]
+    disallowed: []
+
+# Approved libs — permissive; well-known frameworks only
+approved_libs:
+  python:     [fastapi, pydantic, sqlalchemy, pytest, httpx, anthropic, openai]
+  typescript: [react, next, zod, vitest, drizzle, "@anthropic-ai/sdk"]
+
+# Banned patterns — short list; just the truly dangerous ones
+banned_patterns:
+  - { pattern: "eval\\(",                language: python,     severity: high,
+      message: "eval() banned — use ast.literal_eval or explicit parsing.",
+      source:  "https://example.com/acme-security-policy" }
+  - { pattern: "exec\\(",                language: python,     severity: high,
+      message: "exec() banned in app code." }
+  - { pattern: "dangerouslySetInnerHTML", language: typescript, severity: medium,
+      message: "Avoid dangerouslySetInnerHTML; sanitize or render structurally." }
+
+# Deployment — single cloud, dev+staging+prod, no change-approval ticket
+deployment_targets:
+  allowed_environments:    [dev, staging, prod]
+  cloud_providers:         [aws]
+  infra_as_code:           { tool: terraform, state_backend: "s3://acme-tf-state" }
+  requires_change_approval: false                      # startup speed; no CAB
+
+# Compliance tags — no regulated scope
+compliance_tags:
+  pii_data_handled:  false
+  pci_dss_scope:     false
+  hipaa_scope:       false
+  gdpr_scope:        false                             # flip true if EU customers onboard
+  regulated_industry: none
+
+# Capabilities — engineering self-serves pipeline edits; nobody can lower security floor
+capabilities:
+  grants:
+    can_modify_sdlc_pipeline: ["role:architect", "role:planner"]
+    can_modify_cost_policy:   ["role:cto"]
+    can_grant_capabilities:   ["role:cto"]
+    can_override_security:    []                       # nobody — even a startup keeps OWASP floor
+  revokes: []
+
+# Pipeline overrides — keep all 11 phases; default approver list
+pipeline_overrides:
+  phases:
+    remove: []                                         # keep all 11 canonical phases
+    modify:
+      verify_approved: { gate: { type: user_approval, approvers: [user], min_approvals: 1, on_reject: request_changes } }
+  tier_routing:
+    budget_caps:        { per_project: { amount: 5.00, currency: USD } }   # matches Spine default NFR-1
+
+# Verify overrides — SecurityISO only; no cross-LLM (cost-sensitive)
+verify_overrides:
+  iso_agents_enabled:           [SecurityISO]
+  iso_agents_disabled:          [ComplianceISO, DocumentationISO]
+  cross_llm_validation_required: false
+  calibration_confidence_cap:    0.85                  # cap until corpus N ≥ 500 (STORY-3.6.3)
+  blueprint_overrides: {}

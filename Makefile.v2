@@ -1,0 +1,231 @@
+# Spine v2 umbrella Makefile — STORY-8.4.1 (Sprint 1).
+#
+# Dispatches `make <subsystem>-<verb>` to per-subsystem Makefiles
+# (orchestrator/, plan/, build/, verify/, shared/) while preserving every
+# Spine v1 target verbatim so daily flows keep working through the cutover.
+#
+# Style: tab-indented recipes, .PHONY everywhere, `# target: ## desc`
+# convention so `make help` (the default goal) can self-document via awk.
+#
+# Rename Makefile.v2 -> Makefile during the cutover (see ARCHITECTURE.md §6).
+
+.DEFAULT_GOAL := help
+
+SUBSYSTEMS := orchestrator plan build verify shared
+SPINE_DB   := .planning/orchestration/state/spine.db
+PG_PORT    ?= 33000
+DB_DIR     := db
+
+.PHONY: help doctor all-up all-down smoke-test status budget clean \
+        db-up db-down migrate db-info psql \
+        selftest lint check-boundaries \
+        $(addsuffix -%,$(SUBSYSTEMS)) \
+        team-up team-down team-status team-restart team-budget team-clean \
+        team-footprint team-doctor team-rollback team-preflight \
+        dashboard dashboard-sync verify-legacy db-migrate db-shell db-reset db-watch \
+        lint-shell lint-py lint-html lint-sql lint-md lint-fix
+
+# =====================================================================
+# Umbrella targets (cross-subsystem)
+# =====================================================================
+
+help: ## Show this help (default)
+	@awk 'BEGIN {FS = ":.*?## "; \
+	  printf "\nSpine umbrella Makefile — targets:\n\n"} \
+	  /^# =+$$/ {next} \
+	  /^# [A-Z]/ {gsub(/^# /, ""); printf "\n\033[1m%s\033[0m\n", $$0; next} \
+	  /^[a-zA-Z0-9_-]+:.*?## / {printf "  \033[36m%-22s\033[0m %s\n", $$1, $$2}' \
+	  $(MAKEFILE_LIST)
+	@printf "\n  \033[36m%-22s\033[0m %s\n" "<sub>-<verb>" "Dispatch to <sub>/Makefile (subs: $(SUBSYSTEMS))"
+	@printf "\n"
+
+doctor: ## Check all subsystem health prereqs (docker, pg, python, mcp)
+	@printf "Spine doctor — host prereqs\n"
+	@printf "  docker          : "; command -v docker >/dev/null && printf "PASS\n" || printf "FAIL (install Docker Desktop)\n"
+	@printf "  docker compose  : "; docker compose version >/dev/null 2>&1 && printf "PASS\n" || printf "FAIL (Docker Compose v2 required)\n"
+	@printf "  python3 (>=3.11): "; python3 -c 'import sys; sys.exit(0 if sys.version_info>=(3,11) else 1)' 2>/dev/null && printf "PASS\n" || printf "FAIL (need Python 3.11+)\n"
+	@printf "  mcp CLI         : "; command -v mcp >/dev/null && printf "PASS\n" || printf "WARN (mcp not on PATH; install once shared/mcp lands)\n"
+	@printf "  postgres :$(PG_PORT) : "; (nc -z 127.0.0.1 $(PG_PORT) >/dev/null 2>&1 && printf "PASS\n") || printf "WARN (not reachable; run 'make db-up')\n"
+	@printf "  psql client     : "; command -v psql >/dev/null && printf "PASS\n" || printf "WARN (optional; only needed for 'make psql')\n"
+	@printf "  shellcheck      : "; command -v shellcheck >/dev/null && printf "PASS\n" || printf "WARN (lint-shell unavailable)\n"
+	@printf "doctor complete.\n"
+
+all-up: db-up migrate shared-up orchestrator-up plan-up build-up verify-up ## Bring up Postgres + MCP + all subsystems
+	@printf "all-up: every subsystem signalled (skipped any whose Makefile is not yet present).\n"
+
+all-down: verify-down build-down plan-down orchestrator-down shared-down db-down ## Shut everything down (reverse order)
+	@printf "all-down: every subsystem signalled.\n"
+
+smoke-test: ## Run smoke tests across all subsystems
+	@printf "smoke-test: dispatching to each subsystem...\n"
+	@for s in $(SUBSYSTEMS); do \
+	  $(MAKE) --no-print-directory $$s-smoke || printf "  %s: smoke target missing or failing (continuing)\n" "$$s"; \
+	done
+	@printf "smoke-test: complete.\n"
+
+status: ## Portfolio rollup — one line per project (id, name, phase, status, cost)
+	@if ! command -v psql >/dev/null; then printf "psql not installed; cannot query spine_lifecycle.project\n"; exit 0; fi
+	@psql -h 127.0.0.1 -p $(PG_PORT) -U spine -d spine -P pager=off -A -F'  ' -c \
+	  "SELECT id, name, phase, status, COALESCE(total_cost_usd,0)::numeric(10,2) AS cost FROM spine_lifecycle.project ORDER BY updated_at DESC;" \
+	  2>/dev/null || printf "spine_lifecycle.project not reachable (run 'make db-up && make migrate' first)\n"
+
+budget: ## Unified cost rollup (SELECT * FROM v_cost_per_project)
+	@if ! command -v psql >/dev/null; then printf "psql not installed; cannot query v_cost_per_project\n"; exit 0; fi
+	@psql -h 127.0.0.1 -p $(PG_PORT) -U spine -d spine -P pager=off -c \
+	  "SELECT * FROM v_cost_per_project ORDER BY total_cost_usd DESC;" \
+	  2>/dev/null || printf "v_cost_per_project not yet defined (Sprint 2 — STORY-9.6.1)\n"
+
+clean: ## Clean transient artifacts across every subsystem
+	@for s in $(SUBSYSTEMS); do \
+	  $(MAKE) --no-print-directory $$s-clean || true; \
+	done
+	@printf "clean: done.\n"
+
+# =====================================================================
+# Per-subsystem dispatch (graceful when sub-Makefile absent)
+# =====================================================================
+# Pattern: `make <sub>-<verb>` -> `make -C <sub>/ <verb>`. If the sub
+# directory has no Makefile yet, we print a skip line and exit 0 so
+# `all-up` can soldier on across early-development gaps (Sprint 1 reality:
+# verify/ and shared/ Makefiles do not exist yet).
+
+define DISPATCH_RULE
+$(1)-%:
+	@if [ -f $(1)/Makefile ]; then \
+	  $$(MAKE) --no-print-directory -C $(1) $$*; \
+	else \
+	  printf "Makefile not yet present in %s; skipping '%s'.\n" "$(1)" "$$*"; \
+	  exit 0; \
+	fi
+endef
+
+$(foreach s,$(SUBSYSTEMS),$(eval $(call DISPATCH_RULE,$(s))))
+
+# =====================================================================
+# Database (delegates to db/Makefile until the move to shared/db/)
+# =====================================================================
+
+db-up: ## Bring up Postgres (delegates to db/Makefile)
+	@$(MAKE) --no-print-directory -C $(DB_DIR) up
+
+db-down: ## Stop Postgres (volume preserved)
+	@$(MAKE) --no-print-directory -C $(DB_DIR) down
+
+migrate: ## Run all pending Flyway migrations
+	@$(MAKE) --no-print-directory -C $(DB_DIR) migrate
+
+db-info: ## Show Flyway migration status
+	@$(MAKE) --no-print-directory -C $(DB_DIR) info
+
+psql: ## Open psql shell against the running Postgres
+	@$(MAKE) --no-print-directory -C $(DB_DIR) psql
+
+# =====================================================================
+# Spine v1 legacy (preserved verbatim — DO NOT remove without sign-off)
+# =====================================================================
+
+TESTS := $(wildcard lib/tests/test-*.sh)
+
+team-up: ## (v1) Start agent team (roles + watchdog)
+	bash scripts/team.sh up
+
+team-down: ## (v1) Stop all agent-team daemons + watchdog
+	bash scripts/team.sh down
+
+team-status: ## (v1) Show what each team manager + worker is doing
+	bash scripts/team.sh status
+
+team-restart: ## (v1) team-down + team-up
+	bash scripts/team.sh restart
+
+team-budget: ## (v1) Cost / wall-time report from costs.csv
+	bash scripts/team.sh budget
+
+team-clean: ## (v1) Cleanup scratch + logs + archive (safe)
+	bash scripts/team.sh clean all
+
+team-footprint: ## (v1) On-disk size of each role's working dir
+	bash scripts/team.sh clean footprint
+
+team-doctor: ## (v1) Health check: daemons alive, heartbeats fresh
+	bash scripts/team.sh doctor
+
+team-rollback: ## (v1) Roll back engineer changes to a prior snapshot
+	bash scripts/team.sh rollback engineer
+
+team-preflight: ## (v1) Verify host has the tools the team needs
+	bash scripts/team.sh preflight
+
+dashboard: ## (v1) Serve Control Center dashboard
+	bash scripts/serve-dashboard.sh
+
+dashboard-sync: ## (v1) Sync lib/dashboard.html into .planning/orchestration
+	cp lib/dashboard.html .planning/orchestration/dashboard/index.html
+	@printf '%s\n' "synced -> .planning/orchestration/dashboard/index.html"
+
+db-migrate: ## (v1) Build/refresh v2 SQLite DB + dashboard snapshot
+	python3 scripts/spine-migrate.py --snapshot
+
+db-reset: ## (v1) Drop + rebuild SQLite v2 DB (destructive)
+	python3 scripts/spine-migrate.py --reset --snapshot
+
+db-shell: ## (v1) Open sqlite3 shell against the v2 SQLite DB
+	@if [ ! -f "$(SPINE_DB)" ]; then printf '%s\n' "DB not built — run 'make db-migrate' first." >&2; exit 1; fi
+	sqlite3 "$(SPINE_DB)"
+
+db-watch: ## (v1) Keep SQLite DB + snapshot fresh (re-migrate every 30s)
+	python3 scripts/spine-migrate.py --watch 30
+
+verify-legacy: ## (v1) Run every syntax + selftest check (bash -n, py_compile, pglast)
+	@bash lib/verify.sh
+
+# =====================================================================
+# Development (selftest / lint / boundaries)
+# =====================================================================
+
+selftest: ## Run preflight + bash test suite (lib/tests/test-*.sh)
+	@if [ -z "$(TESTS)" ]; then printf '%s\n' 'no matching lib/tests/test-*.sh' >&2; exit 1; fi
+	@for t in $(TESTS); do printf '> %s\n' "$$t"; bash "$$t" || exit 1; done
+	@printf '%s\n' 'all selftests passed'
+
+lint: lint-shell lint-py lint-html lint-sql lint-md ## Run all available linters
+	@printf '%s\n' 'all linters passed'
+
+lint-shell: ## shellcheck on lib/*.sh
+	@command -v shellcheck >/dev/null || { printf '%s\n' "shellcheck not installed" >&2; exit 1; }
+	shellcheck -x -s bash lib/*.sh
+
+lint-py: ## ruff over the project's Python files
+	@command -v ruff >/dev/null || { printf '%s\n' "ruff not installed" >&2; exit 1; }
+	ruff check --no-fix lib/ scripts/ db/
+
+lint-html: ## tidy-html5 on dashboard HTML
+	@command -v tidy >/dev/null || { printf '%s\n' "tidy not installed" >&2; exit 1; }
+	@for f in lib/dashboard.html db/dashboard/*.html; do tidy -config .tidyconfig -e -q "$$f" 2>&1 | grep -vE '^Info:|^$$' || true; done
+
+lint-sql: ## sqlfluff on db/flyway/sql/
+	@command -v sqlfluff >/dev/null || { printf '%s\n' "sqlfluff not installed" >&2; exit 1; }
+	sqlfluff lint --dialect postgres db/flyway/sql/
+
+lint-md: ## markdownlint over root + docs markdown
+	@command -v npx >/dev/null || { printf '%s\n' "npx not installed" >&2; exit 1; }
+	npx -y markdownlint-cli CHANGELOG.md README.md INSTALL.md PROTOCOL.md REQUIREMENTS.md docs/*.md
+
+lint-fix: ## Best-effort auto-fix (sqlfluff fix, ruff --fix, markdownlint --fix)
+	@command -v sqlfluff >/dev/null && sqlfluff fix --dialect postgres db/flyway/sql/ || true
+	@command -v ruff >/dev/null && ruff check --fix lib/ scripts/ db/ || true
+	@command -v npx >/dev/null && npx -y markdownlint-cli --fix CHANGELOG.md README.md docs/*.md || true
+
+check-boundaries: ## Subsystem boundary check (STORY-7.1.3): build/ imports nothing from plan/ or verify/
+	@printf "Checking module boundaries...\n"
+	@bad=0; \
+	for pair in "build:plan" "build:verify" "plan:build" "plan:verify" "verify:plan" "verify:build"; do \
+	  src=$${pair%%:*}; tgt=$${pair##*:}; \
+	  if [ -d $$src ] && grep -rEnq "(^| |/)$$tgt/" $$src 2>/dev/null; then \
+	    printf "  FAIL: %s references %s/ directly\n" "$$src" "$$tgt"; bad=1; \
+	  else \
+	    printf "  PASS: %s -> %s\n" "$$src" "$$tgt"; \
+	  fi; \
+	done; \
+	if [ $$bad -ne 0 ]; then printf "boundary violations found — route through shared/mcp/.\n" >&2; exit 1; fi; \
+	printf "boundary check clean.\n"

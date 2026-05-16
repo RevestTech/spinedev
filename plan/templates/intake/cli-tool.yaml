@@ -1,0 +1,101 @@
+project_type: cli-tool
+description: A command-line tool run locally by humans or in CI pipelines.
+swarm_composition: [researcher, engineer, qa]
+questions:
+  - id: audience
+    section: discovery
+    type: single_choice
+    prompt: Who runs this tool?
+    why_asked: Audience drives output style, error messages, and discoverability bar.
+    options: [sysadmin_ops, developer_dx, data_or_ml_practitioner, end_user_non_technical, ci_only_no_human]
+    required: true
+  - id: primary_job
+    section: discovery
+    type: open
+    prompt: What single command will the user run most often, and what does it do?
+    why_asked: Anchors the strawman; CLIs succeed when the happy path is one line.
+    examples: ["`foo deploy` ships current branch to staging", "`foo lint .` runs all configured linters"]
+    required: true
+  - id: install_method
+    section: constraints
+    type: multi_choice
+    prompt: Which install methods must be supported at launch?
+    why_asked: Packaging effort multiplies per channel; pick the minimum set.
+    options: [homebrew, pip_pypi, npm, cargo, curl_pipe_sh, deb_rpm, docker_image, single_binary_release]
+    required: true
+  - id: output_formats
+    section: scope
+    type: multi_choice
+    prompt: Which output formats must the tool produce?
+    why_asked: Drives flag design and the abstraction over stdout/stderr.
+    options: [human_readable_tty, plain_text_pipeable, json, yaml, tsv_csv, ndjson_streaming]
+    required: true
+  - id: cross_platform
+    section: constraints
+    type: multi_choice
+    prompt: Which platforms must it run on?
+    why_asked: Cross-platform support shapes language, CI matrix, signing.
+    options: [macos_intel, macos_arm, linux_x86_64, linux_arm64, windows_x86_64, wsl_only]
+    required: true
+  - id: config_file
+    section: scope
+    type: single_choice
+    prompt: Does the tool need a config file, and if so what scope?
+    why_asked: Config scope (none vs per-project vs per-user) drives discovery + merge rules.
+    options: [no_config_flags_only, per_project_file, per_user_dotfile, both_project_and_user_merged]
+    required: true
+  - id: subcommand_depth
+    section: scope
+    type: single_choice
+    prompt: How deep does the subcommand tree go?
+    why_asked: Single-verb vs nested-verb dramatically changes UX and help output.
+    options: [single_verb, flat_verbs, two_level_nested, deeply_nested_kubectl_style]
+    required: true
+  - id: composability
+    section: quality
+    type: yes_no
+    prompt: Must it compose well in pipes (stdin in, stdout out, exit codes, no chatter on stdout)?
+    why_asked: Pipe composability is a hard architectural constraint when needed.
+    required: true
+  - id: tty_awareness
+    section: quality
+    type: yes_no
+    prompt: Should output adapt when run interactively vs piped (colors, progress, prompts)?
+    why_asked: TTY awareness is small to add upfront and painful to retrofit.
+    required: true
+  - id: dependencies_runtime
+    section: constraints
+    type: open
+    prompt: What runtime dependencies are acceptable on the user's machine?
+    why_asked: Determines language + packaging strategy (single binary vs interpreter required).
+    examples: ["None — single static binary", "Python 3.10+ ok", "Node 18+ ok via npm"]
+    required: true
+  - id: must_should_could
+    section: scope
+    type: open
+    prompt: Tier subcommands/features as MUST / SHOULD / COULD.
+    why_asked: Forces tiering; CLIs accumulate verbs faster than they accumulate users.
+    examples: ["MUST: init, run, status / SHOULD: doctor, completion / COULD: plugin system"]
+    required: true
+    tier_forcer: true
+  - id: out_of_scope
+    section: out_of_scope
+    type: open
+    prompt: What is explicitly out of scope for v1?
+    why_asked: Locks the no-list; CLIs invite "while you're in there" feature requests.
+    examples: ["No GUI / TUI", "No daemon mode", "No plugin marketplace"]
+    required: true
+acceptance_criteria_template: |
+  ## Acceptance criteria (cli-tool)
+  - [ ] Primary command runs end-to-end for the target {audience} on all selected {cross_platform} targets.
+  - [ ] Install works via every method listed in {install_method}.
+  - [ ] All declared {output_formats} produced correctly; --format flag respected.
+  - [ ] Pipe composability and TTY awareness behave per declared flags.
+  - [ ] No runtime dependencies outside the declared {dependencies_runtime} envelope.
+out_of_scope_template: |
+  ## Out of scope (v1)
+  - GUI or TUI front-end; CLI invocation only.
+  - Long-running daemon / server mode unless explicitly listed as MUST.
+  - Plugin / extension system and any plugin marketplace.
+  - Telemetry / phone-home unless the user opts in and it's listed as MUST.
+  - Items listed by user: {out_of_scope}

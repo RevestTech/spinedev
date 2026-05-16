@@ -1,0 +1,101 @@
+project_type: api-service
+description: A backend service exposing an API (REST, GraphQL, or gRPC) to other software consumers.
+swarm_composition: [researcher, engineer, qa, operator]
+questions:
+  - id: consumers
+    section: discovery
+    type: single_choice
+    prompt: Who are the API's consumers?
+    why_asked: Internal vs partner vs public drastically changes auth, docs, and SLA bar.
+    options: [internal_services_only, internal_plus_named_partners, public_developers, mixed_tiers]
+    required: true
+  - id: api_style
+    section: scope
+    type: single_choice
+    prompt: REST, GraphQL, or gRPC (or hybrid)?
+    why_asked: Style drives framework, codegen, and tooling commitments.
+    options: [rest_openapi, graphql, grpc, rest_plus_graphql, rest_plus_grpc]
+    required: true
+  - id: auth_model
+    section: scope
+    type: single_choice
+    prompt: What authentication mechanism do consumers use?
+    why_asked: Auth defines key-management, rotation, and onboarding flow.
+    options: [api_key, oauth2_client_credentials, oauth2_user_delegated, mtls, jwt_bearer_third_party_idp, no_auth_internal]
+    required: true
+  - id: rate_limits
+    section: constraints
+    type: open
+    prompt: What rate limits and quotas must be enforced (per consumer tier)?
+    why_asked: Rate limiting is infra-affecting; defer it and the service falls over.
+    examples: ["100 req/min per key, 10k/day", "Burst 1000/s for partners only", "No limit internal, 60/min public"]
+    required: true
+  - id: sla_targets
+    section: quality
+    type: open
+    prompt: What are the availability and latency SLAs?
+    why_asked: SLA bar dictates redundancy, deployment topology, on-call.
+    examples: ["99.9% availability, p95 < 200ms", "99.95% with multi-region", "Best-effort, no formal SLA"]
+    required: true
+  - id: versioning_strategy
+    section: scope
+    type: single_choice
+    prompt: How will you version the API as it evolves?
+    why_asked: Locked early to avoid breaking-change pain later.
+    options: [url_path_v1_v2, header_versioning, no_versioning_continuous, graphql_schema_evolution]
+    required: true
+  - id: webhooks_outbound
+    section: scope
+    type: yes_no
+    prompt: Does the service need to send outbound webhooks/events to consumers?
+    why_asked: Outbound delivery is its own subsystem (retry, signing, replay).
+    required: true
+  - id: deployment_topology
+    section: constraints
+    type: single_choice
+    prompt: What deployment topology is required?
+    why_asked: Topology drives infra plan and operator scout effort.
+    options: [single_region_single_cluster, multi_az_single_region, multi_region_active_active, edge_distributed, on_prem_private]
+    required: true
+  - id: data_residency
+    section: constraints
+    type: open
+    prompt: Are there data-residency or sovereignty constraints (regions, countries)?
+    why_asked: Constrains hosting choices, may force per-region deployments.
+    examples: ["EU data must stay in EU", "US only", "No constraints"]
+    required: true
+  - id: cost_ceiling
+    section: constraints
+    type: numeric
+    prompt: What is the monthly cost ceiling for infra + observability + per-request costs (USD)?
+    why_asked: API services scale unpredictably; cap is enforced by operator scout.
+    required: true
+  - id: must_should_could
+    section: scope
+    type: open
+    prompt: Tier endpoints/capabilities as MUST / SHOULD / COULD.
+    why_asked: Forces tiering; API surface tends to balloon during design.
+    examples: ["MUST: CRUD resource X / SHOULD: bulk endpoints / COULD: admin endpoints"]
+    required: true
+    tier_forcer: true
+  - id: out_of_scope
+    section: out_of_scope
+    type: open
+    prompt: What is explicitly out of scope for v1 (endpoints, consumers, integrations)?
+    why_asked: Locks the no-list; API requests grow informally otherwise.
+    examples: ["No public developer portal", "No SDK generation", "No streaming endpoints"]
+    required: true
+acceptance_criteria_template: |
+  ## Acceptance criteria (api-service)
+  - [ ] All MUST endpoints implemented per the {api_style} contract with published schema.
+  - [ ] Authentication via {auth_model} enforced on every protected endpoint.
+  - [ ] Rate limits per {rate_limits} verified under load test.
+  - [ ] Service meets {sla_targets} in staging soak test.
+  - [ ] Monthly infra + observability cost projects at or below ${cost_ceiling}.
+out_of_scope_template: |
+  ## Out of scope (v1)
+  - Public developer portal, SDK generation, code samples beyond the schema doc.
+  - Consumer tiers not listed in {consumers}.
+  - Webhook delivery if {webhooks_outbound} = no; do not add silently.
+  - Multi-region failover unless {deployment_topology} requires it.
+  - Items listed by user: {out_of_scope}
