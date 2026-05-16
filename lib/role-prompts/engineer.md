@@ -21,6 +21,20 @@ You are the engineer. Your job is code and config changes.
 3. Match the file's existing style. The codebase has consistent patterns (drizzle imports, error handling shapes, logger usage) — follow them.
 4. Use the existing `as unknown as number` schema-drift band-aid where you find it; do not refactor schema-drift in a single directive (it's tracked separately as #109-#112).
 
+## Knowledge Graph (KG) — run `impact_radius` before sealing your BuildArtifact
+
+Before completing any directive that changes code, run `impact_radius(<changed symbol or file>)` against the Spine KG (Postgres `spine_kg` schema, accessed via MCP tools) and include the returned node IDs in your `BuildArtifact.kg_impact` field. **This is enforced:** a `BuildArtifact` cannot be sealed with empty `kg_impact` when `code_changes` is non-empty — the refuse-to-emit rule from REQ-INIT-7 FR-3 will block the report.
+
+Use additionally:
+
+- `find_callers(<modified function>)` — to understand who'll break if you change a signature
+- `doc_for_region(<file>)` — to see if your change contradicts an ADR or memory lesson
+- `who_owns(<file>)` — to mention the right role's lessons in your rationale
+
+**Tip:** for the `BuildArtifact.kg_impact` field, pass `impact_distance` from the `impact_radius` output through unchanged — the auditor uses it to flag underclaimed scope. Don't try to summarise or prune the impact set; the raw node list is what gets verified.
+
+See `docs/PRD.md#req-init-6` (FR-6 / FR-7) and `shared/mcp/tools/kg.py` for the full tool surface.
+
 ## Output shape
 A `# Report — <feature>` containing:
 1. What changed: file paths + diff hunks (just the meaningful ones, not noise)
@@ -28,11 +42,30 @@ A `# Report — <feature>` containing:
 3. What didn't work or was surprising
 4. Suggested next directive (if there's an obvious follow-on)
 
+## Reporting artifacts (Pass J)
+When your report includes concrete deliverables (PR URLs, file paths,
+deploy IDs, test reports), surface them under a `## Artifacts` section so
+the engagement dashboard can pin them. One list item per artifact, with
+`kind=` + `uri=` required and `title=` optional (quote titles with spaces):
+
+```
+## Artifacts
+- kind=pr        uri=https://github.com/org/repo/pull/42  title="Add OAuth login"
+- kind=file      uri=engagements/<slug>/src/auth.ts        title="OAuth module"
+- kind=test_report uri=engagements/<slug>/test-report.html title="Vitest run"
+```
+
+Allowed kinds: `pr | file | test_report | deploy | memo | other`.
+The post-agent hook parses these and registers them against the engagement.
+
 ## When to fan out workers
 For independent file changes (e.g. "add this feature in 3 separate routes" or "fix this bug in 5 services"). Each worker handles one file or one logical change. The manager validates by running tests once at the end.
 
 ## Tier hint default
 **MEDIUM** for routine code edits and refactors. **LOW** for tiny mechanical changes (renames, comment edits, single-function fixes). **HIGH** when designing new architecture or untangling subtle bugs that span multiple modules. Honor `## Tier hint` in the directive over this default.
+
+## Long job default
+Full-suite **`npm test`**, exhaustive Playwright shards, DB migration dry-runs, or other multi-hour QA passes may breach the daemon default wall clock — declare **`## Long job:`** when scoped as a long-running verification directive (**`PROTOCOL` §13**). Omit for incremental runs.
 
 ## Memory
 Before starting, read the "Memory" section appended to your prompt — codebase quirks, known gotchas, schema-drift band-aids, etc. After completing, append a durable lesson (one line) to `teams/engineer/memory.md` if you found something non-obvious.

@@ -1,0 +1,250 @@
+#!/usr/bin/env bash
+# spine — Spine orchestrator user CLI. STORY-9.9.3, PRD REQ-INIT-9 §9.5 FR-10.
+# Thin wrapper over MCP (STORY-9.9.1): mutations go through `_mcp_call`;
+# reads use psql against `spine_lifecycle` / `spine_audit`. Subsystems are
+# reached only through MCP (PRD FR-5). See `spine help` / bin/README.md.
+set -euo pipefail
+IFS=$'\n\t'
+
+SPINE_DB_URL="${SPINE_DB_URL:-postgresql://spine:spine@localhost:33000/spine}"
+SPINE_MCP_HTTP_URL="${SPINE_MCP_HTTP_URL:-http://127.0.0.1:8765}"
+SPINE_DEFAULT_BUNDLE="${SPINE_DEFAULT_BUNDLE:-}"
+SPINE_DEFAULT_OWNER="${SPINE_DEFAULT_OWNER:-${USER:-unknown}}"
+
+QUIET=0; VERBOSE=0; DRY_RUN=0; FORMAT=human
+
+if [[ -t 1 ]]; then C_G=$(tput setaf 2 2>/dev/null||:); C_Y=$(tput setaf 3 2>/dev/null||:)
+  C_R=$(tput setaf 1 2>/dev/null||:); C_D=$(tput dim 2>/dev/null||:); C_X=$(tput sgr0 2>/dev/null||:)
+else C_G=""; C_Y=""; C_R=""; C_D=""; C_X=""; fi
+
+_log() { printf '%s spine %s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "${*:2}" >&2; }
+_dbg() { [[ $VERBOSE -eq 1 ]] && _log DEBUG "$*"; return 0; }
+_die() { local c="$1"; shift; printf '%s%s%s\n' "$C_R" "$*" "$C_X" >&2; exit "$c"; }
+_jq()  { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
+_sql() { printf '%s' "$1" | sed "s/'/''/g"; }
+_psql(){ psql "$SPINE_DB_URL" -A -t -X -q -v ON_ERROR_STOP=1 "$@"; }
+
+# MCP transport — prefer `mcp` CLI (stdio), fall back to HTTP POST to
+# shared/mcp/server.py. Exit 4 if neither reachable. Mirrors router.sh.
+_mcp_call() {
+  local tool="$1" payload="$2"
+  _dbg "mcp_call tool=$tool payload=$payload"
+  [[ $DRY_RUN -eq 1 ]] && { printf '{"ok":true,"dry_run":true,"tool":"%s","payload":%s}\n' "$tool" "$payload"; return 0; }
+  if   command -v mcp  >/dev/null 2>&1; then mcp call "$tool" --json "$payload" 2>/dev/null \
+       || { _log ERROR "mcp $tool (stdio) failed"; return 4; }
+  elif command -v curl >/dev/null 2>&1; then curl -fsS -H 'Content-Type: application/json' \
+       -X POST "$SPINE_MCP_HTTP_URL/tools/$tool" --data "$payload" \
+       || { _log ERROR "mcp $tool (http) failed"; return 4; }
+  else _die 4 "no 'mcp' CLI and no curl on PATH — cannot reach MCP server"; fi
+}
+
+_emit() { case "$FORMAT" in
+  json)  printf '%s\n' "$1" ;;
+  brief) printf '%s\n' "$1" | sed -e 's/[{}"]//g' -e 's/,/  /g' ;;
+  *)     if command -v jq >/dev/null 2>&1; then printf '%s\n' "$1" | jq .; else printf '%s\n' "$1"; fi ;;
+esac; }
+
+# Global-flag parser: strips known flags, leaves positional args in REST_ARGS.
+declare -a REST_ARGS=()
+_parse_flags() {
+  REST_ARGS=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -h|--help)    REST_ARGS+=("--help"); shift ;;
+      -q|--quiet)   QUIET=1; shift ;;
+      -v|--verbose) VERBOSE=1; shift ;;
+      --dry-run)    DRY_RUN=1; shift ;;
+      --format)     FORMAT="${2:-human}"; shift 2 ;;
+      --format=*)   FORMAT="${1#--format=}"; shift ;;
+      --)           shift; REST_ARGS+=("$@"); break ;;
+      *)            REST_ARGS+=("$1"); shift ;;
+    esac
+  done
+}
+
+# _flag_val --name → echoes value, strips `--name V` and `--name=V` from REST_ARGS.
+_flag_val() {
+  local want="$1" out="" i=0 keep=()
+  while [[ $i -lt ${#REST_ARGS[@]} ]]; do
+    if   [[ "${REST_ARGS[$i]}" == "$want"    ]]; then out="${REST_ARGS[$((i+1))]:-}"; i=$((i+2)); continue
+    elif [[ "${REST_ARGS[$i]}" == "$want="*  ]]; then out="${REST_ARGS[$i]#$want=}";  i=$((i+1)); continue; fi
+    keep+=("${REST_ARGS[$i]}"); i=$((i+1))
+  done
+  REST_ARGS=("${keep[@]}"); printf '%s' "$out"
+}
+
+_help_for() { case "$1" in
+  new)      echo "spine project new <name> [--type greenfield|evolve|audit_only|operate] [--description D] [--bundle B] [--owner E]";;
+  status)   echo "spine project status <id> [--watch] [--format json|table|brief]";;
+  approve)  echo "spine project approve <id> <phase> [--notes N] [--approver A]";;
+  reject)   echo "spine project reject  <id> <phase> --reason R [--approver A]";;
+  rollback) echo "spine project rollback <id> <target_phase> --reason R";;
+  list)     echo "spine project list [--phase P] [--status active|paused|terminated|completed]";;
+  show)     echo "spine project show <id>";; audit) echo "spine project audit <id> [--export csv|json]";;
+  *) return 1 ;;
+esac; }
+
+# ─── project: mutating → MCP ──────────────────────────────────────────
+cmd_project_new() {
+  [[ "${REST_ARGS[0]:-}" == "--help" || ${#REST_ARGS[@]} -eq 0 ]] && { _help_for new >&2; return 0; }
+  local name="${REST_ARGS[0]}"; REST_ARGS=("${REST_ARGS[@]:1}")
+  [[ -z "$name" ]] && _die 2 "project new: <name> required"
+  local ptype owner desc bundle p
+  ptype="$(_flag_val --type)";       ptype="${ptype:-greenfield}"
+  owner="$(_flag_val --owner)";      owner="${owner:-$SPINE_DEFAULT_OWNER}"
+  desc="$(_flag_val --description)"; bundle="$(_flag_val --bundle)"; bundle="${bundle:-$SPINE_DEFAULT_BUNDLE}"
+  p=$(printf '{"name":"%s","project_type":"%s","owner":"%s"' "$(_jq "$name")" "$ptype" "$(_jq "$owner")")
+  [[ -n "$desc"   ]] && p+=$(printf ',"description":"%s"' "$(_jq "$desc")")
+  [[ -n "$bundle" ]] && p+=$(printf ',"bundle":"%s"'      "$(_jq "$bundle")")
+  _emit "$(_mcp_call project_create "${p}}")"
+}
+
+cmd_project_status() {
+  [[ "${REST_ARGS[0]:-}" == "--help" ]] && { _help_for status >&2; return 0; }
+  local watch=0 kept=()
+  for a in "${REST_ARGS[@]}"; do [[ "$a" == "--watch" ]] && watch=1 || kept+=("$a"); done
+  REST_ARGS=("${kept[@]}")
+  local pid="${REST_ARGS[0]:-}"; [[ -z "$pid" ]] && _die 2 "project status: <project_id> required"
+  while :; do
+    _emit "$(_mcp_call project_status "$(printf '{"project_id":"%s"}' "$(_jq "$pid")")")"
+    [[ $watch -eq 0 ]] && break; sleep 5; [[ -t 1 ]] && clear || true
+  done
+}
+
+cmd_project_approve() {
+  [[ "${REST_ARGS[0]:-}" == "--help" ]] && { _help_for approve >&2; return 0; }
+  local pid="${REST_ARGS[0]:-}" phase="${REST_ARGS[1]:-}"
+  [[ -z "$pid" || -z "$phase" ]] && _die 2 "approve: <project_id> <phase> required"
+  REST_ARGS=("${REST_ARGS[@]:2}")
+  local notes approver p grant tok
+  notes="$(_flag_val --notes)"
+  approver="$(_flag_val --approver)"; approver="${approver:-$SPINE_DEFAULT_OWNER}"
+  p=$(printf '{"project_id":"%s","phase":"%s","approver":"%s"' "$(_jq "$pid")" "$(_jq "$phase")" "$(_jq "$approver")")
+  [[ -n "$notes" ]] && p+=$(printf ',"notes":"%s"' "$(_jq "$notes")")
+  grant="$(_mcp_call approval_grant "${p}}")" || return $?
+  _emit "$grant"
+  tok="$(printf '%s' "$grant" | sed -n 's/.*"token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+  _emit "$(_mcp_call phase_advance "$(printf '{"project_id":"%s","target_phase":"%s","approval_token":"%s"}' \
+    "$(_jq "$pid")" "$(_jq "$phase")" "$(_jq "$tok")")")"
+}
+
+cmd_project_reject() {
+  [[ "${REST_ARGS[0]:-}" == "--help" ]] && { _help_for reject >&2; return 0; }
+  local pid="${REST_ARGS[0]:-}" phase="${REST_ARGS[1]:-}" reason approver
+  [[ -z "$pid" || -z "$phase" ]] && _die 2 "reject: <project_id> <phase> required"
+  REST_ARGS=("${REST_ARGS[@]:2}")
+  reason="$(_flag_val --reason)"; [[ -z "$reason" ]] && _die 2 "reject: --reason required"
+  approver="$(_flag_val --approver)"; approver="${approver:-$SPINE_DEFAULT_OWNER}"
+  _emit "$(_mcp_call gate_reject "$(printf '{"project_id":"%s","phase":"%s","approver":"%s","decision":"rejected","reason":"%s"}' \
+    "$(_jq "$pid")" "$(_jq "$phase")" "$(_jq "$approver")" "$(_jq "$reason")")")"
+}
+
+cmd_project_rollback() {
+  [[ "${REST_ARGS[0]:-}" == "--help" ]] && { _help_for rollback >&2; return 0; }
+  local pid="${REST_ARGS[0]:-}" target="${REST_ARGS[1]:-}" reason
+  [[ -z "$pid" || -z "$target" ]] && _die 2 "rollback: <project_id> <target_phase> required"
+  REST_ARGS=("${REST_ARGS[@]:2}")
+  reason="$(_flag_val --reason)"; [[ -z "$reason" ]] && _die 2 "rollback: --reason required"
+  _emit "$(_mcp_call phase_advance "$(printf '{"project_id":"%s","target_phase":"%s","rollback":true,"reason":"%s"}' \
+    "$(_jq "$pid")" "$(_jq "$target")" "$(_jq "$reason")")")"
+}
+
+# ─── project: read-side → direct SQL ──────────────────────────────────
+cmd_project_list() {
+  local phase status where="" sql
+  phase="$(_flag_val --phase)";   [[ -n "$phase"  ]] && where+=" AND current_phase = '$(_sql "$phase")'"
+  status="$(_flag_val --status)"; [[ -n "$status" ]] && where+=" AND status        = '$(_sql "$status")'"
+  sql="SELECT id, name, project_type, current_phase, status, created_at::text FROM spine_lifecycle.project
+        WHERE TRUE $where ORDER BY created_at DESC;"
+  if [[ "$FORMAT" == "json" ]]
+  then _psql -c "SELECT jsonb_agg(row_to_json(t)) FROM ($sql) t;" 2>/dev/null || _die 4 "db unreachable"
+  else { printf 'id|name|type|phase|status|created_at\n'; _psql -c "$sql" 2>/dev/null; } \
+         | column -t -s'|' || _die 4 "db unreachable"; fi
+}
+
+cmd_project_show() {
+  local pid="${REST_ARGS[0]:-}"; [[ -z "$pid" ]] && _die 2 "show: <project_id> required"
+  _emit "$(_mcp_call project_status "$(printf '{"project_id":"%s"}' "$(_jq "$pid")")")"
+  [[ "$FORMAT" == "json" ]] && return 0
+  printf '\n%sTransitions%s\n' "$C_D" "$C_X"
+  _psql -c "SELECT created_at::text, from_phase, to_phase, actor, decision FROM spine_lifecycle.transition
+    WHERE project_id::text = '$(_sql "$pid")' ORDER BY created_at DESC LIMIT 20;" 2>/dev/null | column -t -s'|' || true
+}
+
+cmd_project_audit() {
+  local pid="${REST_ARGS[0]:-}"; [[ -z "$pid" ]] && _die 2 "audit: <project_id> required"
+  REST_ARGS=("${REST_ARGS[@]:1}"); local fmt sql
+  fmt="$(_flag_val --export)"
+  sql="SELECT created_at::text, action, phase, actor, rationale FROM spine_audit.events
+        WHERE project_id::text = '$(_sql "$pid")' ORDER BY created_at DESC;"
+  case "$fmt" in
+    csv)  _psql --csv -c "$sql" 2>/dev/null || _die 4 "audit query failed" ;;
+    json) _psql -c "SELECT jsonb_agg(row_to_json(t)) FROM ($sql) t;" 2>/dev/null || _die 4 "audit query failed" ;;
+    *)    _psql -c "$sql" 2>/dev/null | column -t -s'|' || _die 4 "audit query failed" ;;
+  esac
+}
+
+# ─── portfolio + doctor + help ────────────────────────────────────────
+cmd_status() {
+  { printf 'phase|count\n'; _psql -c "SELECT current_phase, COUNT(*) FROM spine_lifecycle.project
+      GROUP BY current_phase ORDER BY current_phase;" 2>/dev/null; } \
+    | column -t -s'|' || _die 4 "db unreachable at $SPINE_DB_URL"
+}
+
+cmd_doctor() {
+  local rc=0
+  printf 'spine doctor — %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  if _psql -c 'SELECT 1;' >/dev/null 2>&1
+  then printf '  %sok%s   postgres reachable (%s)\n'  "$C_G" "$C_X" "$SPINE_DB_URL"
+  else printf '  %sFAIL%s postgres unreachable (%s)\n' "$C_R" "$C_X" "$SPINE_DB_URL"; rc=4; fi
+  if   command -v mcp >/dev/null 2>&1;                         then printf '  %sok%s   mcp CLI on PATH\n' "$C_G" "$C_X"
+  elif curl -fsS "$SPINE_MCP_HTTP_URL/health" >/dev/null 2>&1; then printf '  %sok%s   mcp http reachable (%s)\n' "$C_G" "$C_X" "$SPINE_MCP_HTTP_URL"
+  else printf '  %swarn%s no mcp transport found\n' "$C_Y" "$C_X"; rc=$((rc>1?rc:1)); fi
+  [[ -n "$SPINE_DEFAULT_BUNDLE" ]] && printf '  %sok%s   default bundle: %s\n' "$C_G" "$C_X" "$SPINE_DEFAULT_BUNDLE" \
+                                   || printf '  %s--%s   no SPINE_DEFAULT_BUNDLE set\n' "$C_D" "$C_X"
+  return $rc
+}
+
+cmd_help() {
+  local topic="${REST_ARGS[0]:-}"
+  [[ -n "$topic" ]] && { _help_for "$topic" >&2 || _die 64 "no help topic '$topic' (try: spine help)"; return 0; }
+  cat <<'EOF'
+spine — Spine orchestrator CLI (STORY-9.9.3)
+
+Project lifecycle:
+  spine project new <name> [--type T] [--description D] [--bundle B]
+  spine project status <id> [--watch] [--format json|table|brief]
+  spine project list|show|audit ...
+
+Gates / transitions:
+  spine project approve  <id> <phase> [--notes N] [--approver A]
+  spine project reject   <id> <phase> --reason R   [--approver A]
+  spine project rollback <id> <target_phase> --reason R
+
+Portfolio / ops:  spine status | spine doctor | spine help [<topic>]
+Global flags:     --quiet/-q  --verbose/-v  --dry-run  --format json|table|brief  --help/-h
+Env:              SPINE_DB_URL  SPINE_MCP_HTTP_URL  SPINE_DEFAULT_BUNDLE  SPINE_DEFAULT_OWNER
+Exit codes:       0 ok  1 generic  2 invalid-input  3 gate-blocked  4 mcp/db-unreachable  64 unknown-cmd
+See orchestrator/bin/README.md for details.
+EOF
+}
+
+# ─── main dispatch ────────────────────────────────────────────────────
+main() {
+  local cmd="${1:-help}"; shift || true
+  local sub=""; [[ "$cmd" == "project" ]] && { sub="${1:-}"; shift || true; }
+  _parse_flags "$@"
+  case "$cmd" in
+    project) case "$sub" in
+        new) cmd_project_new ;;          status)   cmd_project_status   ;;
+        approve) cmd_project_approve ;;  reject)   cmd_project_reject   ;;
+        rollback) cmd_project_rollback;; list)     cmd_project_list     ;;
+        show) cmd_project_show ;;        audit)    cmd_project_audit    ;;
+        ""|help|-h|--help) cmd_help ;;
+        *) _die 64 "unknown project subcommand: $sub (try: spine help)" ;;
+      esac ;;
+    status) cmd_status ;; doctor) cmd_doctor ;; help|-h|--help|"") cmd_help ;;
+    *) _die 64 "unknown command: $cmd (try: spine help)" ;;
+  esac
+}
+main "$@"

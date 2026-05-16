@@ -1,0 +1,80 @@
+# boundary-rules.yaml — Spine cross-subsystem module-boundary policy.
+#
+# Implements STORY-7.1.3 (Module boundary check) and generalises it across
+# every subsystem named in docs/ARCHITECTURE.md §4. The Python checker at
+# tools/_boundary_parser.py reads this file; the bash entry-point at
+# tools/check-module-boundaries.sh dispatches to it (see Makefile.v2 target
+# `check-boundaries`). REQ-INIT-7 §7.5 FR-1 is the binding spec.
+#
+# Edit this file (not the parser) when policy changes. Any change here is an
+# architectural decision — call it out in the PR description.
+
+version: 1
+
+# ─────────────────────────────────────────────────────────────────────
+# Subsystems — one entry per top-level directory that participates in
+# the boundary contract. `may_import_from` is a whitelist; anything not
+# listed is a violation unless an `exceptions` entry below covers it.
+# ─────────────────────────────────────────────────────────────────────
+subsystems:
+  orchestrator:
+    path: orchestrator/
+    may_import_from: [orchestrator, shared]
+  plan:
+    path: plan/
+    may_import_from: [plan, shared]
+  build:
+    path: build/
+    may_import_from: [build, shared]
+  verify:
+    path: verify/
+    may_import_from: [verify, shared]      # TRON code; subtree-merged
+    excluded_paths:                          # don't enforce on TRON's own internals
+      - verify/tron/                         # TRON owns this; its internal imports are TRON's contract
+      - verify/admin-ui/                     # TRON's legacy SPA
+      - verify/frontend/                     # TRON's active SPA
+  shared:
+    path: shared/
+    may_import_from: [shared]                # no upward imports — `shared/` is a leaf
+
+# Repo-level exclusions. Drained or legacy code that we don't want to
+# enforce on yet — `lib/` is the bash drain (ARCHITECTURE §6 Phase 4).
+excluded_paths:
+  - lib/
+  - scripts/
+  - recipes/
+  - templates/
+  - docs/
+  - db/
+  - .git/
+  - node_modules/
+  - __pycache__/
+
+# ─────────────────────────────────────────────────────────────────────
+# Cross-subsystem rules. The default is "deny". Each rule below either
+# permits a narrow pattern or relaxes detection (doc-path references).
+# ─────────────────────────────────────────────────────────────────────
+allowed_cross_subsystem_paths:
+  # Documentation strings, log messages, and comments may reference any
+  # subsystem path without being treated as an import.
+  doc_path_references_allowed: true
+
+  # MCP tool wrappers in `shared/mcp/tools/iso.py` and `sandbox.py`
+  # lazy-import TRON to keep verify/ standalone-deployable (REQ-INIT-8 G-8).
+  # The static check downgrades these to warnings instead of errors.
+  - rule: shared_mcp_lazy_imports
+    source_pattern: shared/mcp/tools/(iso|sandbox)\.py
+    permitted_target: verify.tron
+    reason: "MCP tool wrappers lazy-import TRON; preserves verify/ standalone deployability"
+
+# ─────────────────────────────────────────────────────────────────────
+# Per-file exceptions. Use sparingly — every entry is technical debt.
+# Each MUST carry `reason` + `expires` (ISO-8601 date). After expiry the
+# parser still honours the exception but emits a stderr deprecation note.
+# Append via `check-module-boundaries.sh --add-exception`.
+# ─────────────────────────────────────────────────────────────────────
+exceptions:
+  - source: build/legacy_helpers.sh
+    target: plan/
+    reason: "Transitional during lib/ drain — remove after STORY-7.5.3"
+    expires: 2026-09-01

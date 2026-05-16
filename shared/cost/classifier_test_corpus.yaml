@@ -1,0 +1,126 @@
+# STORY-1.5.2 — per-turn classifier eval corpus.
+# Hand-curated examples for the future eval harness (STORY-3.4.x).
+# Each case: TurnContext input + expected classification floor.
+# Ambiguous cases use `min_confidence: 0.0` to signal the heuristic
+# SHOULD be uncertain and (in hybrid mode) escalate to the LLM-judge.
+
+test_cases:
+
+  # ── chitchat (5) ───────────────────────────────────────────────────
+  - description: short greeting
+    context: { role: product, phase: intake, last_user_message: "hi" }
+    expected: { turn_type: chitchat, recommended_tier: low, min_confidence: 0.9 }
+  - description: acknowledgement
+    context: { role: engineer, phase: build_in_progress, last_user_message: "thanks" }
+    expected: { turn_type: chitchat, recommended_tier: low, min_confidence: 0.9 }
+  - description: emoji/punctuation only
+    context: { role: planner, phase: plan_in_progress, last_user_message: "👍" }
+    expected: { turn_type: chitchat, recommended_tier: low, min_confidence: 0.9 }
+  - description: cool one-word
+    context: { role: architect, phase: plan_in_progress, last_user_message: "cool" }
+    expected: { turn_type: chitchat, recommended_tier: low, min_confidence: 0.9 }
+  - description: sounds good
+    context: { role: product, phase: intake, last_user_message: "sounds good!" }
+    expected: { turn_type: chitchat, recommended_tier: low, min_confidence: 0.9 }
+
+  # ── clarification (5) ──────────────────────────────────────────────
+  - description: what is X
+    context: { role: engineer, phase: build_in_progress, last_user_message: "What is the retry budget?" }
+    expected: { turn_type: clarification, recommended_tier: low, min_confidence: 0.7 }
+  - description: explain function
+    context: { role: engineer, phase: build_in_progress, last_user_message: "Can you explain how get_user works?" }
+    expected: { turn_type: clarification, recommended_tier: low, min_confidence: 0.7 }
+  - description: what does X mean
+    context: { role: product, phase: intake, last_user_message: "What does NFR-3 mean in this context?" }
+    expected: { turn_type: clarification, recommended_tier: low, min_confidence: 0.7 }
+  - description: how does X work
+    context: { role: ux, phase: plan_in_progress, last_user_message: "How does the org bundle override hierarchy work?" }
+    expected: { turn_type: clarification, recommended_tier: low, min_confidence: 0.7 }
+  - description: what do you mean
+    context: { role: product, phase: intake, last_user_message: "What do you mean by 'fail closed'?" }
+    expected: { turn_type: clarification, recommended_tier: low, min_confidence: 0.7 }
+
+  # ── exploration (5) ────────────────────────────────────────────────
+  - description: list projects
+    context: { role: product, phase: intake, last_user_message: "List all active projects." }
+    expected: { turn_type: exploration, recommended_tier: low, min_confidence: 0.7 }
+  - description: show me an artifact
+    context: { role: architect, phase: plan_in_progress, last_user_message: "Show me the current PRD draft." }
+    expected: { turn_type: exploration, recommended_tier: low, min_confidence: 0.7 }
+  - description: find usages
+    context: { role: engineer, phase: build_in_progress, last_user_message: "Find all callers of route()." }
+    expected: { turn_type: exploration, recommended_tier: low, min_confidence: 0.7 }
+  - description: search the kg
+    context: { role: planner, phase: plan_in_progress, last_user_message: "Search the knowledge graph for FR-6 references." }
+    expected: { turn_type: exploration, recommended_tier: low, min_confidence: 0.7 }
+  - description: where is the file
+    context: { role: engineer, phase: build_in_progress, last_user_message: "Where is the router CLI script defined?" }
+    expected: { turn_type: exploration, recommended_tier: low, min_confidence: 0.7 }
+
+  # ── decision (5) ───────────────────────────────────────────────────
+  - description: should we approve
+    context: { role: product, phase: plan_approved, last_user_message: "Should we approve the TRD as-is?" }
+    expected: { turn_type: decision, recommended_tier: high, min_confidence: 0.85 }
+  - description: which approach
+    context: { role: architect, phase: plan_in_progress, last_user_message: "Which approach should we pick: monolith or two services?" }
+    expected: { turn_type: decision, recommended_tier: high, min_confidence: 0.85 }
+  - description: approve gate
+    context: { role: product, phase: verify_approved, last_user_message: "Approve the verification artifacts." }
+    expected: { turn_type: decision, recommended_tier: high, min_confidence: 0.85 }
+  - description: requirement MUST
+    context: { role: architect, phase: plan_in_progress, last_user_message: "The system MUST persist audit logs for 7 years — confirm." }
+    expected: { turn_type: decision, recommended_tier: high, min_confidence: 0.75 }
+  - description: acceptance phase
+    context: { role: product, phase: acceptance, last_user_message: "Accept or reject the release candidate?" }
+    expected: { turn_type: decision, recommended_tier: high, min_confidence: 0.85 }
+
+  # ── synthesis (6) ──────────────────────────────────────────────────
+  - description: draft the PRD
+    context: { role: product, phase: plan_in_progress, last_user_message: "Draft the final PRD with everything we agreed.", artifact_being_produced: PRD }
+    expected: { turn_type: synthesis, recommended_tier: high, min_confidence: 0.85 }
+  - description: write the TRD (premium)
+    context: { role: architect, phase: plan_in_progress, last_user_message: "Write the TRD section on cost router.", artifact_being_produced: TRD }
+    expected: { turn_type: synthesis, recommended_tier: premium, min_confidence: 0.85 }
+  - description: compose roadmap
+    context: { role: planner, phase: plan_in_progress, last_user_message: "Compose the roadmap for INIT-1.", artifact_being_produced: Roadmap }
+    expected: { turn_type: synthesis, recommended_tier: high, min_confidence: 0.85 }
+  - description: summarise findings
+    context: { role: product, phase: retro, last_user_message: "Summarise the retro findings into a memo." }
+    expected: { turn_type: synthesis, recommended_tier: high, min_confidence: 0.7 }
+  - description: artifact flag only
+    context: { role: planner, phase: plan_in_progress, last_user_message: "Continue.", artifact_being_produced: Roadmap }
+    expected: { turn_type: synthesis, recommended_tier: high, min_confidence: 0.7 }
+  - description: generate spec
+    context: { role: architect, phase: plan_in_progress, last_user_message: "Generate the spec for the API." }
+    expected: { turn_type: synthesis, recommended_tier: high, min_confidence: 0.7 }
+
+  # ── verification (5) ───────────────────────────────────────────────
+  - description: verify implementation
+    context: { role: auditor, phase: verify_in_progress, last_user_message: "Verify the engineer's implementation matches the TRD." }
+    expected: { turn_type: verification, recommended_tier: medium, min_confidence: 0.8 }
+  - description: audit logs
+    context: { role: auditor, phase: verify_in_progress, last_user_message: "Audit yesterday's cost ledger entries." }
+    expected: { turn_type: verification, recommended_tier: medium, min_confidence: 0.8 }
+  - description: check that x holds
+    context: { role: qa, phase: verify_in_progress, last_user_message: "Check that all endpoints return 401 when unauthenticated." }
+    expected: { turn_type: verification, recommended_tier: medium, min_confidence: 0.7 }
+  - description: did the engineer
+    context: { role: auditor, phase: verify_in_progress, last_user_message: "Did the engineer commit the migration?" }
+    expected: { turn_type: verification, recommended_tier: medium, min_confidence: 0.7 }
+  - description: role-only auditor signal
+    context: { role: auditor, phase: verify_in_progress, last_user_message: "Continue with the next file." }
+    expected: { turn_type: verification, recommended_tier: medium, min_confidence: 0.5 }
+
+  # ── ambiguous / LLM-judge territory (4) ────────────────────────────
+  - description: vague continue
+    context: { role: engineer, phase: build_in_progress, last_user_message: "Keep going." }
+    expected: { turn_type: exploration, recommended_tier: low, min_confidence: 0.0 }
+  - description: mixed signals
+    context: { role: architect, phase: plan_in_progress, last_user_message: "Find the right approach and summarise it." }
+    expected: { turn_type: synthesis, recommended_tier: high, min_confidence: 0.0 }
+  - description: terse decision-ish
+    context: { role: product, phase: plan_approved, last_user_message: "Move forward." }
+    expected: { turn_type: decision, recommended_tier: high, min_confidence: 0.0 }
+  - description: novel phrasing
+    context: { role: product, phase: intake, last_user_message: "Wrap this up nicely please." }
+    expected: { turn_type: exploration, recommended_tier: low, min_confidence: 0.0 }

@@ -80,7 +80,7 @@ Once the end-to-end thread works, each subsystem thickens against its INIT in pa
 ### EPIC-1.1 — Product Discovery (intake → PRD)
 Maps to REQ FR-2. Implements the 5-move dialogue protocol producing a signed PRD.
 
-- `STORY-1.1.1` · `Backlog` · `P0` · `M` — Implement the 5-move dialogue protocol in the `product` role prompt (naive cast → provoke → reframe → tier → artifact). Source: `spine_intake_pattern.md`.
+- `STORY-1.1.1` · `Done` · `P0` · `M` — Implement the 5-move dialogue protocol in the `product` role prompt (naive cast → provoke → reframe → tier → artifact). At `lib/role-prompts/product.md` (240 lines) with per-project-type templates, refuse-to-advance, worked web-app example. *(Done 2026-05-16.)*
 - `STORY-1.1.2` · `Done` · `P0` · `M` — Author project-type intake templates: web-app, internal-tool, data-pipeline, mobile, api-service, cli-tool. ~10 questions each. Live in `plan/templates/intake/<type>.yaml`. *(Done 2026-05-16.)*
 - `STORY-1.1.3` · `Done` · `P0` · `S` — Define the `prd-v1` template schema (problem, users, MUST/SHOULD/COULD goals, in-scope, out-of-scope, acceptance criteria, open questions). Pydantic at `plan/artifacts/prd_v1.py`. *(Done 2026-05-16.)*
 - `STORY-1.1.4` · `Backlog` · `P0` · `S` — Refuse-to-advance gate: a PRD with any `TBD` field cannot be marked complete.
@@ -110,8 +110,8 @@ Maps to REQ FR-4. **The bridge from spec to executable work.**
 Maps to REQ FR-5. Absorbs the old EPIC-1.3.
 
 - `STORY-1.4.1` · `Done` · `P0` · `M` — Gate engine: enforces phase boundaries; no phase advances without an approval token. At `orchestrator/lib/gate.sh` (5 functions: status/approve/reject/request-changes/list-pending) wraps `approval.py` + `transition.sh` + `router.sh`. *(Done 2026-05-16.)*
-- `STORY-1.4.2` · `Backlog` · `P0` · `S` — Approval queue UI (pending PRD / TRD / Roadmap sign-offs across all projects).
-- `STORY-1.4.3` · `Backlog` · `P0` · `S` — Inline review surface (read the artifact, see the diff if it's a re-submission).
+- `STORY-1.4.2` · `Done` · `P0` · `S` — Approval queue UI (pending PRD / TRD / Roadmap sign-offs across all projects). At `shared/ui/approvals/` (vanilla JS + dark theme + serve.sh + proxy.py); dev server `bash shared/ui/approvals/serve.sh`. *(Done 2026-05-16.)*
+- `STORY-1.4.3` · `Done` · `P0` · `S` — Inline review surface (read the artifact, see the diff if it's a re-submission). Modal in approvals.js loads + renders artifact markdown; approve/reject/request-changes buttons with optimistic UI. *(Done 2026-05-16.)*
 - `STORY-1.4.4` · `Done` · `P0` · `S` — Actions: approve / reject / request-changes (with notes). *(Done 2026-05-16 — `gate.sh approve|reject|request-changes` subcommands.)*
 - `STORY-1.4.5` · `Done` · `P1` · `S` — Request-changes routes back to the producing role with the user's notes attached. *(Done 2026-05-16 — `gate_request_changes` composes follow-up directive + dispatches via `router.sh` with `parent_directive_id` linkage.)*
 - `STORY-1.4.6` · `Backlog` · `P1` · `S` — Multi-approver gates (e.g., TRD requires CTO + Compliance both sign).
@@ -123,7 +123,7 @@ Maps to REQ FR-6. **Powers every phase.** Five composable mechanisms.
 > **Tech:** Borrow **LangChain** model-router + tiered-fallback primitives where they slot cleanly; wrap with Spine's per-phase / budget / org-bundle policy layer. Don't reimplement routing primitives.
 
 - `STORY-1.5.1` · `Done` · `P0` · `S` — Per-phase default tier table (declared in `sdlc-pipeline.yaml`). Read by `shared/cost/router.py` `route()` decision flow. *(Done 2026-05-16; sdlc-pipeline-default.yaml carries the table; cost router consumes it.)*
-- `STORY-1.5.2` · `Backlog` · `P0` · `M` — Per-turn escalation classifier (cheap Haiku-class) — synthesis/decision turns escalate; chitchat stays cheap.
+- `STORY-1.5.2` · `Done` · `P0` · `M` — Per-turn escalation classifier (cheap Haiku-class) — synthesis/decision turns escalate; chitchat stays cheap. At `shared/cost/classifier.py` (hybrid heuristic + LLM-judge; 6 turn types) + 35-case test corpus + `apply_to_route_request` integration. *(Done 2026-05-16.)*
 - `STORY-1.5.3` · `Done` · `P0` · `M` — Org-bundle model menu + budget enforcement (hard block on cap exceed, not warn). At `shared/cost/router.py` (`route()` + `get_budget_status()`) + `shared/cost/router_cli.sh`. Exit code 2 = would-exceed-budget. *(Done 2026-05-16.)*
 - `STORY-1.5.4` · `Backlog` · `P1` · `M` — Anthropic prompt-cache integration for long intake conversations (huge cost win on repeated context).
 - `STORY-1.5.5` · `Backlog` · `P1` · `S` — User override (pin tier per directive; counted against budget; logged).
@@ -239,7 +239,7 @@ Today user picks the tier hint. Smarter: route automatically by (role, task comp
 TRON's Docker ephemeral sandbox + seccomp profile is the answer to "engineer self-reports success but never actually ran the code." Lift to `verify/sandbox/` and expose as a shared capability.
 
 - `STORY-3.5.1` · `Backlog` · `P1` · `S` — Move TRON `tron/sandbox/` → `verify/sandbox/`. Verify standalone tests pass.
-- `STORY-3.5.2` · `Backlog` · `P1` · `S` — MCP tool `sandbox_run(code, env)` exposes sandbox execution to any Spine role.
+- `STORY-3.5.2` · `Done` · `P1` · `S` — MCP tool `sandbox_run(code, env)` exposes sandbox execution to any Spine role. At `shared/mcp/tools/sandbox.py` (248 lines, degraded-mode detection, lazy TRON import, cost model). TRON `sandbox_client.run` adapter call-site stubbed pending wave 5. *(Scaffold Done 2026-05-16.)*
 - `STORY-3.5.3` · `Backlog` · `P1` · `M` — Engineer-daemon hook: optional sandbox-verify pass before report write.
 - `STORY-3.5.4` · `Backlog` · `P2` · `S` — Seccomp profile customization via org bundle (sensitive orgs want stricter syscall filtering).
 - `STORY-3.5.5` · `Backlog` · `P2` · `S` — Sandbox cost tracking (CPU-seconds, memory-seconds) into unified cost ledger.
@@ -365,10 +365,10 @@ Maps to REQ FR-6. **Depends on `EPIC-2.2` MCP scaffolding.**
 > **Tech:** Wraps **LangChain** `GraphRetriever` where natural; raw SQL for hot paths. Tools exposed via MCP for all roles.
 
 - `STORY-6.5.1` · `Backlog` · `P0` · `S` — `graph_query(query)` — escape hatch for power users.
-- `STORY-6.5.2` · `Backlog` · `P0` · `S` — `find_callers(symbol, depth)` — direct + transitive callers.
+- `STORY-6.5.2` · `Done` · `P0` · `S` — `find_callers(symbol, depth)` — direct + transitive callers. Real impl at `shared/mcp/tools/kg.py` (recursive CTE for depth>1; point-in-time queries via commit_sha; subprocess psql; ≤50ms p95 target). *(Done 2026-05-16.)*
 - `STORY-6.5.3` · `Backlog` · `P0` · `S` — `trace_dependency(from, to)` — shortest path in CALLS/IMPORTS graph.
 - `STORY-6.5.4` · `Backlog` · `P0` · `S` — `code_neighborhood(node, radius)` — subgraph within N hops.
-- `STORY-6.5.5` · `Backlog` · `P0` · `S` — `impact_radius(symbol_or_region)` — files + tests potentially affected by a change.
+- `STORY-6.5.5` · `Done` · `P0` · `S` — `impact_radius(symbol_or_region)` — files + tests potentially affected by a change. Real impl at `shared/mcp/tools/kg.py` (multi-CTE: callers + tests + importers + tests-via-callers; ≤200ms p95 target). Used by engineer/auditor BuildArtifact verification. *(Done 2026-05-16.)*
 - `STORY-6.5.6` · `Backlog` · `P0` · `S` — `doc_for_region(file:lines)` — REQs / ADRs / lessons touching this code.
 - `STORY-6.5.7` · `Backlog` · `P0` · `S` — `who_owns(node)` — roles / lessons / ADRs claiming ownership.
 - `STORY-6.5.8` · `Backlog` · `P1` · `S` — `find_by_satisfies(req_or_story_id)` — code regions claiming to satisfy a given REQ/STORY.
@@ -376,10 +376,10 @@ Maps to REQ FR-6. **Depends on `EPIC-2.2` MCP scaffolding.**
 ### EPIC-6.6 — Role-prompt integration
 Maps to REQ FR-7. **One story per affected role.**
 
-- `STORY-6.6.1` · `Backlog` · `P0` · `S` — Update `researcher.md`: use `find_callers` / `trace_dependency` / `code_neighborhood` before grep.
-- `STORY-6.6.2` · `Backlog` · `P0` · `S` — Update `architect.md`: query `code_neighborhood` + `impact_radius` before drafting TRD sections that touch existing code; write TRD as delta.
-- `STORY-6.6.3` · `Backlog` · `P0` · `S` — Update `engineer.md`: run `impact_radius` and include affected callers in `## Files touched`.
-- `STORY-6.6.4` · `Backlog` · `P0` · `S` — Update `auditor.md`: re-run `impact_radius` against engineer's report; flag missed callers.
+- `STORY-6.6.1` · `Done` · `P0` · `S` — Update `researcher.md`: use `find_callers` / `trace_dependency` / `code_neighborhood` before grep. *(Done 2026-05-16 — added KG section, +16 lines.)*
+- `STORY-6.6.2` · `Done` · `P0` · `S` — Update `architect.md`: query `code_neighborhood` + `impact_radius` before drafting TRD sections that touch existing code; write TRD as delta. *(Done 2026-05-16 — added KG section, +13 lines.)*
+- `STORY-6.6.3` · `Done` · `P0` · `S` — Update `engineer.md`: run `impact_radius` and include affected callers in `## Files touched`. *(Done 2026-05-16 — added KG section + BuildArtifact.kg_impact rule, +13 lines.)*
+- `STORY-6.6.4` · `Done` · `P0` · `S` — Update `auditor.md`: re-run `impact_radius` against engineer's report; flag missed callers. *(Done 2026-05-16 — added KG section + numerical-diff verdict rule, +13 lines.)*
 - `STORY-6.6.5` · `Backlog` · `P0` · `S` — Update `planner.md` (decomposer): use `code_neighborhood`/`impact_radius` to detect inter-story dependencies automatically (upgrades `STORY-1.3.3` from heuristic to deterministic).
 - `STORY-6.6.6` · `Backlog` · `P1` · `S` — Update `memory.md`: pin every new lesson to code/doc nodes via `OWNS`/`TOUCHES` edges so lessons surface contextually.
 
@@ -404,7 +404,7 @@ Maps to REQ FR-8.
 ### EPIC-7.1 — Build subsystem boundary
 - `STORY-7.1.1` · `Backlog` · `P0` · `M` — `build/` module scaffolding: roles/, daemons/, workers/, kg/, tests/.
 - `STORY-7.1.2` · `Backlog` · `P0` · `S` — Per-subsystem README documenting the build contract (inputs from Plan/Orchestrator; outputs to Verify).
-- `STORY-7.1.3` · `Backlog` · `P0` · `S` — Module boundary check: build/ imports nothing from plan/ or verify/; talks through shared/mcp/ only.
+- `STORY-7.1.3` · `Done` · `P0` · `S` — Module boundary check: build/ imports nothing from plan/ or verify/; talks through shared/mcp/ only. At `tools/check-module-boundaries.sh` + `_boundary_parser.py` + `boundary-rules.yaml` + README. Generalized to all 5 subsystems; AST-level Python + regex bash/JS scanners; `--changed-only` / `--explain` / `--add-exception` / JSON+JUnit output. *(Done 2026-05-16.)*
 
 ### EPIC-7.2 — Wire Build to Orchestrator
 - `STORY-7.2.1` · `Backlog` · `P0` · `M` — Build subsystem registers with orchestrator on boot; declares which roles it provides.
@@ -520,7 +520,7 @@ Maps to REQ FR-8.
 ### EPIC-9.9 — Orchestrator API surface
 - `STORY-9.9.1` · `Backlog` · `P0` · `M` — MCP server in `shared/mcp/` exposes orchestrator primitives (`project_create`, `project_status`, `phase_advance`, `approval_grant`).
 - `STORY-9.9.2` · `Backlog` · `P1` · `M` — REST API for UI integration (`/api/v2/projects`, `/api/v2/approvals`, `/api/v2/audit`).
-- `STORY-9.9.3` · `Backlog` · `P1` · `S` — CLI: `spine project new`, `spine project status`, `spine project approve <phase>`.
+- `STORY-9.9.3` · `Done` · `P1` · `S` — CLI: `spine project new`, `spine project status`, `spine project approve <phase>`. At `orchestrator/bin/spine` (250 lines, full subcommand tree, MCP+psql dispatch, --format json|table|brief, --watch, --dry-run, exit codes 0/1/2/3/4/64) + README. *(Done 2026-05-16; chmod +x needed.)*
 - `STORY-9.9.4` · `Backlog` · `P2` · `M` — Dashboard `shared/ui/` shows real-time orchestrator state (phase per project, approvals pending, cost rollup).
 
 ---

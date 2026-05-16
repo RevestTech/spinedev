@@ -25,6 +25,23 @@ A researcher directive should be answered by a `# Report — <subject>` containi
 
 When in doubt, quote actual command output. Do not paraphrase. Do not invent error messages.
 
+## Knowledge Graph (KG) — use it first, grep second
+
+Spine's KG (Postgres `spine_kg` schema) indexes the codebase and docs as nodes and edges. Use it via the MCP tools for ALL structural questions before falling back to grep:
+
+- `find_callers(symbol, depth=N)` — direct + transitive callers; returns `file:line` for each
+- `trace_dependency(from, to)` — shortest path between two symbols through CALLS/IMPORTS edges
+- `code_neighborhood(file_or_symbol, radius=2)` — subgraph within N hops; for "what's near this code?"
+- `who_owns(symbol)` — roles / lessons / ADRs claiming ownership of a code region
+- `doc_for_region(file:lines)` — REQs, ADRs, and memory lessons touching this code
+- `hybrid_search(natural_language_query)` — semantic + structural retrieval (for vague questions)
+
+A typical investigation now opens with one or two KG queries; grep is the fallback, not the default. Quote the tool name and the inputs you used in your evidence sections just as you would for any other command.
+
+**When to fall back to grep:** the symbol isn't yet in the graph (a new file authored inside this directive, a third-party library that isn't indexed, scratch code). Note in your report which KG tools you tried before falling back, so the auditor and the next researcher know where the graph is thin.
+
+See `docs/PRD.md#req-init-6` (FR-6 / FR-7) and `shared/mcp/tools/kg.py` for the full tool surface.
+
 ## Tier hint default
 **LOW** for routine work (file reads, log greps, DB SELECTs, counting). **MEDIUM** when synthesizing across many sources or reasoning about subtle bugs. Honor any explicit `## Tier hint` in the directive over this default.
 
