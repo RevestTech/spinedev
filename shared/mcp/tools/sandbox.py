@@ -10,9 +10,12 @@ for cost attribution + threat-model summary.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
 import shutil
 import subprocess
+import tempfile
 from decimal import Decimal
 from os import environ
 from time import perf_counter
@@ -199,47 +202,122 @@ def sandbox_run(payload: SandboxRunInput) -> ToolResponse:
                      "the TRON sandbox bundle is wired up."))
 
     # 3. Lazy-import TRON sandbox client; tolerate verify/ not on PYTHONPATH.
+    # Canonical entry point: verify.tron.services.sandbox_client.SandboxClient
+    # (the verify/tron/sandbox/ package hosts the FastAPI server; the client
+    # lives in services/). Adapter is local — no TRON code modified.
     try:
-        from verify.tron.sandbox import sandbox_client  # noqa: F401 (presence probe)
+        from verify.tron.services.sandbox_client import SandboxClient
     except Exception as exc:
-        logger.warning("sandbox_run: verify.tron.sandbox not importable: %s", exc)
+        logger.warning("sandbox_run: TRON SandboxClient not importable: %s", exc)
         return _err(code="sandbox_not_available", retryable=False, sandbox_used=False,
-            message=("verify.tron.sandbox not importable — wire verify/ onto "
-                     "PYTHONPATH (STORY-8.2.x) or install the sandbox bundle."))
+            message=("verify.tron.services.sandbox_client not importable — wire "
+                     "verify/ onto PYTHONPATH (STORY-8.2.x) or install the bundle."))
 
-    # 4. Build TRON request + execute.
-    # TODO(STORY-3.5.2): wire to TRON's actual sandbox_client.run(...) signature
-    # once the lifted package settles under verify/tron/sandbox/. Current TRON
-    # entry point is ``verify.tron.services.sandbox_client.SandboxClient`` with
-    # async ``run_python`` / ``run_bash`` returning ``{exit_code, output, error,
-    # duration_ms}`` — adapter needs to (a) honor ``setup_commands`` (prepend
-    # to script), (b) translate ``network`` -> docker network_mode, (c) mount
-    # ``files`` read-only, (d) pass ``seccomp_profile`` via security_opt, and
-    # (e) capture cgroup ``memory.peak`` + cumulative cpu-acct. Stubbing now
-    # so the MCP contract is right and callers can integrate.
+    # 4. Mismatched-surface guards — TRON doesn't model these yet (refined TODOs).
+    if payload.language == "node":
+        return _err(code="unsupported_language", retryable=False, sandbox_used=False,
+            message="TRON sandbox supports python|bash|shell only; node not wired.")
+    if payload.seccomp_profile is not None:
+        # TODO(STORY-3.5.2): pass-through once TRON SandboxClient exposes security_opt.
+        return _err(code="sandbox_unsupported_option", retryable=False, sandbox_used=False,
+            message="seccomp_profile override not supported by current TRON client.")
+
+    # 5. Map Spine inputs onto TRON's surface.
+    # network: Spine has no "isolated" tier in TRON; collapse to "none" and log.
+    _net_map = {"none": "none", "isolated": "none", "internet": "bridge"}
+    network_mode = _net_map[payload.network]
+    if payload.network == "isolated":
+        logger.info("sandbox_run: 'isolated' network downgraded to 'none' (TRON parity).")
+
+    # env + setup_commands: TRON's run_* takes no env kwarg — inline a preamble.
+    def _python_preamble() -> str:
+        lines: list[str] = []
+        if payload.env:
+            lines.append("import os")
+            lines.extend(f"os.environ[{k!r}] = {v!r}" for k, v in payload.env.items())
+        if payload.setup_commands:
+            lines.append("import subprocess")
+            lines.extend(f"subprocess.run({c!r}, shell=True, check=True)"
+                        for c in payload.setup_commands)
+        return ("\n".join(lines) + "\n") if lines else ""
+
+    def _bash_preamble() -> str:
+        lines = [f"export {k}={v!r}" for k, v in payload.env.items()]
+        lines.extend(payload.setup_commands)
+        return ("\n".join(lines) + "\n") if lines else ""
+
+    script = (_python_preamble() if payload.language == "python"
+              else _bash_preamble()) + payload.code
+
+    # files: stage inline path->contents into a tempdir, mount read-only at /workspace.
+    tmp_ctx = tempfile.TemporaryDirectory(prefix="spine-sandbox-") if payload.files else None
+    volumes: dict | None = None
+    workdir: str | None = None
+    if tmp_ctx is not None:
+        for rel, contents in payload.files.items():
+            dst = os.path.normpath(os.path.join(tmp_ctx.name, rel.lstrip("/")))
+            if not dst.startswith(tmp_ctx.name):
+                tmp_ctx.cleanup()
+                return _err(code="invalid_file_path", retryable=False, sandbox_used=False,
+                    message=f"file path escapes sandbox staging dir: {rel!r}")
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            with open(dst, "w", encoding="utf-8") as fh:
+                fh.write(contents)
+        volumes = {tmp_ctx.name: {"bind": "/workspace", "mode": "ro"}}
+        workdir = "/workspace"
+
+    memory_limit_str = f"{payload.memory_limit_mb}m"
+    cpu_quota = int(payload.cpu_limit_cores * 100_000)  # default period = 100_000us
+
+    # 6. Execute via TRON (async-to-sync bridge).
     t0 = perf_counter()
-    exit_code = 0
-    raw_stdout = ""
-    raw_stderr = ""
     timed_out = False
+    raw_stdout = raw_stderr = ""
+    exit_code = -1
+    tron_duration_ms = 0
+    try:
+        client = SandboxClient(default_memory_limit=memory_limit_str, default_cpu_quota=cpu_quota)
+        runner = client.run_python if payload.language == "python" else client.run_bash
+        kwargs: dict = {"script": script, "timeout": payload.timeout_seconds,
+                        "network_mode": network_mode, "workdir": workdir, "volumes": volumes}
+        if payload.language == "python":
+            kwargs.update(memory_limit=memory_limit_str, cpu_quota=cpu_quota)
+        result = asyncio.run(runner(**kwargs))
+        exit_code = int(result.get("exit_code", -1))
+        raw_stdout = result.get("output") or ""  # TRON combines stdout+stderr here.
+        err_field = result.get("error")
+        if err_field:
+            raw_stderr = str(err_field)
+            if "timeout" in raw_stderr.lower():
+                timed_out = True
+        tron_duration_ms = int(result.get("duration_ms") or 0)
+    except Exception as exc:
+        logger.exception("sandbox_run: TRON SandboxClient.run failed")
+        return _err(code="sandbox_execution_failed", retryable=True, sandbox_used=True,
+            message=f"TRON sandbox raised {type(exc).__name__}: {exc}")
+    finally:
+        if tmp_ctx is not None:
+            tmp_ctx.cleanup()
+
+    duration_ms = tron_duration_ms or int((perf_counter() - t0) * 1000)
+    # TODO(STORY-3.5.5): plumb cgroup memory.peak + cpu-acct through TRON.
     memory_peak_mb = 0
     cpu_seconds = 0.0
-    duration_ms = int((perf_counter() - t0) * 1000)
 
-    # 5. Compute cost. 6/7. Audit + envelope.
+    # 7. Compute cost. 8/9. Audit + envelope.
     cost_usd = _compute_cost(cpu_seconds, memory_peak_mb, duration_ms)
     audit_id = _audit_from_sandbox_run(
         actor=payload.actor, language=payload.language, exit_code=exit_code,
         timed_out=timed_out, cost_usd=cost_usd,
         cost_attribution=payload.cost_attribution)
+    status: ToolStatus = "ok" if exit_code == 0 and not timed_out else "error"
     out = SandboxRunOutput(
-        status="stub_implementation", exit_code=exit_code,
+        status=status, exit_code=exit_code,
         stdout=_cap(raw_stdout), stderr=_cap(raw_stderr),
         duration_ms=duration_ms, memory_peak_mb=memory_peak_mb,
         cpu_seconds=cpu_seconds, timed_out=timed_out, sandbox_used=True,
         error=None, cost_usd=cost_usd, audit_id=audit_id)
-    return ToolResponse(status="stub_implementation",
-                        data=out.model_dump(mode="json"), audit_id=audit_id)
+    return ToolResponse(status=status, data=out.model_dump(mode="json"), audit_id=audit_id)
 
 
 __all__: list[str] = [

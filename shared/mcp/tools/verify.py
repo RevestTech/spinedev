@@ -16,13 +16,16 @@ per-finding. Verify-phase costs land in ``spine_recording.costs`` with
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
 import shutil
 import subprocess
 from decimal import Decimal
+from pathlib import Path
 from time import perf_counter
 from typing import Any, Literal
-from uuid import UUID, uuid4
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -179,6 +182,91 @@ def _lookup_cost_cap(project_id: str) -> Decimal | None:
         return None
 
 
+#: 1 MiB hard cap per file passed to TRON (mirrors LLM context budget).
+_MAX_FILE_BYTES = 1 * 1024 * 1024
+#: Six default ISO agents (mirrors ``audit_executor._build_agent_manager``):
+#: ``(module_suffix, class_name, ISOSpecialization name, tools_required)``.
+_DEFAULT_ISO_SPECS: tuple[tuple[str, str, str, tuple[str, ...]], ...] = (
+    ("security_iso", "SecurityISO", "SECURITY", ("bandit", "semgrep")),
+    ("builder_iso", "BuilderISO", "BUILDER", ()),
+    ("performance_iso", "PerformanceISO", "PERFORMANCE", ()),
+    ("qa_iso", "QAISO", "QA", ()),
+    ("compliance_iso", "ComplianceISO", "COMPLIANCE", ()),
+    ("documentation_iso", "DocumentationISO", "DOCUMENTATION", ()),
+)
+
+
+def _load_file_contents(artifact: BuildArtifact) -> dict[str, str]:
+    """``{path: source}`` for ``AuditRequest.file_contents``. Missing files
+    logged + skipped; each file capped at 1 MiB; UTF-8 decode with replace."""
+    out: dict[str, str] = {}
+    for ch in artifact.code_changes:
+        if ch.change_type == "delete": continue
+        p = Path(ch.path)
+        if not p.is_file():
+            logger.warning("verify_audit: source file missing: %s", ch.path); continue
+        try: data = p.read_bytes()
+        except Exception as exc:
+            logger.warning("verify_audit: read failed %s: %s", ch.path, exc); continue
+        if len(data) > _MAX_FILE_BYTES:
+            data = data[:_MAX_FILE_BYTES] + b"\n# [spine: file truncated at 1 MiB]\n"
+        out[ch.path] = data.decode("utf-8", errors="replace")
+    return out
+
+
+def _tron_secrets_from_env() -> dict[str, str]:
+    """``ANTHROPIC_API_KEY``/``OPENAI_API_KEY`` env → TRON keyvault keys."""
+    s: dict[str, str] = {}
+    if ak := os.environ.get("ANTHROPIC_API_KEY", "").strip(): s["llm/anthropic-key"] = ak
+    if ok := os.environ.get("OPENAI_API_KEY", "").strip():    s["llm/openai-key"] = ok
+    return s
+
+
+def _run_async(coro: Any) -> Any:
+    """Sync→async bridge for the MCP entrypoint. No threads (would corrupt
+    TRON's per-agent async context vars)."""
+    try: return asyncio.run(coro)
+    except RuntimeError:  # pragma: no cover — only when an outer loop runs
+        loop = asyncio.new_event_loop()
+        try: return loop.run_until_complete(coro)
+        finally: loop.close()
+
+
+def _aggregate_cost(agent_metrics: list[dict[str, Any]]) -> Decimal:
+    """Sum per-agent ``llm_cost_usd`` from ``AgentMetrics.to_dict()`` rows."""
+    total = Decimal("0")
+    for m in agent_metrics or []:
+        try: total += Decimal(str(m.get("llm_cost_usd", 0) or 0))
+        except Exception: continue  # pragma: no cover
+    return total
+
+
+def _register_default_iso_agents(manager: Any, secrets: dict[str, str]) -> list[str]:
+    """Register the six default ISO agents onto ``manager`` (mirrors
+    ``audit_executor._build_agent_manager``). Returns registered agent_ids;
+    silently skips agents that fail to import so a partial swarm still runs."""
+    from verify.tron.agents.base import ISOConfig, ISOSpecialization, LLMProvider
+    from verify.tron.infra.llm.client import DEFAULT_ANTHROPIC_FAST_MODEL
+    provider = (LLMProvider.ANTHROPIC if "llm/anthropic-key" in secrets
+                else LLMProvider.OPENAI)
+    model = DEFAULT_ANTHROPIC_FAST_MODEL if provider == LLMProvider.ANTHROPIC else "gpt-4o"
+    registered: list[str] = []
+    for mod_suffix, cls_name, spec_name, tools in _DEFAULT_ISO_SPECS:
+        try:
+            cls = getattr(__import__(f"verify.tron.agents.{mod_suffix}",
+                                     fromlist=[cls_name]), cls_name)
+            cfg = ISOConfig(
+                specialization=getattr(ISOSpecialization, spec_name),
+                agent_id=f"{spec_name.lower()}-iso-spine",
+                model_provider=provider, model_name=model,
+                tools_required=tools, prompt_template_id=f"{spec_name.lower()}-v1")
+            manager.register_agent(cls(config=cfg, secrets=secrets))
+            registered.append(cfg.agent_id)
+        except Exception as exc:
+            logger.warning("verify_audit: skip ISO %s: %s", cls_name, exc)
+    return registered
+
+
 def _persist_findings(*, actor: str, artifact: BuildArtifact,
         findings: list[Finding], summary: dict[str, Any], cost_usd: Decimal,
         pass_fail: PassFail, pipeline_version: str | None) -> UUID:
@@ -301,37 +389,64 @@ def verify_audit(payload: VerifyAuditInput) -> ToolResponse:
     audit_request_kwargs["cost_cap_usd"] = (
         float(cost_cap) if cost_cap is not None else None)
 
-    # 5. Run the audit.
-    # TODO(STORY-8.5.1): wire to AuditManager.run_audit() actual signature once
-    # verify/tron/agents/manager.py settles. Required pieces:
-    #   (a) load file_contents for each artifact.code_changes path from the
-    #       working tree or artifact-store handle the orchestrator passes in,
-    #   (b) load TRON secrets via shared/secrets/keyvault and construct
-    #       AuditManager(secrets=...),
-    #   (c) register ISO agents declared in blueprint.iso_agents (or default
-    #       six-ISO swarm) on the manager,
-    #   (d) await manager.run_audit(AuditRequest(**audit_request_kwargs)) from
-    #       this sync MCP entrypoint via asyncio.run / a thread executor,
-    #   (e) capture metadata: layers actually run, sandbox exec flag, cross-LLM
-    #       consensus, calibration band (from Platt scaling rollup).
-    # Returning structurally-correct envelope so callers can integrate today.
+    # 5. Run the audit. TRON's AuditRequest: project_id, audit_run_id,
+    #    file_contents, languages, workspace_root, check_types. Sandbox +
+    #    cross-LLM are layered internally; cost cap enforced by Spine post-hoc.
+    secrets = _tron_secrets_from_env()
+    if not secrets:
+        return _error_envelope(code="tron_keys_missing", retryable=False, audit_id=audit_id,
+            message="Neither ANTHROPIC_API_KEY nor OPENAI_API_KEY in env — "
+                    "TRON AuditManager requires at least one LLM provider key.",
+            duration_ms=int((perf_counter() - t0) * 1000))
+    file_contents = _load_file_contents(payload.build_artifact)
+    if not file_contents:
+        return _error_envelope(code="no_source_files", retryable=False, audit_id=audit_id,
+            message="0 readable source files from BuildArtifact.code_changes.",
+            duration_ms=int((perf_counter() - t0) * 1000))
     tron_findings: list[Any] = []
-    layers_run: list[str] = list(_TRON_LAYERS[:2])   # always: scanners + ISO swarm
-    if effective_sandbox:
-        layers_run.append(_TRON_LAYERS[2])
-    if payload.cross_llm_validation:
-        layers_run.append(_TRON_LAYERS[3])
+    layers_run: list[str] = list(_TRON_LAYERS[:2])
+    if effective_sandbox: layers_run.append(_TRON_LAYERS[2])
+    if payload.cross_llm_validation: layers_run.append(_TRON_LAYERS[3])
     cross_llm_consensus = False
     calibration_band: str | None = None
+    agent_metrics: list[dict[str, Any]] = []
+    try:
+        from verify.tron.agents.manager import AuditManager, AuditRequest
+        from verify.tron.schemas.verification import VulnerabilityType
+        manager = AuditManager(secrets=secrets)
+        if not _register_default_iso_agents(manager, secrets):
+            return _error_envelope(code="iso_agents_unavailable", retryable=False,
+                audit_id=audit_id, message="No TRON ISO agents registered.",
+                duration_ms=int((perf_counter() - t0) * 1000))
+        valid = {v.value for v in VulnerabilityType}
+        check_types = ([VulnerabilityType(ct) for ct in payload.blueprint.check_types
+                        if ct in valid] or None) if payload.blueprint.check_types else None
+        # Spine project_id is str; TRON wants UUID — parse or derive uuid5.
+        try: tron_project_id = UUID(payload.project_id)
+        except (ValueError, AttributeError):
+            tron_project_id = uuid5(NAMESPACE_URL, f"spine.project:{payload.project_id}")
+        audit_result = _run_async(manager.run_audit(AuditRequest(
+            project_id=tron_project_id, audit_run_id=audit_id,
+            file_contents=file_contents,
+            languages=audit_request_kwargs["languages"],
+            check_types=check_types)))
+        tron_findings = list(getattr(audit_result, "findings", []) or [])
+        agent_metrics = list(getattr(audit_result, "agent_metrics", []) or [])
+        for cv in (getattr(audit_result, "cross_validations", []) or []):
+            if getattr(getattr(cv, "consensus", None), "value", "") == "confirmed":
+                cross_llm_consensus = True; break
+        calibration_band = getattr(audit_result, "calibration_band", None)
+    except Exception as exc:
+        logger.exception("verify_audit: TRON AuditManager.run_audit failed")
+        return _error_envelope(code="tron_audit_failed", retryable=True, audit_id=audit_id,
+            message=f"TRON AuditManager.run_audit raised: {exc!s}",
+            duration_ms=int((perf_counter() - t0) * 1000))
 
     # 6. Map TRON FindingOutput -> Spine Finding.
     findings = [_map_tron_finding(tf) for tf in tron_findings]
 
-    # 7. Cost rollup.
-    # TODO(STORY-8.5.1): sum per-finding cost from AuditResult.agent_metrics +
-    # add cross-LLM + Platt-calibration costs from their dedicated metadata
-    # buckets so audit rollup matches V16 schema.
-    cost_usd = Decimal("0")
+    # 7. Cost rollup — sum per-agent LLM cost from AgentMetrics.to_dict().
+    cost_usd = _aggregate_cost(agent_metrics)
 
     # 8. Decide pass/fail.
     pass_fail = _decide_pass_fail(findings)
@@ -353,8 +468,8 @@ def verify_audit(payload: VerifyAuditInput) -> ToolResponse:
         findings=findings, summary=summary, cost_usd=cost_usd,
         pass_fail=pass_fail, pipeline_version=payload.pipeline_version)
 
-    # 10. Envelope.
-    status: ToolStatus = "stub_implementation" if not tron_findings else "ok"
+    # 10. Envelope. TRON ran successfully — zero findings is still a real audit.
+    status: ToolStatus = "ok"
     result = VerifyFindings(
         status=status, pass_fail=pass_fail, findings=findings,
         layers_run=layers_run, sandbox_executed=effective_sandbox,

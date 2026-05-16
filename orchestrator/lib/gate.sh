@@ -39,27 +39,45 @@ _log() { printf '%s gate.sh %s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "${*:
 _j() { printf '%s' "$1" | sed -n "s/.*\"$2\":$3.*/\1/p"; }
 
 # _load_gate_config <phase> → JSON cfg object (gate, role_lead, artifact,
-# rollback_to, required_approvers[], min_approvers, auto_advance). Reads
-# phases.yaml via transition.sh's _phase_field_* helpers.
+# rollback_to, required_approvers[], min_approvers, min_approvals,
+# auto_advance). STORY-1.4.6: required_approvers may carry principal
+# patterns (role:/user:/group:); min_approvals is the runtime name and
+# defaults to min_approvers; auto_advance defaults true.
 _load_gate_config() {
-  local phase="$1" gate rl art rb apps mn aa arr
+  local phase="$1" gate rl art rb apps mn ma aa arr
   gate="$(_phase_field_scalar "$phase" gate)"
   rl="$(_phase_field_scalar "$phase" role_lead)"
   art="$(_phase_field_scalar "$phase" artifact)"
   rb="$(_phase_field_list "$phase" rollback_to | awk '{print $1}')"
   apps="$(_phase_field_list "$phase" required_approvers)"
   mn="$(_phase_field_scalar "$phase" min_approvers)"
+  ma="$(_phase_field_scalar "$phase" min_approvals)"
   aa="$(_phase_field_scalar "$phase" auto_advance)"
   [[ -z "$aa" ]] && aa="true"
   # Use a subshell IFS=' ' so word-splitting works (file-level IFS=\n\t).
   local n_apps
   n_apps="$(IFS=' '; set -- $apps; printf '%s' "$#")"
-  [[ -z "$mn" && -n "$apps" ]] && mn="$n_apps"
-  [[ -z "$mn" ]] && mn="1"
+  # min_approvals wins if both set; else fall back to min_approvers; else
+  # use len(required_approvers) when the list is non-empty; else 1.
+  [[ -z "$ma" ]] && ma="$mn"
+  [[ -z "$ma" && -n "$apps" ]] && ma="$n_apps"
+  [[ -z "$ma" ]] && ma="1"
+  [[ -z "$mn" ]] && mn="$ma"        # keep min_approvers populated for old readers
   arr="[]"
   [[ -n "$apps" ]] && arr="[$(IFS=' '; set -- $apps; printf '"%s",' "$@" | sed 's/,$//')]"
-  printf '{"gate":"%s","role_lead":"%s","artifact":"%s","rollback_to":"%s","required_approvers":%s,"min_approvers":%s,"auto_advance":%s}\n' \
-    "$gate" "$rl" "$art" "$rb" "$arr" "$mn" "$aa"
+  printf '{"gate":"%s","role_lead":"%s","artifact":"%s","rollback_to":"%s","required_approvers":%s,"min_approvers":%s,"min_approvals":%s,"auto_advance":%s}\n' \
+    "$gate" "$rl" "$art" "$rb" "$arr" "$mn" "$ma" "$aa"
+}
+
+# _match_principal <approver> <space-separated-required> — STORY-1.4.6.
+# Exact match wins; bare approver also matches `user:<approver>`. Prints
+# the matched pattern (for dedup), non-zero exit on miss.
+_match_principal() {
+  local approver="$1" req="$2" p
+  for p in $req; do
+    [[ "$p" == "$approver" || "$p" == "user:$approver" ]] && { printf '%s' "$p"; return 0; }
+  done
+  return 1
 }
 
 # Invoke approval.py — prefer exec bit when present (transition.sh style),
@@ -69,23 +87,30 @@ _approval_py() {
   else python3 "$APPROVAL_PY" "$@"; fi
 }
 
-# Distinct approvers whose token survives HMAC verify (skips tampered rows).
+# Distinct approvers whose token survives HMAC verify (skips tampered).
+# Plain mode emits "<total_valid>". with-matches mode (STORY-1.4.6) emits
+# "<valid>|<matched_required>|<approvers_csv>|<matched_csv>".
 _count_valid_approvals() {
-  local pid="$1" phase="$2" line token approver seen=0 set=""
+  local pid="$1" phase="$2" mode="${3:-plain}" req="${4:-}"
+  local line token approver seen=0 matched=0 set="" mset="" mp=""
   while IFS= read -r line; do
     [[ -z "$line" ]] && continue
     token="${line%%|*}"; approver="${line#*|}"
-    if [[ -n "$token" ]]; then
-      _approval_py verify --token "$token" --project-id "$pid" --phase "$phase" \
-        >/dev/null 2>&1 || continue
-    fi
-    [[ ",$set," != *",$approver,"* ]] && { set="${set:+$set,}$approver"; seen=$((seen+1)); }
+    [[ -n "$token" ]] && { _approval_py verify --token "$token" --project-id "$pid" \
+        --phase "$phase" >/dev/null 2>&1 || continue; }
+    [[ ",$set," == *",$approver,"* ]] && continue
+    set="${set:+$set,}$approver"; seen=$((seen+1))
+    [[ -z "$req" ]] && continue
+    mp="$(_match_principal "$approver" "$req")" || continue
+    [[ ",$mset," == *",$mp,"* ]] && continue
+    mset="${mset:+$mset,}$mp"; matched=$((matched+1))
   done < <(_psql <<SQL 2>/dev/null || true
 SELECT COALESCE(token,'')||'|'||approver FROM spine_lifecycle.approval
  WHERE project_id=$pid AND phase='$(_sql_esc "$phase")' AND decision='approved'
    AND (expires_at IS NULL OR expires_at>NOW()) ORDER BY granted_at;
 SQL
 )
+  [[ "$mode" == "with-matches" ]] && { printf '%s|%s|%s|%s' "$seen" "$matched" "$set" "$mset"; return; }
   printf '%s' "$seen"
 }
 
@@ -108,41 +133,68 @@ _rollback_target_for() {
 }
 
 # ─── STORY-1.4.1 — status ────────────────────────────────────────────
+# STORY-1.4.6: surfaces per-required-principal progress + still_needed so
+# UI can render "2/3 required approvers signed".
 gate_status() {
   local pid="${1:-}"
   [[ -z "$pid" ]] && { _err_json "invalid_input" "status requires <project_id>"; return 2; }
-  local phase cfg gate art req mn rcv valid satisfied="false"
+  local phase cfg gate art req mn ma rcv combined valid matched satisfied="false"
+  local req_list="" req_progress="[]" still_needed="0" rest="" mcsv="" p sep="" sig
   phase="$(_current_phase "$pid")" || { _err_json "project_not_found" "pid=$pid"; return 2; }
   cfg="$(_load_gate_config "$phase")"
   gate="$(_j "$cfg" gate '"\([^"]*\)"')"; art="$(_j "$cfg" artifact '"\([^"]*\)"')"
   req="$(_j "$cfg" required_approvers '\(\[[^]]*\]\)')"
   mn="$(_j "$cfg" min_approvers '\([0-9]*\)')"
+  ma="$(_j "$cfg" min_approvals '\([0-9]*\)')"
   rcv="$(_psql <<SQL 2>/dev/null | tr '\n' ',' | sed 's/,$//'
 SELECT DISTINCT approver FROM spine_lifecycle.approval WHERE project_id=$pid
  AND phase='$(_sql_esc "$phase")' AND decision='approved'
  AND (expires_at IS NULL OR expires_at>NOW()) ORDER BY 1;
 SQL
 )"
-  valid="$(_count_valid_approvals "$pid" "$phase")"
-  { [[ -z "$gate" || "$gate" == "auto" ]] || (( valid >= ${mn:-1} )); } && satisfied="true"
-  printf '{"ok":true,"project_id":%s,"phase":"%s","gate":"%s","artifact":"%s","required_approvers":%s,"min_approvers":%s,"approvals_received":"%s","valid_approvals":%s,"satisfied":%s}\n' \
-    "$pid" "$phase" "${gate:-none}" "$art" "${req:-[]}" "${mn:-1}" "$rcv" "$valid" "$satisfied"
+  req_list="$(printf '%s' "${req:-[]}" | tr -d '[]"' | tr ',' ' ')"
+  combined="$(_count_valid_approvals "$pid" "$phase" with-matches "$req_list")"
+  valid="${combined%%|*}"; rest="${combined#*|}"
+  matched="${rest%%|*}"; rest="${rest#*|}"; mcsv="${rest#*|}"
+  if [[ -z "$gate" || "$gate" == "auto" ]]; then satisfied="true"
+  elif [[ -n "$req_list" ]]; then
+    (( matched >= ${ma:-1} )) && satisfied="true"
+    still_needed=$(( ma - matched )); (( still_needed < 0 )) && still_needed=0
+    req_progress="["
+    for p in $req_list; do
+      sig="false"; [[ ",$mcsv," == *",$p,"* ]] && sig="true"
+      req_progress+="${sep}{\"principal\":\"$p\",\"signed\":$sig}"; sep=","
+    done
+    req_progress+="]"
+  else
+    (( valid >= ${ma:-1} )) && satisfied="true"
+    still_needed=$(( ma - valid )); (( still_needed < 0 )) && still_needed=0
+  fi
+  printf '{"ok":true,"project_id":%s,"phase":"%s","gate":"%s","artifact":"%s","required_approvers":%s,"min_approvers":%s,"min_approvals":%s,"approvals_received":"%s","valid_approvals":%s,"matched_required":%s,"still_needed":%s,"required_progress":%s,"satisfied":%s}\n' \
+    "$pid" "$phase" "${gate:-none}" "$art" "${req:-[]}" "${mn:-1}" "${ma:-1}" "$rcv" "$valid" "$matched" "$still_needed" "$req_progress" "$satisfied"
 }
 
 # ─── STORY-1.4.4 (a) — approve ───────────────────────────────────────
+# STORY-1.4.6: validates the approver against required_approvers principal
+# patterns (role:/user:/group:/bare). Gate is satisfied only when the count
+# of distinct *matched required principals* >= min_approvals.
 gate_approve() {
   local pid="${1:-}" approver="${2:-}" notes="${3:-}"
   [[ -z "$pid" || -z "$approver" ]] && {
     _err_json "invalid_input" "approve requires <project_id> <approver>"; return 2; }
-  local phase cfg req mn aa args resp aid valid satisfied="false" advanced="false" new=""
+  local phase cfg req mn ma aa args resp aid combined valid matched rest=""
+  local req_list="" still_needed="0" satisfied="false" advanced="false" new=""
   phase="$(_current_phase "$pid")" || { _err_json "project_not_found" "pid=$pid"; return 2; }
   cfg="$(_load_gate_config "$phase")"
   req="$(_j "$cfg" required_approvers '\(\[[^]]*\]\)')"
-  mn="$(_j "$cfg" min_approvers '\([0-9]*\)')"; aa="$(_j "$cfg" auto_advance '\([a-z]*\)')"
+  mn="$(_j "$cfg" min_approvers '\([0-9]*\)')"
+  ma="$(_j "$cfg" min_approvals '\([0-9]*\)')"
+  aa="$(_j "$cfg" auto_advance '\([a-z]*\)')"
+  req_list="$(printf '%s' "${req:-[]}" | tr -d '[]"' | tr ',' ' ')"
 
-  if [[ "$req" != "[]" && -n "$req" && ",$req," != *"\"$approver\""* ]]; then
-    _err_json "approver_not_authorized" "approver '$approver' not in required set" \
-      "{\"required\":$req}"; return 2
+  if [[ -n "$req_list" ]] && ! _match_principal "$approver" "$req_list" >/dev/null; then
+    _err_json "hmac_invalid" "approver '$approver' does not match any required principal" \
+      "{\"required\":$req}"; return 4
   fi
 
   args=(grant --project-id "$pid" --phase "$phase" --approver "$approver")
@@ -152,14 +204,21 @@ gate_approve() {
   fi
   aid="$(printf '%s' "$resp" | sed -n 's/.*"approval_id":[[:space:]]*\([0-9]*\).*/\1/p')"
 
-  valid="$(_count_valid_approvals "$pid" "$phase")"
-  (( valid >= ${mn:-1} )) && satisfied="true"
+  combined="$(_count_valid_approvals "$pid" "$phase" with-matches "$req_list")"
+  valid="${combined%%|*}"; rest="${combined#*|}"; matched="${rest%%|*}"
+  if [[ -n "$req_list" ]]; then
+    (( matched >= ${ma:-1} )) && satisfied="true"
+    still_needed=$(( ma - matched )); (( still_needed < 0 )) && still_needed=0
+  else
+    (( valid >= ${ma:-1} )) && satisfied="true"
+    still_needed=$(( ma - valid )); (( still_needed < 0 )) && still_needed=0
+  fi
 
   if [[ "$satisfied" == "true" && "$aa" == "true" ]]; then
     new="$(_phase_field_list "$phase" next | awk '{print $1}')"
     if [[ -n "$new" ]] \
         && transition_execute "$pid" "$new" "gate.approve:$approver" \
-             "gate satisfied (approvals=$valid/${mn:-1})" >/dev/null; then
+             "gate satisfied (matched=$matched/${ma:-1})" >/dev/null; then
       advanced="true"
     elif [[ -n "$new" ]]; then
       _log WARN "approval recorded but transition $phase->$new failed pid=$pid"
@@ -167,8 +226,8 @@ gate_approve() {
   fi
 
   _gate_audit "$pid" "$phase" "approval_granted" "$approver" "approval_id=${aid:-?}"
-  printf '{"ok":true,"approval_id":%s,"gate_satisfied":%s,"phase_advanced":%s,"new_phase":"%s"}\n' \
-    "${aid:-null}" "$satisfied" "$advanced" "$new"
+  printf '{"ok":true,"approval_id":%s,"required_approvers":%s,"approvals_received":%s,"matched_required":%s,"still_needed":%s,"gate_satisfied":%s,"phase_advanced":%s,"new_phase":"%s","auto_advance":%s}\n' \
+    "${aid:-null}" "${req:-[]}" "$valid" "$matched" "$still_needed" "$satisfied" "$advanced" "$new" "${aa:-true}"
 }
 
 # ─── STORY-1.4.4 (b) — reject ────────────────────────────────────────

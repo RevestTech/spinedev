@@ -1,17 +1,17 @@
 """Knowledge-graph MCP tools.
 
 Tools from REQ-INIT-6 FR-6 (EPIC-6.5) plus the hybrid retrieval tool from
-FR-8 (EPIC-6.7). Real implementations live behind the ``spine_kg`` schema and
-LangChain ``GraphRetriever`` / ``MultiVectorRetriever`` wrappers. The following
-tools are wired through to Postgres: ``find_callers`` (STORY-6.5.2),
-``impact_radius`` (STORY-6.5.5), ``trace_dependency`` (STORY-6.5.3),
-``code_neighborhood`` (STORY-6.5.4), ``doc_for_region`` (STORY-6.5.6), and
-``who_owns`` (STORY-6.5.7). ``graph_query``, ``hybrid_search``, and
-``find_by_satisfies`` remain scaffolding pending their own stories.
+FR-8 (EPIC-6.7). The following tools are wired through to Postgres:
+``find_callers`` (STORY-6.5.2), ``impact_radius`` (STORY-6.5.5),
+``trace_dependency`` (STORY-6.5.3), ``code_neighborhood`` (STORY-6.5.4),
+``doc_for_region`` (STORY-6.5.6), ``who_owns`` (STORY-6.5.7),
+``find_by_satisfies`` (STORY-6.5.8), and ``hybrid_search`` (STORY-6.7.3 —
+embedding pipeline + RRF re-rank; see ``build/kg/embeddings/embedder_README.md``).
+``graph_query`` remains scaffolding pending its own story.
 
 Tools registered: ``graph_query``, ``find_callers``, ``trace_dependency``,
 ``code_neighborhood``, ``impact_radius``, ``doc_for_region``, ``who_owns``,
-``hybrid_search``.
+``find_by_satisfies``, ``hybrid_search``.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from shared.mcp.schemas import ToolResponse
+from shared.mcp.schemas import ToolResponse, ToolStatus
 from shared.mcp.tools import register_tool
 
 logger = logging.getLogger(__name__)
@@ -49,6 +49,19 @@ _DOC_RELEVANCE_ORDER = {
     "TESTS": 3,
     "DERIVED_FROM": 4,
     "TOUCHES": 5,
+}
+
+# Edges treated as "satisfies"-flavoured for find_by_satisfies (incoming on a
+# Spine-flow target node). TESTS/COVERS added per caller's include_tests.
+_SATISFIES_EDGES = ("SATISFIES", "DECIDED_BY")
+_TEST_EDGES = ("TESTS", "COVERS")
+_SATISFIES_RELEVANCE_ORDER = {"SATISFIES": 0, "DECIDED_BY": 1, "TESTS": 2, "COVERS": 3}
+
+# ID prefix → (node type, optional subtype). Unknown → type-agnostic lookup.
+_ID_PREFIX_MAP: dict[str, tuple[str, str | None]] = {
+    "INIT-": ("Initiative", None), "EPIC-": ("Epic", None), "STORY-": ("Story", None),
+    "REQ-": ("Document", "REQ"), "ADR-": ("Document", "ADR"),
+    "PRD-": ("Document", "PRD"), "TRD-": ("Document", "TRD"),
 }
 
 # psql column separator. Pipe `|` is psql's default for -A output but symbol
@@ -157,7 +170,27 @@ class HybridSearchInput(BaseModel):
     model_config = _FORBID
     project_id: str = Field(..., min_length=1)
     query: str = Field(..., min_length=1, description="Natural-language query.")
-    top_k: int = Field(default=10, ge=1, le=100)
+    repo: str = Field(..., min_length=1, description="Repo to query; fail loud if missing.")
+    limit: int = Field(default=20, ge=1, le=200)
+    semantic_weight: float = Field(default=0.5, ge=0.0, le=1.0,
+        description="0.0 = pure structural; 1.0 = pure semantic.")
+    structural_seed: str | None = Field(default=None,
+        description="Symbol/file anchoring the structural walk (optional).")
+    structural_radius: int = Field(default=2, ge=1, le=5)
+    commit_sha: str | None = Field(default=None, description="Point-in-time (NFR-6).")
+
+
+class FindBySatisfiesInput(BaseModel):
+    """Inputs for ``find_by_satisfies`` (STORY-6.5.8)."""
+
+    model_config = _FORBID
+    project_id: str = Field(..., min_length=1)
+    req_or_story_id: str = Field(..., min_length=1,
+        description="Spine-flow ID like REQ-INIT-1, STORY-6.5.2, EPIC-7.4, ADR-005.")
+    repo: str = Field(..., min_length=1, description="Repo to query; fail loud if missing.")
+    commit_sha: str | None = Field(default=None, description="Point-in-time snapshot (NFR-6).")
+    include_tests: bool = Field(default=True,
+        description="Include TESTS/COVERS edges from test nodes (default true).")
 
 
 # -- Output models (returned inside ToolResponse.data) ---------------------
@@ -308,6 +341,60 @@ class WhoOwnsOutput(BaseModel):
     status: str
     target: str
     owners: list[Owner]
+    query_latency_ms: int
+    audit_id: UUID
+
+
+class SatisfyingRegion(BaseModel):
+    """One code/test/doc region returned by ``find_by_satisfies``."""
+
+    model_config = _FORBID
+    node_id: str
+    name: str
+    type: str                  # Function | Method | Class | TestCase | Document
+    path: str
+    relevance: str             # SATISFIES | TESTS | DECIDED_BY | derived
+
+
+class FindBySatisfiesOutput(BaseModel):
+    """Structured payload for ``find_by_satisfies``."""
+
+    model_config = _FORBID
+    status: str
+    target_id: str
+    regions: list[SatisfyingRegion]
+    coverage_count: int
+    query_latency_ms: int
+    audit_id: UUID
+
+
+class HybridSearchResult(BaseModel):
+    """One ``hybrid_search`` row. semantic/structural_score = 0-1 display;
+    combined_score = RRF-blended; rationale = one-line "why this matched"."""
+
+    model_config = _FORBID
+    node_id: str
+    name: str
+    type: str
+    path: str
+    semantic_score: float
+    structural_score: float
+    combined_score: float
+    rationale: str
+
+
+class HybridSearchOutput(BaseModel):
+    """Structured payload for ``hybrid_search``. semantic/structural_count = per-
+    branch candidates; fused_count = post-RRF rows returned."""
+
+    model_config = _FORBID
+    status: ToolStatus
+    query: str
+    results: list[HybridSearchResult]
+    semantic_count: int
+    structural_count: int
+    fused_count: int
+    embedding_provider: str
     query_latency_ms: int
     audit_id: UUID
 
@@ -1242,21 +1329,241 @@ def who_owns(payload: WhoOwnsInput) -> ToolResponse:
     return ToolResponse(status="ok", data=out.model_dump(mode="json"), audit_id=audit_id)
 
 
+@register_tool(name="find_by_satisfies", input_model=FindBySatisfiesInput,
+               story="STORY-6.5.8",
+               description="Code/test regions claiming to satisfy a given REQ/STORY/EPIC (inverse of doc_for_region).",
+               tags=("kg",))
+def find_by_satisfies(payload: FindBySatisfiesInput) -> ToolResponse:
+    """Inverse of ``doc_for_region``: resolve a Spine-flow node from its ID prefix
+    (REQ/STORY/EPIC/INIT/ADR/PRD/TRD) then pull every incoming SATISFIES /
+    DECIDED_BY edge (plus TESTS / COVERS when ``include_tests=True``). Source
+    nodes are typically Functions/Methods/Classes/TestCases/Documents.
+    Deduplicated by (node_id, relevance); ordered by relevance rank.
+    """
+    _log("find_by_satisfies", payload.project_id)
+    started = time.perf_counter()
+    tid = payload.req_or_story_id
+
+    # 1) Resolve target node (ID-prefix-aware; falls back to type-agnostic).
+    prefix = next((p for p in _ID_PREFIX_MAP if tid.startswith(p)), None)
+    resolve_params: dict[str, Any] = {"target": tid, "repo": payload.repo}
+    if payload.commit_sha:
+        resolve_params["commit_sha"] = payload.commit_sha
+    type_clause = subtype_clause = ""
+    if prefix is not None:
+        ntype, sub = _ID_PREFIX_MAP[prefix]
+        type_clause = f"AND type = '{ntype}' "
+        if sub:
+            subtype_clause = "AND LOWER(COALESCE(subtype, '')) = LOWER(:'subtype') "
+            resolve_params["subtype"] = sub
+    resolve_rows = _run_psql_query(
+        "SELECT id FROM spine_kg.kg_node "
+        "WHERE (node_id = :'target' OR name = :'target') "
+        f"{type_clause}{subtype_clause}AND repo = :'repo' "
+        f"AND {_commit_filter(payload.commit_sha, 'kg_node')} "
+        "ORDER BY created_at DESC LIMIT 10;",
+        resolve_params,
+    )
+    target_id: int | None = None
+    if resolve_rows:
+        if len(resolve_rows) > 1:
+            logger.warning("kg_satisfies_target_ambiguous",
+                           extra={"target": tid, "repo": payload.repo,
+                                  "match_count": len(resolve_rows)})
+        try:
+            target_id = int(resolve_rows[0]["id"])
+        except (KeyError, ValueError):
+            target_id = None
+
+    if target_id is None:
+        latency_ms = int((time.perf_counter() - started) * 1000)
+        audit_id = _write_kg_audit("kg_query", tid,
+                                   {"tool": "find_by_satisfies",
+                                    "result": "target_not_found",
+                                    "repo": payload.repo})
+        out = FindBySatisfiesOutput(status="ok", target_id=tid, regions=[],
+                                    coverage_count=0, query_latency_ms=latency_ms,
+                                    audit_id=audit_id)
+        return ToolResponse(status="ok", data=out.model_dump(mode="json"),
+                            audit_id=audit_id)
+
+    # 2) Pull incoming satisfies-flavoured edges. include_tests toggles
+    # TESTS/COVERS; all values are constants -> safe to interpolate.
+    edge_types = list(_SATISFIES_EDGES) + (list(_TEST_EDGES) if payload.include_tests else [])
+    edge_types_sql = "(" + ",".join(f"'{t}'" for t in edge_types) + ")"
+    sql = (
+        "SELECT DISTINCT ON (n.id, e.type) "
+        "       n.node_id, COALESCE(n.name, n.node_id) AS name, n.type, "
+        "       COALESCE(n.path, '') AS path, e.type AS relevance "
+        "FROM spine_kg.kg_edge e "
+        "JOIN spine_kg.kg_node n ON n.id = e.from_node_id "
+        f"WHERE e.to_node_id = :target_id AND e.type IN {edge_types_sql} "
+        "  AND n.repo = :'repo' "
+        f"  AND {_commit_filter(payload.commit_sha, 'e')} "
+        f"  AND {_commit_filter(payload.commit_sha, 'n')} "
+        "ORDER BY n.id, e.type, n.created_at DESC LIMIT 1000;"
+    )
+    params: dict[str, Any] = {"target_id": target_id, "repo": payload.repo}
+    if payload.commit_sha:
+        params["commit_sha"] = payload.commit_sha
+    rows = _run_psql_query(sql, params)
+
+    regions: list[SatisfyingRegion] = []
+    seen: set[tuple[str, str]] = set()
+    for r in rows:
+        key = (r.get("node_id", ""), r.get("relevance", ""))
+        if key in seen:
+            continue
+        seen.add(key)
+        regions.append(SatisfyingRegion(
+            node_id=r.get("node_id", ""), name=r.get("name", ""),
+            type=r.get("type", ""), path=r.get("path", ""),
+            relevance=r.get("relevance", "")))
+    regions.sort(key=lambda x: (_SATISFIES_RELEVANCE_ORDER.get(x.relevance, 99),
+                                x.path, x.node_id))
+
+    latency_ms = int((time.perf_counter() - started) * 1000)
+    audit_id = _write_kg_audit("kg_query", tid,
+                               {"tool": "find_by_satisfies", "repo": payload.repo,
+                                "result_count": len(regions),
+                                "include_tests": payload.include_tests,
+                                "latency_ms": latency_ms})
+    out = FindBySatisfiesOutput(status="ok", target_id=tid, regions=regions,
+                                coverage_count=len(regions),
+                                query_latency_ms=latency_ms, audit_id=audit_id)
+    return ToolResponse(status="ok", data=out.model_dump(mode="json"),
+                        audit_id=audit_id)
+
+
+def _structural_walk(target_id: int, radius: int,
+                     commit_sha: str | None) -> list[tuple[int, int]]:
+    """N-hop undirected BFS from ``target_id``; flat ``[(node_id, dist), ...]``."""
+    nxt = "CASE WHEN e.from_node_id = h.nid THEN e.to_node_id ELSE e.from_node_id END"
+    sql = (f"WITH RECURSIVE hood AS (SELECT :target_id::bigint AS nid, 0 AS distance, "
+           f"ARRAY[:target_id::bigint] AS visited UNION ALL "
+           f"SELECT {nxt} AS nid, h.distance + 1, h.visited || {nxt} FROM hood h "
+           f"JOIN spine_kg.kg_edge e ON (e.from_node_id = h.nid OR e.to_node_id = h.nid) "
+           f"WHERE h.distance < :radius AND {_commit_filter(commit_sha, 'e')} "
+           f"AND NOT (({nxt}) = ANY(h.visited))) "
+           "SELECT nid, MIN(distance) AS d FROM hood WHERE nid <> :target_id "
+           "GROUP BY nid ORDER BY d ASC, nid ASC LIMIT 500;")
+    params: dict[str, Any] = {"target_id": target_id, "radius": radius}
+    if commit_sha:
+        params["commit_sha"] = commit_sha
+    out: list[tuple[int, int]] = []
+    for r in _run_psql_query(sql, params):
+        try:
+            out.append((int(r["nid"]), int(r["d"])))
+        except (KeyError, ValueError):
+            continue
+    return out
+
+
+def _infer_seed_from_query(query: str, repo: str,
+                           commit_sha: str | None) -> int | None:
+    """Longest identifier-shaped token resolved as a symbol/file; None on miss."""
+    import re as _re
+    toks = sorted(set(_re.findall(r"[A-Za-z_][A-Za-z0-9_]{2,}", query)),
+                  key=len, reverse=True)
+    for tok in toks[:5]:
+        if (nid := _resolve_any_to_node_id(tok, repo, commit_sha)) is not None:
+            return nid
+    return None
+
+
 @register_tool(name="hybrid_search", input_model=HybridSearchInput, story="STORY-6.7.3",
-               description="LangChain-backed hybrid graph + vector retrieval over the KG.", tags=("kg", "rag"))
+               description="Hybrid graph + vector retrieval over the KG with RRF re-rank.",
+               tags=("kg", "rag"))
 def hybrid_search(payload: HybridSearchInput) -> ToolResponse:
-    """Stub. TODO STORY-6.7.3: real implementation."""
+    """Vector + graph retrieval with Reciprocal Rank Fusion. (1) Embed query
+    via configured provider (lazy ``build.kg.embeddings``); semantic
+    candidates = ``cosine_search`` (3× ``limit``). (2) Structural = N-hop BFS
+    from ``structural_seed`` or token inferred from query. (3) RRF fusion:
+    ``sem_w/(60+r_sem) + (1-sem_w)/(60+r_struct)``."""
     _log("hybrid_search", payload.project_id)
-    return _stub({"results": []})
+    started = time.perf_counter()
+    try:  # Lazy import keeps ML deps out of MCP server's hot-import path.
+        from build.kg.embeddings import EmbedderRunner, select_provider  # type: ignore
+        provider = select_provider({})
+        runner = EmbedderRunner(provider, _db_url())
+        q_vec = provider.embed_one(payload.query)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("hybrid_search_embed_failed", extra={"err": str(exc)[:200]})
+        latency_ms = int((time.perf_counter() - started) * 1000)
+        audit_id = _write_kg_audit("kg_query", payload.query,
+            {"tool": "hybrid_search", "result": "embed_failed",
+             "repo": payload.repo, "err": str(exc)[:200]})
+        out = HybridSearchOutput(status="error", query=payload.query, results=[],
+            semantic_count=0, structural_count=0, fused_count=0,
+            embedding_provider="unknown", query_latency_ms=latency_ms, audit_id=audit_id)
+        return ToolResponse(status="error", data=out.model_dump(mode="json"), audit_id=audit_id)
+
+    # 1) Semantic branch — top-3× candidates for fusion headroom.
+    sem_hits = runner.cosine_search(q_vec, limit=max(payload.limit * 3, 30),
+                                    repo=payload.repo)
+    sem_rank = {nid: r for r, (nid, _) in enumerate(sem_hits)}
+    sem_dist = dict(sem_hits)
+
+    # 2) Structural branch — explicit seed > inferred token > skip.
+    seed_id = (_resolve_any_to_node_id(payload.structural_seed, payload.repo,
+                                       payload.commit_sha)
+               if payload.structural_seed
+               else _infer_seed_from_query(payload.query, payload.repo, payload.commit_sha))
+    struct_hits = (_structural_walk(seed_id, payload.structural_radius,
+                                    payload.commit_sha) if seed_id is not None else [])
+    struct_rank = {nid: r for r, (nid, _) in enumerate(struct_hits)}
+    struct_dist = dict(struct_hits)
+
+    # 3) RRF fusion. Cosine distance ∈ [0, 2]; display score = 1 - dist/2.
+    k, w_s, w_g = 60.0, payload.semantic_weight, 1.0 - payload.semantic_weight
+    radius = max(payload.structural_radius, 1)
+    scored = sorted(
+        ((nid,
+          max(0.0, 1.0 - sem_dist.get(nid, 2.0) / 2.0) if nid in sem_rank else 0.0,
+          max(0.0, 1.0 - struct_dist.get(nid, radius) / radius) if nid in struct_rank else 0.0,
+          (w_s / (k + sem_rank[nid]) if nid in sem_rank else 0.0) +
+          (w_g / (k + struct_rank[nid]) if nid in struct_rank else 0.0))
+         for nid in set(sem_rank) | set(struct_rank)),
+        key=lambda r: r[3], reverse=True)
+    top = scored[: payload.limit]
+
+    # 4) Hydrate metadata + build per-row rationale.
+    info = _fetch_node_info([nid for nid, *_ in top])
+    def _why(nid: int) -> str:
+        s, g = nid in sem_rank, nid in struct_rank
+        if s and g:
+            return f"both — semantic rank {sem_rank[nid]+1}, structural rank {struct_rank[nid]+1}"
+        return (f"matched semantically (rank {sem_rank[nid]+1})" if s
+                else f"in code neighborhood (rank {struct_rank[nid]+1})")
+    results = [HybridSearchResult(
+        node_id=(m := info.get(nid, {})).get("node_id", str(nid)),
+        name=m.get("name", ""), type=m.get("type", ""), path=m.get("path", ""),
+        semantic_score=round(sd, 4), structural_score=round(gd, 4),
+        combined_score=round(c, 6), rationale=_why(nid))
+        for nid, sd, gd, c in top]
+
+    latency_ms = int((time.perf_counter() - started) * 1000)
+    audit_id = _write_kg_audit("kg_query", payload.query,
+        {"tool": "hybrid_search", "repo": payload.repo,
+         "semantic_count": len(sem_hits), "structural_count": len(struct_hits),
+         "fused_count": len(results), "semantic_weight": payload.semantic_weight,
+         "embedding_provider": provider.model_name, "latency_ms": latency_ms})
+    out = HybridSearchOutput(status="ok", query=payload.query, results=results,
+        semantic_count=len(sem_hits), structural_count=len(struct_hits),
+        fused_count=len(results), embedding_provider=provider.model_name,
+        query_latency_ms=latency_ms, audit_id=audit_id)
+    return ToolResponse(status="ok", data=out.model_dump(mode="json"), audit_id=audit_id)
 
 
 __all__: list[str] = [
     "CallerInfo", "CodeNeighborhoodInput", "CodeNeighborhoodOutput",
     "DependencyPath", "DocForRegionInput", "DocForRegionOutput", "DocReference",
+    "FindBySatisfiesInput", "FindBySatisfiesOutput",
     "FindCallersInput", "FindCallersOutput", "GraphQueryInput",
-    "HybridSearchInput", "ImpactedNode", "ImpactRadiusInput", "ImpactRadiusOutput",
-    "NeighborEdge", "NeighborNode", "Owner", "TraceDependencyInput",
-    "TraceDependencyOutput", "WhoOwnsInput", "WhoOwnsOutput",
-    "code_neighborhood", "doc_for_region", "find_callers", "graph_query",
-    "hybrid_search", "impact_radius", "trace_dependency", "who_owns",
+    "HybridSearchInput", "HybridSearchOutput", "HybridSearchResult",
+    "ImpactedNode", "ImpactRadiusInput", "ImpactRadiusOutput",
+    "NeighborEdge", "NeighborNode", "Owner", "SatisfyingRegion",
+    "TraceDependencyInput", "TraceDependencyOutput", "WhoOwnsInput", "WhoOwnsOutput",
+    "code_neighborhood", "doc_for_region", "find_by_satisfies", "find_callers",
+    "graph_query", "hybrid_search", "impact_radius", "trace_dependency", "who_owns",
 ]

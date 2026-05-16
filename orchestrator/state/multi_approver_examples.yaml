@@ -1,0 +1,78 @@
+# multi_approver_examples.yaml — STORY-1.4.6 reference configurations.
+#
+# These are NOT loaded by the orchestrator at boot. They are paste-ready
+# snippets that an operator drops into `phases.yaml` (or, more typically,
+# into an org bundle's `pipeline_overrides.gates` block — see
+# bundle-schema.yaml line 110) to upgrade a stock `user_approval` gate
+# to a multi-approver gate.
+#
+# When to use multi_approver vs single
+# ────────────────────────────────────
+# Default `user_approval` (one signer, distinct from the producing role)
+# satisfies most P0/P1 work. Reach for `multi_approver` when:
+#
+#   1. Regulatory: SOX/SOC2/HIPAA require independent sign-off (CTO +
+#      Compliance on architecture / TRD changes).
+#   2. Blast radius: production release of a customer-facing system
+#      where rollback is expensive — pair owner + operator.
+#   3. Security floor: any phase touching `iso_agents_required` or
+#      banned-pattern overrides should require Security + one more.
+#
+# Principal patterns (matched in gate.sh::_match_principal)
+# ─────────────────────────────────────────────────────────
+#   role:<role>     # exact role name from the orchestrator's role set
+#   user:<id>       # specific human (overrides role membership)
+#   group:<id>      # group alias resolved by the policy layer
+#
+# A bare approver passed to `gate.sh approve` matches `user:<approver>`
+# automatically, so existing single-signer flows keep working.
+
+trd_with_compliance_signoff:
+  id: technical_review
+  label: "Technical Review — CTO + Compliance"
+  subsystem: plan
+  artifact: trd
+  role_lead: architect
+  gate: multi_approver
+  required_approvers: [role:cto, role:compliance]
+  min_approvals: 2          # both must sign (default = len(required_approvers))
+  auto_advance: true        # advance the moment both sigs arrive
+  next: [build_in_progress]
+  rollback_to: [plan_in_progress]
+
+trd_security_floor:
+  id: technical_review
+  label: "Technical Review — any 2 of CTO/Security/Compliance"
+  subsystem: plan
+  artifact: trd
+  role_lead: architect
+  gate: multi_approver
+  required_approvers: [role:cto, role:security, role:compliance]
+  min_approvals: 2          # any 2 of 3 (CTO + one other)
+  auto_advance: false       # admin must explicitly advance
+  next: [build_in_progress]
+  rollback_to: [plan_in_progress]
+
+release_with_change_approval:
+  id: released
+  label: "Release — owner + operator co-sign"
+  subsystem: build
+  artifact: release_notes
+  role_lead: operator
+  gate: multi_approver
+  required_approvers: [user:khash, role:operator]
+  min_approvals: 2          # owner + operator both sign
+  auto_advance: true
+  next: [operate]
+  rollback_to: [acceptance]
+
+# Runtime contract notes
+# ──────────────────────
+# * `min_approvers` (legacy) still works; `min_approvals` wins when both set.
+# * Same human can only contribute one signature regardless of how many
+#   patterns they could match (deduped by approver string).
+# * Approvers outside `required_approvers` are rejected with exit code 4
+#   (`hmac_invalid`) — reuses the existing "tampered token" branch.
+# * `auto_advance: false` suits gates whose advance is hard to undo
+#   (prod deploy, schema migration); signatures still accumulate, and an
+#   operator confirms via `gate.sh status <pid>` then advances manually.

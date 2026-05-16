@@ -15,13 +15,16 @@
 # ISO-8601 stderr logs, JSON stdout, exit-code map (see _err_json calls).
 #
 # CLI:
-#   install_bundle.sh install  <url|path|git+repo> [--no-inject] [--dry-run]
-#   install_bundle.sh validate <path>
+#   install_bundle.sh install     <url|path|git+repo> [--no-inject] [--dry-run]
+#   install_bundle.sh validate    <path>
 #   install_bundle.sh list
-#   install_bundle.sh activate <bundle_id> [--project <project_id>]
-#   install_bundle.sh status
-#   install_bundle.sh remove   <bundle_id>
-#   install_bundle.sh inject   [--project <project_id>] [--role <role>]
+#   install_bundle.sh activate    <bundle_id> [--project <project_id>]
+#   install_bundle.sh status      [--format text|json]
+#   install_bundle.sh drift-check [<bundle_id>] [--format text|json]   # STORY-2.1.5
+#   install_bundle.sh remove      <bundle_id>
+#   install_bundle.sh inject      [--project <project_id>] [--role <role>]
+#
+# Exit codes (status / drift-check): 0=in_sync, 2=drift_detected, 3=error.
 
 set -euo pipefail
 IFS=$'\n\t'
@@ -33,6 +36,7 @@ ACTIVE_DIR="$SPINE_HOME/active"
 VALIDATOR_PY="${SPINE_VALIDATOR_PY:-$SCRIPT_DIR/validator.py}"
 INJECTOR_PY="${SPINE_INJECTOR_PY:-$SCRIPT_DIR/prompt_injector.py}"
 AUDIT_PY="${SPINE_AUDIT_CLI:-$SCRIPT_DIR/../audit/audit_record.py}"
+DRIFT_PY="${SPINE_DRIFT_PY:-$SCRIPT_DIR/drift_detector.py}"
 
 mkdir -p "$BUNDLES_DIR" "$ACTIVE_DIR"
 
@@ -198,24 +202,45 @@ cmd_activate() {
   printf '{"ok":true,"bundle_id":"%s","scope":"%s"}\n' "$bid" "$scope"
 }
 
+# ────────────────────────────────────────────────────────────────────
+# status (STORY-2.1.5) — list installed bundles + drift status per
+# bundle (delegated to drift_detector.py). Exit 0 if no drift, 2 if any
+# bundle is drifted, 3 if drift_detector failed.
+# ────────────────────────────────────────────────────────────────────
 cmd_status() {
+  local fmt="json"
+  while [[ $# -gt 0 ]]; do case "$1" in
+    --format) fmt="$2"; shift 2 ;;
+    *) _err_json invalid_input "unknown arg: $1"; return 2 ;;
+  esac; done
   local active=""; [[ -f "$ACTIVE_DIR/org" ]] && active="$(cat "$ACTIVE_DIR/org")"
-  [[ -z "$active" ]] && { printf '{"ok":true,"active":null}\n'; return 0; }
-  local vdir; vdir="$(ls -1d "$BUNDLES_DIR/$active"/v* 2>/dev/null | sort -V | tail -1)"
-  [[ -z "$vdir" ]] && { _err_json storage_failed "active bundle missing on disk: $active"; return 5; }
-  local sha src drift="unknown"
-  sha="$(cat "$vdir/sha256")"
-  src="$(cat "$vdir/source_url" 2>/dev/null || echo "")"
-  if [[ "$src" == http*://* ]] && command -v curl >/dev/null 2>&1; then
-    local tmp; tmp="$(mktemp)"
-    if curl -fsSL "$src" -o "$tmp" 2>/dev/null; then
-      local upstream; upstream="$(_sha256 "$tmp")"
-      [[ "$upstream" == "$sha" ]] && drift="in_sync" || drift="drifted"
-    else drift="source_unreachable"; fi
-    rm -f "$tmp"
-  fi
-  printf '{"ok":true,"active":"%s","version_dir":"%s","sha256":"%s","source_url":"%s","drift":"%s"}\n' \
-    "$active" "$vdir" "$sha" "$src" "$drift"
+  [[ ! -f "$DRIFT_PY" ]] && {
+    _err_json drift_unavailable "drift_detector.py not found at $DRIFT_PY"; return 3; }
+  # drift_detector exits 0=in_sync, 2=drift_detected, 3=error.
+  local rc=0
+  SPINE_HOME="$SPINE_HOME" SPINE_ACTIVE_ORG="$active" \
+    python3 "$DRIFT_PY" status --format "$fmt" || rc=$?
+  return "$rc"
+}
+
+# ────────────────────────────────────────────────────────────────────
+# drift-check (STORY-2.1.5) — drift-only; no listing of inactive bundles.
+# Optional <bundle_id> narrows the check to a single bundle.
+# ────────────────────────────────────────────────────────────────────
+cmd_drift_check() {
+  local fmt="json" bid=""
+  while [[ $# -gt 0 ]]; do case "$1" in
+    --format) fmt="$2"; shift 2 ;;
+    -*) _err_json invalid_input "unknown flag: $1"; return 2 ;;
+    *) bid="$1"; shift ;;
+  esac; done
+  [[ ! -f "$DRIFT_PY" ]] && {
+    _err_json drift_unavailable "drift_detector.py not found at $DRIFT_PY"; return 3; }
+  local args=(status) rc=0
+  [[ -n "$bid" ]] && args+=("$bid")
+  args+=(--format "$fmt")
+  python3 "$DRIFT_PY" "${args[@]}" || rc=$?
+  return "$rc"
 }
 
 cmd_remove() {
@@ -254,14 +279,15 @@ cmd_inject() {
 main() {
   local cmd="${1:-}"; shift || true
   case "$cmd" in
-    install)  cmd_install  "$@" ;;
-    validate) cmd_validate "$@" ;;
-    list)     cmd_list     "$@" ;;
-    activate) cmd_activate "$@" ;;
-    status)   cmd_status   "$@" ;;
-    remove)   cmd_remove   "$@" ;;
-    inject)   cmd_inject   "$@" ;;
-    -h|--help|"") sed -n '2,25p' "${BASH_SOURCE[0]}" >&2; exit 0 ;;
+    install)     cmd_install     "$@" ;;
+    validate)    cmd_validate    "$@" ;;
+    list)        cmd_list        "$@" ;;
+    activate)    cmd_activate    "$@" ;;
+    status)      cmd_status      "$@" ;;
+    drift-check) cmd_drift_check "$@" ;;
+    remove)      cmd_remove      "$@" ;;
+    inject)      cmd_inject      "$@" ;;
+    -h|--help|"") sed -n '2,29p' "${BASH_SOURCE[0]}" >&2; exit 0 ;;
     *) _err_json unknown_subcommand "no such subcommand: $cmd"; exit 64 ;;
   esac
 }

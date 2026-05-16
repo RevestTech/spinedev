@@ -114,7 +114,7 @@ Maps to REQ FR-5. Absorbs the old EPIC-1.3.
 - `STORY-1.4.3` · `Done` · `P0` · `S` — Inline review surface (read the artifact, see the diff if it's a re-submission). Modal in approvals.js loads + renders artifact markdown; approve/reject/request-changes buttons with optimistic UI. *(Done 2026-05-16.)*
 - `STORY-1.4.4` · `Done` · `P0` · `S` — Actions: approve / reject / request-changes (with notes). *(Done 2026-05-16 — `gate.sh approve|reject|request-changes` subcommands.)*
 - `STORY-1.4.5` · `Done` · `P1` · `S` — Request-changes routes back to the producing role with the user's notes attached. *(Done 2026-05-16 — `gate_request_changes` composes follow-up directive + dispatches via `router.sh` with `parent_directive_id` linkage.)*
-- `STORY-1.4.6` · `Backlog` · `P1` · `S` — Multi-approver gates (e.g., TRD requires CTO + Compliance both sign).
+- `STORY-1.4.6` · `Done` · `P1` · `S` — Multi-approver gates (e.g., TRD requires CTO + Compliance both sign). `gate.sh` extended with `_match_principal` (`role|user|group:`), `_count_valid_approvals with-matches` mode, per-required-principal progress array. Examples at `orchestrator/state/multi_approver_examples.yaml` (3 worked configs). *(Done 2026-05-16 wave 6.)*
 - `STORY-1.4.7` · `Backlog` · `P2` · `XS` — Notifications (email / Slack / system) when an approval is pending.
 
 ### EPIC-1.5 — Cost-Aware Tier Router
@@ -143,10 +143,10 @@ Maps to REQ G-7. Absorbs the old EPIC-1.2.
 Maps to REQ FR-7 + FR-8. **"Not etched in stone."** The principle that lets each org shape its own SDLC without forking Spine.
 
 - `STORY-1.7.1` · `In Progress` · `P0` · `M` — `sdlc-pipeline.yaml` schema design + validator. Schema at `plan/artifacts/sdlc-pipeline-schema.yaml` + default + README *(design Done 2026-05-16; validator implementation pending)*.
-- `STORY-1.7.2` · `Backlog` · `P0` · `S` — `can_modify_sdlc_pipeline` capability + grant mechanism (lives in org bundle from `INIT-2`).
-- `STORY-1.7.3` · `Backlog` · `P0` · `S` — Override hierarchy enforcement: org bundle → team → project, most-specific wins, each level only edits what it's authorized to.
-- `STORY-1.7.4` · `Backlog` · `P0` · `S` — Pipeline versioning: every edit = git commit with author + timestamp + rationale (rationale is *required*, not optional).
-- `STORY-1.7.5` · `Backlog` · `P0` · `S` — Project-lock to pipeline version at project start (recorded in project metadata).
+- `STORY-1.7.2` · `Done` · `P0` · `S` — `can_modify_sdlc_pipeline` capability + grant mechanism. At `plan/pipeline/capability_checker.py` (4 capabilities + `role|user|group:` principal grammar w/ wildcards). *(Done 2026-05-16 wave 6.)*
+- `STORY-1.7.3` · `Done` · `P0` · `S` — Override hierarchy enforcement: org bundle → team → project, most-specific wins. `plan/pipeline/manifest_loader.py` `load_pipeline()` merges with per-section rules + narrowing capability sub-bundles. *(Done 2026-05-16 wave 6.)*
+- `STORY-1.7.4` · `Done` · `P0` · `S` — Pipeline versioning: every edit = git commit with author + timestamp + rationale. `plan/pipeline/versioning.py` `commit_pipeline_edit` enforces rationale (≥8 chars; raises `CapabilityDenied`); `pipeline_history` parses trailer back. *(Done 2026-05-16 wave 6.)*
+- `STORY-1.7.5` · `Done` · `P0` · `S` — Project-lock to pipeline version at project start. `plan/pipeline/project_lock.py` `lock_project_to_pipeline` writes `spine_lifecycle.project.pipeline_version` + JSON snapshot + audit row; `migrate_locked_project` is only legal change path. *(Done 2026-05-16 wave 6.)*
 - `STORY-1.7.6` · `Backlog` · `P1` · `S` — Migration flow: explicit user action to migrate a locked project to a newer pipeline; diff preview required.
 - `STORY-1.7.7` · `Backlog` · `P1` · `S` — Pipeline diff / audit view (compare two versions; see edit history).
 - `STORY-1.7.8` · `Backlog` · `P2` · `S` — Reference pipeline templates: startup-lite, regulated-enterprise, design-led (G-13 in REQ).
@@ -166,7 +166,7 @@ Package an enterprise's coding standards, security rules, banned patterns, cost 
 - `STORY-2.1.2` · `Done` · `P1` · `S` — `spine install --org-bundle <url|path>` command + bundle validation. At `shared/standards/install_bundle.sh` (7 subcommands: install/validate/list/activate/status/remove/inject) + `validator.py` (Pydantic v2). *(Done 2026-05-16.)*
 - `STORY-2.1.3` · `Done` · `P1` · `M` — Bundle injection into role prompts (each role gets the slice relevant to its authority). At `shared/standards/prompt_injector.py` with idempotent injection markers + per-role slice map (product/architect/engineer/qa/operator/auditor/datawright). *(Done 2026-05-16.)*
 - `STORY-2.1.4` · `In Progress` · `P1` · `M` — Bundle injection into auditor checks (audit role enforces the banned patterns + security rules). Injector exists (`STORY-2.1.3`); auditor runtime hookup pending wave 4.
-- `STORY-2.1.5` · `Backlog` · `P2` · `S` — Bundle versioning + drift detection (warn user when their bundle is older than org's published version).
+- `STORY-2.1.5` · `Done` · `P2` · `S` — Bundle versioning + drift detection (warn user when their bundle is older than org's published version). `shared/standards/drift_detector.py` (urllib + git + file transports; 5 drift kinds: none/out_of_date/source_modified/source_unreachable/unknown) + `install_bundle.sh drift-check` subcommand. *(Done 2026-05-16 wave 6.)*
 - `STORY-2.1.6` · `Done` · `P2` · `M` — Reference bundle for "small SaaS startup" + "regulated enterprise" as starting templates. At `shared/standards/bundle-startup-saas.yaml` + `bundle-regulated-enterprise.yaml`. *(Done 2026-05-16.)*
 
 ### EPIC-2.2 — MCP server for Spine primitives
@@ -230,16 +230,16 @@ Today user picks the tier hint. Smarter: route automatically by (role, task comp
 **Tech:** **LangSmith**-style evals for role prompts and pipeline outputs. Closes the "did this role-prompt change make it better?" gap called out in `COMPETITIVE_LANDSCAPE.md §4 Tier 5`.
 
 - `STORY-3.4.1` · `Done` · `P1` · `M` — Eval dataset format: `(directive, expected_artifact_traits, scoring_rubric)` triples per role. At `shared/eval/_dataset_schema.yaml` + `_rubric_schema.yaml` + 2 worked examples (engineer + architect). 4 check types: regex / structured_field / llm_judge / deterministic. *(Done 2026-05-16.)*
-- `STORY-3.4.2` · `In Progress` · `P1` · `M` — Eval runner: replays a directive against a candidate role prompt + model; scores output against rubric. Design at `shared/eval/runner_design.md` (architecture + per-case flow + scoring + regression mode + A/B mode + `spine_eval` schema sketch). Implementation pending wave 4.
-- `STORY-3.4.3` · `Backlog` · `P1` · `S` — Regression mode: run candidate prompt against the full eval set; diff scores vs baseline.
-- `STORY-3.4.4` · `Backlog` · `P2` · `S` — A/B mode: route a fraction of real directives to candidate prompt; record outcomes.
+- `STORY-3.4.2` · `Done` · `P1` · `M` — Eval runner: replays a directive against a candidate role prompt + model; scores output against rubric. `shared/eval/runner.py` + `loader.py` + `scorer.py` + `aggregator.py` + `reporter.py` + `cli.py` + V19 `spine_eval` schema. Pluggable dispatch + judge callables; sandboxed structured_field eval. *(Done 2026-05-16 wave 6.)*
+- `STORY-3.4.3` · `Done` · `P1` · `S` — Regression mode: run candidate prompt against the full eval set; diff scores vs baseline. `runner.run_regression` + `aggregator.diff_scores`. *(Done 2026-05-16 wave 6.)*
+- `STORY-3.4.4` · `Done` · `P2` · `S` — A/B mode: route a fraction of real directives to candidate prompt; record outcomes. `runner.run_ab` with numpy paired t-test + sign-test fallback. *(Done 2026-05-16 wave 6.)*
 - `STORY-3.4.5` · `Backlog` · `P2` · `S` — Dashboard view: per-role score history; flag regressions on prompt edits.
 
 ### EPIC-3.5 — Sandbox Execution Verification (NEW — lifted from TRON)
 TRON's Docker ephemeral sandbox + seccomp profile is the answer to "engineer self-reports success but never actually ran the code." Lift to `verify/sandbox/` and expose as a shared capability.
 
 - `STORY-3.5.1` · `Backlog` · `P1` · `S` — Move TRON `tron/sandbox/` → `verify/sandbox/`. Verify standalone tests pass.
-- `STORY-3.5.2` · `Done` · `P1` · `S` — MCP tool `sandbox_run(code, env)` exposes sandbox execution to any Spine role. At `shared/mcp/tools/sandbox.py` (248 lines, degraded-mode detection, lazy TRON import, cost model). TRON `sandbox_client.run` adapter call-site stubbed pending wave 5. *(Scaffold Done 2026-05-16.)*
+- `STORY-3.5.2` · `Done` · `P1` · `S` — MCP tool `sandbox_run(code, env)` exposes sandbox execution to any Spine role. At `shared/mcp/tools/sandbox.py` (326 lines). TRON adapter wired via `verify.tron.services.sandbox_client.SandboxClient` (`run_python` / `run_bash`) with async-to-sync bridge, file mounting via tempdir, env+setup_commands inlining. *(Fully Done 2026-05-16 wave 6.)*
 - `STORY-3.5.3` · `Backlog` · `P1` · `M` — Engineer-daemon hook: optional sandbox-verify pass before report write.
 - `STORY-3.5.4` · `Backlog` · `P2` · `S` — Seccomp profile customization via org bundle (sensitive orgs want stricter syscall filtering).
 - `STORY-3.5.5` · `Backlog` · `P2` · `S` — Sandbox cost tracking (CPU-seconds, memory-seconds) into unified cost ledger.
@@ -247,10 +247,10 @@ TRON's Docker ephemeral sandbox + seccomp profile is the answer to "engineer sel
 ### EPIC-3.6 — Confidence Calibration (NEW — lifted from TRON)
 TRON's Platt-scaled calibration on LLM-only outputs is a real honesty layer Spine lacks. Apply to architect risk assessments, decomposer story estimates, qa findings.
 
-- `STORY-3.6.1` · `Backlog` · `P2` · `M` — Move TRON `tron/verification/calibration*` → `verify/calibration/` (or `shared/calibration/` if Plan/Build also use).
-- `STORY-3.6.2` · `Backlog` · `P2` · `M` — Labeled outcome corpus collection (Pipeline writes outcome rows to `spine_calibration` schema after every gate decision).
-- `STORY-3.6.3` · `Backlog` · `P2` · `S` — Platt-scaled mapping fit when N ≥ 500 (else banded fallback) per role/output-type.
-- `STORY-3.6.4` · `Backlog` · `P2` · `S` — Calibration applied to: architect risk scores, decomposer estimates, qa severity, auditor finding confidence.
+- `STORY-3.6.1` · `Done` · `P2` · `M` — Calibration generalized to `shared/calibration/` (pattern lifted from TRON Layer 6; not direct code copy). `calibrator.py` + V18 `spine_calibration` schema. *(Done 2026-05-16 wave 6.)*
+- `STORY-3.6.2` · `Done` · `P2` · `M` — Labeled outcome corpus collection. `outcome_corpus.py` (`record_prediction`, `record_outcome`) + V18 `prediction`/`outcome` tables. *(Done 2026-05-16 wave 6.)*
+- `STORY-3.6.3` · `Done` · `P2` · `S` — Platt-scaled mapping fit when N ≥ 500 (else banded fallback) per role/output-type. Three-tier auto-fit (identity/banded/Platt) in `calibrator.refit_if_due`; lazy numpy with pure-stdlib gradient descent fallback. *(Done 2026-05-16 wave 6.)*
+- `STORY-3.6.4` · `Done` · `P2` · `S` — Calibration applied to: architect risk scores, decomposer estimates, qa severity, auditor finding confidence. `apply.py` per-role wrappers. *(Done 2026-05-16 wave 6.)*
 - `STORY-3.6.5` · `Backlog` · `P3` · `S` — UI surface: show calibration band on each finding/score.
 
 ### EPIC-3.7 — Cross-LLM Validation (NEW — lifted from TRON)
@@ -371,7 +371,7 @@ Maps to REQ FR-6. **Depends on `EPIC-2.2` MCP scaffolding.**
 - `STORY-6.5.5` · `Done` · `P0` · `S` — `impact_radius(symbol_or_region)` — files + tests potentially affected by a change. Real impl at `shared/mcp/tools/kg.py` (multi-CTE: callers + tests + importers + tests-via-callers; ≤200ms p95 target). Used by engineer/auditor BuildArtifact verification. *(Done 2026-05-16.)*
 - `STORY-6.5.6` · `Done` · `P0` · `S` — `doc_for_region(file:lines)` — REQs / ADRs / lessons touching this code. Two-stage walk: code nodes in file → incoming Document edges (CITES/OWNS/TESTS/TOUCHES/DERIVED_FROM/DECIDED_BY). *(Done 2026-05-16.)*
 - `STORY-6.5.7` · `Done` · `P0` · `S` — `who_owns(node)` — roles / lessons / ADRs claiming ownership. Two-stage: explicit OWNED_BY edges (confidence 1.0) → MemoryLesson fallback (confidence 0.5). Never fabricates. *(Done 2026-05-16.)*
-- `STORY-6.5.8` · `Backlog` · `P1` · `S` — `find_by_satisfies(req_or_story_id)` — code regions claiming to satisfy a given REQ/STORY.
+- `STORY-6.5.8` · `Done` · `P1` · `S` — `find_by_satisfies(req_or_story_id)` — code regions claiming to satisfy a given REQ/STORY. Resolves Spine-flow node from ID prefix (REQ/STORY/EPIC/INIT/ADR/PRD/TRD); pulls incoming SATISFIES/DECIDED_BY edges + optional TESTS/COVERS. **All 8 KG tools now real.** *(Done 2026-05-16 wave 6.)*
 
 ### EPIC-6.6 — Role-prompt integration
 Maps to REQ FR-7. **One story per affected role.**
@@ -388,9 +388,9 @@ Maps to REQ FR-8.
 
 > **Tech:** **LangChain** `MultiVectorRetriever` (semantic) + `GraphRetriever` (structural) + RRF re-rank. Exposed as `hybrid_search` MCP tool. Embeddings lazy + cached; embedding model configurable via org bundle.
 
-- `STORY-6.7.1` · `Backlog` · `P1` · `M` — Embedding pipeline: lazy on first query touching a node; cached in `kg_node_embedding`.
-- `STORY-6.7.2` · `Backlog` · `P1` · `S` — Default local embedding model (e.g., `nomic-embed-text`); org bundle override.
-- `STORY-6.7.3` · `Backlog` · `P1` · `M` — `hybrid_search(natural_language_query)` MCP tool — graph + vector + re-rank.
+- `STORY-6.7.1` · `Done` · `P1` · `M` — Embedding pipeline: lazy on first query touching a node; cached in `kg_node_embedding`. `build/kg/embeddings/embedder.py` (3-provider abstraction: local sentence-transformers w/ stdlib hashed-BoW fallback, Anthropic, OpenAI; lazy + cached + dim-fitting). *(Done 2026-05-16 wave 6.)*
+- `STORY-6.7.2` · `Done` · `P1` · `S` — Default local embedding model + org bundle override. `select_provider()` honors `SPINE_EMBEDDING_PROVIDER` env > `bundle['embedding']` > local default. *(Done 2026-05-16 wave 6.)*
+- `STORY-6.7.3` · `Done` · `P1` · `M` — `hybrid_search(natural_language_query)` MCP tool — graph + vector + re-rank. Replaced stub in `kg.py` (+150 lines): RRF fusion (k=60) + `semantic_weight` blending + per-row rationale. *(Done 2026-05-16 wave 6.)*
 - `STORY-6.7.4` · `Backlog` · `P2` · `S` — PII / secrets redactor (default scrubs AWS keys, JWTs, emails before embedding; org bundle can extend).
 
 ---
@@ -419,7 +419,7 @@ Maps to REQ FR-8.
 ### EPIC-7.4 — Build artifact contract
 - `STORY-7.4.1` · `Done` · `P0` · `M` — Pydantic `BuildArtifact` schema: code_changes[], tests_added[], tests_run[], kg_impact[], cost, duration, rationale. At `shared/schemas/build/build_artifact.py` with refuse-to-seal validator + to_markdown + to_audit_metadata. *(Done 2026-05-16.)*
 - `STORY-7.4.2` · `Backlog` · `P0` · `S` — Build always emits `BuildArtifact` (not free-form markdown report) — closes the "fragile contracts" gap from survey.
-- `STORY-7.4.3` · `Backlog` · `P0` · `S` — Auditor verifies `BuildArtifact` against KG impact before passing to Verify.
+- `STORY-7.4.3` · `Done` · `P0` · `S` — Auditor verifies `BuildArtifact` against KG impact before passing to Verify. `shared/mcp/tools/auditor.py` `verify_build_artifact` MCP tool (3-gate cheapest-first: schema → scope → KG-impact diff w/ strict/lenient modes + auto-composed remediation directive). *(Done 2026-05-16 wave 6.)*
 
 ### EPIC-7.5 — Migrate existing role daemons
 - `STORY-7.5.1` · `Backlog` · `P1` · `M` — Move `lib/team-agent-daemon.sh` + role daemons into `build/daemons/`. Preserve existing behavior.
@@ -455,7 +455,7 @@ Maps to REQ FR-8.
 
 ### EPIC-8.4 — Verify ↔ Orchestrator wiring
 - `STORY-8.4.1` · `Done` · `P0` · `S` — Umbrella Makefile dispatches `make verify-*` to TRON's internal Makefile. At `Makefile.v2` with self-documenting `make help`, per-subsystem pattern rules, all v1 targets preserved. *(Done 2026-05-16; rename to Makefile during cutover.)*
-- `STORY-8.5.1` · `Done` · `P0` · `M` — Orchestrator invokes Verify via MCP `verify_audit(build_artifact, blueprint)`; returns `VerifyFindings`. At `shared/mcp/tools/verify.py` (10-step pipeline: validate sealed → docker probe → lazy TRON import → build AuditRequest → call AuditManager → map FindingOutput → cost rollup → pass_fail → persist findings). *(Done 2026-05-16; AuditManager call-site stub pending wave 6.)*
+- `STORY-8.5.1` · `Done` · `P0` · `M` — Orchestrator invokes Verify via MCP `verify_audit(build_artifact, blueprint)`; returns `VerifyFindings`. At `shared/mcp/tools/verify.py` (486 lines). AuditManager call-site wired: registers 6 default ISO agents, async-to-sync bridge, file-contents loader (1MiB cap), secrets from env, cost rollup from `agent_metrics`. *(Fully Done 2026-05-16 wave 6.)*
 - `STORY-8.5.2` · `Done` · `P0` · `S` — Verify writes findings to `spine_audit`; orchestrator decides route-back-to-Build or surface-to-user. `_persist_findings` writes 1 summary + N per-finding AuditRecords; pass_fail decides route per FR-9. *(Done 2026-05-16.)*
 
 ### EPIC-8.5 — TRON ISO agents in the Build phase
