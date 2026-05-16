@@ -15,8 +15,17 @@ FLYWAY_SQL_DIR="$REPO_ROOT/db/flyway/sql"
 TRANSITION_SH="$REPO_ROOT/orchestrator/lib/transition.sh"
 
 PHASE="all"; FORMAT="text"; VERBOSE=0; CLEANUP=1; CI_MODE=0; USE_COLOR=1
+# Parallel-indexed arrays (works under bash 3.2 — macOS default — which
+# has no `declare -A`). RESULT_DATA[i] holds "status|msg" for RESULT_ORDER[i].
 declare -a RESULT_ORDER=()
-declare -A RESULTS=()
+declare -a RESULT_DATA=()
+_lookup() {
+  local i n="${#RESULT_ORDER[@]}"
+  for (( i=0; i<n; i++ )); do
+    [[ "${RESULT_ORDER[$i]}" == "$1" ]] && { printf '%s' "${RESULT_DATA[$i]}"; return 0; }
+  done
+  return 1
+}
 declare -i COUNT_PASS=0 COUNT_FAIL=0 COUNT_WARN=0 COUNT_SKIP=0 COUNT_INFO=0
 SMOKE_NAME_PREFIX="smoke-harness-$$"
 
@@ -36,7 +45,7 @@ _emit() {
     WARN) col="$(_color yellow WARN)";; SKIP) col="$(_color grey SKIP)";;
     INFO) col="$(_color blue INFO)";; *) col="$status";; esac
   printf '%s %s %s\n' "$col" "$id" "$msg"
-  RESULT_ORDER+=("$id"); RESULTS[$id]="$status|$msg"
+  RESULT_ORDER+=("$id"); RESULT_DATA+=("$status|$msg")
   case "$status" in PASS) COUNT_PASS+=1;; FAIL) COUNT_FAIL+=1;; WARN) COUNT_WARN+=1;;
     SKIP) COUNT_SKIP+=1;; INFO) COUNT_INFO+=1;; esac
 }
@@ -94,10 +103,14 @@ phase2_db() {
   fi
   _pass db.connect "connected to $SPINE_DB_URL"
 
-  local schemas="spine_audit spine_calibration spine_eval spine_kg spine_lifecycle spine_memory spine_recording spine_verify_audit spine_verify_threat_intel"
+  # Must be an array, not a space-separated string: file-level IFS=$'\n\t'
+  # would otherwise treat the whole list as one token (no space-splitting).
+  local -a schemas=(spine_audit spine_calibration spine_eval spine_kg \
+                    spine_lifecycle spine_memory spine_recording \
+                    spine_verify_audit spine_verify_threat_intel)
   local present sch
   present="$(_psql -c "SELECT nspname FROM pg_namespace WHERE nspname LIKE 'spine_%' ORDER BY 1;" 2>/dev/null || true)"
-  for sch in $schemas; do
+  for sch in "${schemas[@]}"; do
     printf '%s\n' "$present" | grep -qx "$sch" \
       && _pass "db.schema.$sch" "present" \
       || _fail "db.schema.$sch" "missing — 'cd db && make migrate' or apply V14-V21"
@@ -288,7 +301,7 @@ emit_text_summary() {
     printf '\n%s\n' "$(_color red 'Failed checks:')"
     local id e st msg
     for id in "${RESULT_ORDER[@]}"; do
-      e="${RESULTS[$id]}"; st="${e%%|*}"; msg="${e#*|}"
+      e="$(_lookup "$id")"; st="${e%%|*}"; msg="${e#*|}"
       [[ "$st" == FAIL ]] && printf '  - %s  %s\n' "$id" "$msg"
     done
   fi
@@ -298,7 +311,7 @@ emit_json() {
   printf '{"summary":{"pass":%d,"fail":%d,"warn":%d,"skip":%d,"info":%d,"total":%d},"results":[' \
     "$COUNT_PASS" "$COUNT_FAIL" "$COUNT_WARN" "$COUNT_SKIP" "$COUNT_INFO" "${#RESULT_ORDER[@]}"
   for id in "${RESULT_ORDER[@]}"; do
-    e="${RESULTS[$id]}"; st="${e%%|*}"; msg="${e#*|}"
+    e="$(_lookup "$id")"; st="${e%%|*}"; msg="${e#*|}"
     msg="${msg//\\/\\\\}"; msg="${msg//\"/\\\"}"
     (( first )) && first=0 || printf ','
     printf '{"id":"%s","status":"%s","message":"%s"}' "$id" "$st" "$msg"
@@ -311,7 +324,7 @@ emit_junit() {
   printf '<testsuite name="spine.smoke-test" tests="%d" failures="%d" skipped="%d">\n' \
     "${#RESULT_ORDER[@]}" "$COUNT_FAIL" "$((COUNT_SKIP+COUNT_INFO))"
   for id in "${RESULT_ORDER[@]}"; do
-    e="${RESULTS[$id]}"; st="${e%%|*}"; msg="${e#*|}"
+    e="$(_lookup "$id")"; st="${e%%|*}"; msg="${e#*|}"
     name="${id//&/&amp;}"; name="${name//</&lt;}"; name="${name//>/&gt;}"
     msg="${msg//&/&amp;}"; msg="${msg//</&lt;}"; msg="${msg//>/&gt;}"; msg="${msg//\"/&quot;}"
     printf '  <testcase classname="spine.smoke" name="%s">' "$name"
@@ -364,7 +377,7 @@ main() {
   # Promote env failures to exit 2 so CI can distinguish setup from regression.
   local env_problem=0 id e st
   for id in env.docker env.python env.psql env.postgres_container db.connect; do
-    e="${RESULTS[$id]:-}"; st="${e%%|*}"
+    e="$(_lookup "$id" 2>/dev/null || true)"; st="${e%%|*}"
     [[ "$st" == FAIL ]] && env_problem=1
   done
   if (( COUNT_FAIL > 0 )); then (( env_problem )) && exit 2 || exit 1; fi
