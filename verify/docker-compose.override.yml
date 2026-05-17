@@ -1,0 +1,67 @@
+# verify/docker-compose.override.yml — Spine integration overlay.
+#
+# Compose auto-merges this file with docker-compose.yml when you run
+# `docker compose up -d <service>` from `verify/`. Two purposes:
+#
+#   1. Rename containers to `spine_tron_*` so they don't collide with the
+#      standalone TRON install (still at /Users/.../Utilities/Tron with
+#      container_name=tron-postgres etc.). Standalone TRON deployability
+#      (verify/SUBSYSTEM_BOUNDARY.md G-8) is preserved — that project's
+#      compose is unchanged; this overlay only takes effect when compose
+#      is invoked from verify/ inside Spine.
+#
+#   2. Remap TRON's postgres host port (TRON default 127.0.0.1:13002 →
+#      Spine default 127.0.0.1:33010) so a single laptop can run both
+#      Spine's postgres (33001) and TRON's postgres concurrently. Spine
+#      owns 33001; TRON gets 33010. No collision with anything else in
+#      the 33xxx range.
+#
+# Service subset chosen for first integration (see SUBSYSTEM_BOUNDARY.md
+# §"TRON startup (Spine-side)"):
+#   - postgres       — alembic migrations land here; LLM usage ledger
+#                      uses it (async paths skip cleanly when DB is down,
+#                      but we bring it up so migrations + future work
+#                      have a real target).
+#   - redis, minio, temporal, pgbouncer, tron-api/worker/sandbox, nginx,
+#     prometheus, grafana, tempo, loki, otel-collector, alertmanager,
+#     tron-backup — NOT brought up. AuditManager runs in-process from
+#     Spine's wrapper; deterministic scanners (Bandit) run via LocalSandbox
+#     subprocess; LLM calls go direct via httpx; no Temporal workflow,
+#     no MinIO artifact store, no nginx for first integration.
+#
+# To start TRON's postgres for Spine:
+#     cd verify
+#     docker compose up -d postgres
+#
+# To run alembic migrations (from repo root, after postgres is up):
+#     DATABASE_URL=postgresql://tron:tron_dev_only@127.0.0.1:33010/tron \
+#       .venv/bin/python -m alembic -c verify/alembic.ini upgrade head
+
+services:
+  postgres:
+    container_name: spine_tron_postgres
+    ports:
+      - "127.0.0.1:33010:5432"  # Spine reserves 33000-33099 (Spine pg on 33001)
+
+  # Silence dependency warnings on the other services by giving them
+  # spine-prefixed names too — they're declared in the base compose but
+  # we don't `up` them. Renaming avoids ANY collision with the standalone
+  # TRON install's container names if someone fat-fingers `docker compose
+  # up` instead of `docker compose up -d postgres`.
+  pgbouncer:    { container_name: spine_tron_pgbouncer }
+  redis:        { container_name: spine_tron_redis }
+  minio:        { container_name: spine_tron_minio }
+  temporal:     { container_name: spine_tron_temporal }
+  temporal-ui:  { container_name: spine_tron_temporal_ui }
+  tron-api:     { container_name: spine_tron_api }
+  # tron-worker has no container_name in the base file (allows scaling) —
+  # leave it alone.
+  tron-sandbox: { container_name: spine_tron_sandbox }
+  nginx:        { container_name: spine_tron_nginx }
+  otel-collector: { container_name: spine_tron_otel }
+  prometheus:   { container_name: spine_tron_prometheus }
+  grafana:      { container_name: spine_tron_grafana }
+  tempo:        { container_name: spine_tron_tempo }
+  loki:         { container_name: spine_tron_loki }
+  alertmanager: { container_name: spine_tron_alertmanager }
+  tron-backup:  { container_name: spine_tron_backup }

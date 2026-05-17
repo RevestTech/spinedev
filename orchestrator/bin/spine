@@ -53,7 +53,13 @@ _mcp_inprocess_call() {
   SPINE_TOOL="$tool" SPINE_PAYLOAD="$payload" SPINE_HOME="$SPINE_HOME" \
     "$_SPINE_PY" - <<'PY'
 import json, os, sys, traceback
+# Put SPINE_HOME first (shared.*, plan.*, build.*) and verify/ second so
+# TRON's absolute `tron.*` imports resolve (verify/tron/...). The wrapper
+# `shared.mcp.tools.verify` also uses `verify.tron.*` imports — those work
+# via the implicit-namespace package because verify/ has no __init__.py.
+# Wiring documented in verify/SUBSYSTEM_BOUNDARY.md §"Standalone deployability".
 sys.path.insert(0, os.environ["SPINE_HOME"])
+sys.path.insert(1, os.path.join(os.environ["SPINE_HOME"], "verify"))
 try:
     from shared.mcp.tools import TOOL_REGISTRY, discover_tools
 except Exception as e:

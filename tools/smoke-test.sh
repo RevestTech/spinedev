@@ -661,6 +661,47 @@ PY
   done <<< "$out"
 }
 
+# ─── phase 11: TRON subsystem (verify/) ──────────────────────────────
+# Asserts the TRON subtree is wired into Spine well enough that:
+#   1. tron.agents.manager.AuditManager is importable (PYTHONPATH includes
+#      verify/ so TRON's absolute tron.* imports resolve)
+#   2. AuditManager() instantiates with empty secrets (constructor only,
+#      no LLM call made)
+#   3. Bandit (Layer-1 deterministic scanner) is callable via subprocess
+#      and emits valid JSON on a trivial input — no LLM dollars burned
+#   4. TRON's postgres (spine_tron_postgres on 127.0.0.1:33010 per
+#      verify/.env + verify/docker-compose.override.yml) is reachable
+#      and alembic is at head (8 migrations)
+# All four pass without any LLM API keys. See verify/SUBSYSTEM_BOUNDARY.md.
+phase11_tron() {
+  _phase_banner 11 "TRON subsystem (verify/)"
+  if [[ ! -d "$REPO_ROOT/verify/tron" ]]; then
+    _fail tron.layout "verify/tron missing - subtree not present"; return 0
+  fi
+  # Prefer project venv (where TRON deps live: sqlalchemy, temporalio,
+  # bandit, psycopg2, etc.). Falls back to system python3 — which is
+  # expected to lack the deps and produce a clean FAIL on import. The
+  # smoke-test_README documents the install path.
+  local py=""
+  if [[ -x "$REPO_ROOT/.venv/bin/python3" ]]; then py="$REPO_ROOT/.venv/bin/python3"
+  elif command -v python3 >/dev/null 2>&1; then    py="$(command -v python3)"
+  else _skip tron.runtime "no python3 available"; return 0; fi
+  # PYTHONPATH = repo root (for shared/plan/build) + verify/ (so TRON's
+  # tron.* absolute imports resolve from verify/tron/...).
+  export PYTHONPATH="$REPO_ROOT:$REPO_ROOT/verify${PYTHONPATH:+:$PYTHONPATH}"
+
+  local out
+  out="$("$py" "$REPO_ROOT/tools/_smoke_phase11_tron.py" 2>&1 || true)"
+  local line cid st msg
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    if [[ "$line" == *"|"*"|"* ]]; then
+      cid="${line%%|*}"; line="${line#*|}"; st="${line%%|*}"; msg="${line#*|}"
+      _emit "$st" "$cid" "$msg"
+    elif [[ $VERBOSE -eq 1 ]]; then _info tron.trace "$line"; fi
+  done <<< "$out"
+}
+
 # ─── cleanup + formatters ────────────────────────────────────────────
 cleanup_fixtures() {
   [[ $CLEANUP -eq 1 ]] || { _info cleanup.skip "--no-cleanup: fixtures left in DB"; return 0; }
@@ -714,7 +755,7 @@ usage() {
   cat <<'USAGE'
 Usage: tools/smoke-test.sh [--phase N|all] [--format text|json|junit]
                            [--verbose] [--no-cleanup] [--ci] [--no-color]
-Phases: 1 env, 2 db, 3 python, 4 pydantic, 5 lifecycle, 6 kg, 7 optional, 8 mcp-tools, 9 intake, 10 build.
+Phases: 1 env, 2 db, 3 python, 4 pydantic, 5 lifecycle, 6 kg, 7 optional, 8 mcp-tools, 9 intake, 10 build, 11 tron.
 Exit:   0=PASS  1=FAIL  2=env-problem  3=harness-error  64=unknown-flag.
 USAGE
 }
@@ -736,10 +777,10 @@ parse_args() {
 }
 run_phases() {
   case "$PHASE" in
-    all) phase1_env; phase2_db; phase3_python; phase4_pydantic; phase5_lifecycle; phase6_kg; phase7_optional; phase8_mcp_tools; phase9_intake; phase10_build;;
+    all) phase1_env; phase2_db; phase3_python; phase4_pydantic; phase5_lifecycle; phase6_kg; phase7_optional; phase8_mcp_tools; phase9_intake; phase10_build; phase11_tron;;
     1) phase1_env;; 2) phase2_db;; 3) phase3_python;; 4) phase4_pydantic;;
     5) phase5_lifecycle;; 6) phase6_kg;; 7) phase7_optional;; 8) phase8_mcp_tools;;
-    9) phase9_intake;; 10) phase10_build;;
+    9) phase9_intake;; 10) phase10_build;; 11) phase11_tron;;
     *) printf 'invalid --phase %s\n' "$PHASE" >&2; exit 64;;
   esac
 }
