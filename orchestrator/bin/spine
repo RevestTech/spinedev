@@ -146,6 +146,8 @@ _help_for() { case "$1" in
   list)     echo "spine project list [--phase P] [--status active|paused|terminated|completed]";;
   show)     echo "spine project show <id>";; audit) echo "spine project audit <id> [--export csv|json]";;
   intake)   echo "spine intake <project_id> [--template T] [--actor A]";;
+  build-brief)  echo "spine build brief <project_id>";;
+  build-report) echo "spine build report <project_id> --artifact <path> [--actor A]";;
   *) return 1 ;;
 esac; }
 
@@ -286,6 +288,58 @@ PY
 )"
 }
 
+# ─── build — show brief / ingest a BuildArtifact (STORY-7.2.2/7.2.3) ──
+# `build brief` prints metadata.build_brief for human review. `build report`
+# reads a BuildArtifact JSON file and pushes it through `build_completed`
+# via the same in-process MCP transport used everywhere else.
+cmd_build_brief() {
+  [[ "${REST_ARGS[0]:-}" == "--help" || ${#REST_ARGS[@]} -eq 0 ]] && {
+    _help_for build-brief >&2; return 0; }
+  local pid="${REST_ARGS[0]}"
+  [[ -z "$pid" ]] && _die 2 "build brief: <project_id> required"
+  local sql out
+  sql="SELECT metadata->'build_brief' FROM spine_lifecycle.project
+        WHERE (id::text = '$(_sql "$pid")' OR name = '$(_sql "$pid")'
+               OR project_uuid::text = '$(_sql "$pid")') AND status='active' LIMIT 1;"
+  out="$(_psql -c "$sql" 2>/dev/null | sed -e 's/^ *//' -e 's/ *$//')"
+  if [[ -z "$out" || "$out" == "null" ]]; then
+    printf '%sno build_brief for project %s — run `spine project status %s` and dispatch build first%s\n' \
+      "$C_Y" "$pid" "$pid" "$C_X" >&2
+    return 3
+  fi
+  _emit "$out"
+}
+
+cmd_build_report() {
+  [[ "${REST_ARGS[0]:-}" == "--help" || ${#REST_ARGS[@]} -eq 0 ]] && {
+    _help_for build-report >&2; return 0; }
+  local pid="${REST_ARGS[0]}"; REST_ARGS=("${REST_ARGS[@]:1}")
+  [[ -z "$pid" ]] && _die 2 "build report: <project_id> required"
+  local artifact actor payload result status
+  artifact="$(_flag_val --artifact)"
+  actor="$(_flag_val --actor)"; actor="${actor:-build}"
+  [[ -z "$artifact" ]] && _die 2 "build report: --artifact <path> required"
+  [[ -f "$artifact" ]] || _die 2 "build report: artifact file not found: $artifact"
+  # Embed the file content as the `artifact` field. Python on the other side
+  # does the JSON parse + BuildArtifact.model_validate, so we just need the
+  # outer envelope to be valid JSON.
+  if ! payload="$("$_SPINE_PY" - <<PY
+import json, sys
+with open("$artifact","r",encoding="utf-8") as f:
+    art = json.load(f)
+print(json.dumps({"project_id": "$pid", "actor": "$actor", "artifact": art}))
+PY
+)"; then
+    _die 2 "build report: failed to load/parse artifact JSON at $artifact"
+  fi
+  result="$(_mcp_call build_completed "$payload")" || return $?
+  _emit "$result"
+  # Exit 3 if the tool returned status=error so scripts can branch on it.
+  status="$(printf '%s' "$result" | sed -n 's/.*"status"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+  [[ "$status" == "error" ]] && return 3
+  return 0
+}
+
 # ─── portfolio + doctor + help ────────────────────────────────────────
 cmd_status() {
   { printf 'phase|count\n'; _psql -c "SELECT current_phase, COUNT(*) FROM spine_lifecycle.project
@@ -334,6 +388,10 @@ Gates / transitions:
 Plan-phase intake (interactive):
   spine intake <project_id> [--template T] [--actor A]
 
+Build handoff (STORY-7.2.2 / 7.2.3):
+  spine build brief  <project_id>
+  spine build report <project_id> --artifact <path> [--actor A]
+
 Portfolio / ops:  spine status | spine doctor | spine help [<topic>]
 Global flags:     --quiet/-q  --verbose/-v  --dry-run  --format json|table|brief  --help/-h
 Env:              SPINE_DB_URL  SPINE_MCP_HTTP_URL  SPINE_DEFAULT_BUNDLE  SPINE_DEFAULT_OWNER
@@ -345,7 +403,8 @@ EOF
 # ─── main dispatch ────────────────────────────────────────────────────
 main() {
   local cmd="${1:-help}"; shift || true
-  local sub=""; [[ "$cmd" == "project" ]] && { sub="${1:-}"; shift || true; }
+  local sub=""
+  [[ "$cmd" == "project" || "$cmd" == "build" ]] && { sub="${1:-}"; shift || true; }
   _parse_flags "$@"
   case "$cmd" in
     project) case "$sub" in
@@ -355,6 +414,12 @@ main() {
         show) cmd_project_show ;;        audit)    cmd_project_audit    ;;
         ""|help|-h|--help) cmd_help ;;
         *) _die 64 "unknown project subcommand: $sub (try: spine help)" ;;
+      esac ;;
+    build) case "$sub" in
+        brief)  cmd_build_brief ;;
+        report) cmd_build_report ;;
+        ""|help|-h|--help) cmd_help ;;
+        *) _die 64 "unknown build subcommand: $sub (try: spine help)" ;;
       esac ;;
     status) cmd_status ;; doctor) cmd_doctor ;; intake) cmd_intake ;;
     help|-h|--help|"") cmd_help ;;

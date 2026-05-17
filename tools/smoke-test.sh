@@ -497,6 +497,170 @@ PY
   done <<< "$out"
 }
 
+# ─── phase 10: build_dispatch + build_completed (STORY-7.2.2/7.2.3) ──
+# End-to-end: refuse without PRD; succeed with shimmed PRD; refuse on
+# missing brief; refuse on project_id mismatch; succeed with valid
+# BuildArtifact; build_history grows on a second ingest. No phase
+# transitions are exercised — the orchestrator owns those.
+phase10_build() {
+  _phase_banner 10 "Build dispatch + completion"
+  if ! command -v python3 >/dev/null 2>&1; then _skip build.runtime "python3 missing"; return 0; fi
+  _load_db_env
+  _db_alive || { _skip build.runtime "DB unreachable"; return 0; }
+  export PYTHONPATH="$REPO_ROOT${PYTHONPATH:+:$PYTHONPATH}"
+
+  local out script
+  script="$(mktemp "${TMPDIR:-/tmp}/spine-build-smoke-XXXX.py")"
+  cat >"$script" <<'PY'
+import json, os, subprocess, sys
+from datetime import datetime, timezone
+from decimal import Decimal
+from shared.mcp.tools import discover_tools, TOOL_REGISTRY
+discover_tools()
+
+def emit(cid, ok, msg=""): print(f"{cid}|{'PASS' if ok else 'FAIL'}|{msg}")
+def call(name, payload):
+    spec = TOOL_REGISTRY[name]
+    return spec.fn(spec.input_model.model_validate(payload)).model_dump(mode="json")
+
+db_url = os.environ["SPINE_DB_URL"]
+def _q(sql, *, capture_err=False):
+    p = subprocess.run(["psql", db_url, "-At", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-c", sql],
+                       capture_output=True, text=True, timeout=15)
+    if p.returncode != 0:
+        return f"ERR:{p.stderr.strip()}" if capture_err else ""
+    return p.stdout.strip()
+
+PREFIX = os.environ["SMOKE_NAME"]
+# Build fixtures via project_create to get a real BIGSERIAL id + uuid.
+def _mk(name_suffix):
+    r = call("project_create", {"name": f"{PREFIX}-{name_suffix}",
+                                "project_type": "greenfield", "owner": "smoke-build"})
+    assert r["status"] == "ok", json.dumps(r)
+    return r["data"]["id"], r["data"]["project_uuid"]
+
+# 1) build_dispatch refuses without PRD.
+pid_a, uuid_a = _mk("no-prd")
+r = call("build_dispatch", {"project_id": str(pid_a), "pipeline_version": "1.0.0",
+                            "actor": "smoke-build"})
+emit("build.dispatch.no_prd",
+     r["status"] == "error" and (r.get("error") or {}).get("code") == "no_validated_prd",
+     json.dumps(r)[:200])
+
+# 2) build_dispatch succeeds with a PRD shimmed via psql.
+pid_b, uuid_b = _mk("with-prd")
+# Build a minimally-valid PRDv1 JSON dump and merge it into metadata.prd_draft.
+from plan.artifacts.prd_v1 import PRDv1, Goals, Stakeholder
+from plan.artifacts._base import (AcceptanceCriterion, ArtifactMetadata, Goal,
+                                  ProjectType as PRDProjectType)
+prd = PRDv1(
+    project_id=uuid_b, project_name=f"{PREFIX}-with-prd",
+    project_type=PRDProjectType.CLI_TOOL,
+    problem_statement="smoke MUST not be TBD here",
+    users_stakeholders=[Stakeholder(name="smoke-user", needs="happy path")],
+    goals=Goals(must=[Goal(id="G-M-1", statement="ship the cli command")],
+                should=[Goal(id="G-S-1", statement="emit json on --json")],
+                could=[]),
+    in_scope=["primary command"],
+    out_of_scope=["no gui"],
+    acceptance_criteria=[
+        AcceptanceCriterion(id="AC-1", given="a tty", when="run the cli",
+                            then="exit 0"),
+        AcceptanceCriterion(id="AC-MUST-1", then="ship the cli command delivered"),
+    ],
+    open_questions=[],
+    metadata=ArtifactMetadata(created_by="smoke"),
+)
+prd_dump_json = prd.model_dump_json()
+# Use a parameterized-ish psql write: jsonb_build_object('prd_draft', $$...$$::jsonb).
+# We escape single quotes by doubling them.
+esc = prd_dump_json.replace("'", "''")
+_q(f"UPDATE spine_lifecycle.project SET metadata = metadata || "
+   f"jsonb_build_object('prd_draft', '{esc}'::jsonb) WHERE id={pid_b};")
+r = call("build_dispatch", {"project_id": str(pid_b), "pipeline_version": "1.0.0",
+                            "actor": "smoke-build"})
+emit("build.dispatch.with_prd.ok",
+     r["status"] == "ok" and r["data"]["engineering_goals_count"] > 0,
+     json.dumps(r)[:200])
+brief_id = r["data"].get("brief_id") if r["status"] == "ok" else ""
+# Verify it actually landed.
+landed = _q(f"SELECT metadata->'build_brief'->>'brief_id' FROM spine_lifecycle.project "
+            f"WHERE id={pid_b};")
+emit("build.dispatch.brief_in_db", landed == brief_id, f"db={landed} resp={brief_id}")
+# And an audit row fired for build_dispatched.
+n_disp = _q(f"SELECT count(*) FROM spine_audit.audit_event "
+            f"WHERE project_id={pid_b} AND action='build_dispatched';")
+emit("build.dispatch.audit", n_disp == "1", f"rows={n_disp}")
+
+# 3) build_completed refuses without brief.
+pid_c, uuid_c = _mk("no-brief")
+fake_art = {
+    "directive_id": "dir_smoke", "project_id": uuid_c, "phase": "build_in_progress",
+    "role": "engineer", "pipeline_version": "1.0.0",
+    "rationale": "smoke", "status": "draft",
+    "cost": {"tokens_input": 0, "tokens_output": 0, "model": "smoke",
+             "cost_usd": "0", "tier": "low"},
+    "runtime": {"started_at": "2026-05-16T00:00:00+00:00",
+                "completed_at": "2026-05-16T00:00:00+00:00",
+                "duration_seconds": 0},
+    "metadata": {"created_by": "smoke"},
+}
+r = call("build_completed", {"project_id": str(pid_c), "actor": "smoke-build",
+                             "artifact": fake_art})
+emit("build.completed.no_brief",
+     r["status"] == "error" and (r.get("error") or {}).get("code") == "no_build_brief",
+     json.dumps(r)[:200])
+
+# 4) build_completed refuses on project_id mismatch.
+bad_art = dict(fake_art)
+bad_art["project_id"] = "00000000-0000-0000-0000-000000000000"
+r = call("build_completed", {"project_id": str(pid_b), "actor": "smoke-build",
+                             "artifact": bad_art})
+emit("build.completed.project_id_mismatch",
+     r["status"] == "error" and (r.get("error") or {}).get("code") == "project_id_mismatch",
+     json.dumps(r)[:200])
+
+# 5) build_completed succeeds with a valid artifact.
+good_art = dict(fake_art)
+good_art["project_id"] = uuid_b
+good_art["directive_id"] = "dir_smoke_b"
+r = call("build_completed", {"project_id": str(pid_b), "actor": "smoke-build",
+                             "artifact": good_art})
+emit("build.completed.ok",
+     r["status"] == "ok" and r["data"]["ready_for_verify"] is True,
+     json.dumps(r)[:200])
+# Verify the artifact landed.
+land_uuid = _q(f"SELECT metadata->'build_artifact'->>'directive_id' FROM spine_lifecycle.project "
+               f"WHERE id={pid_b};")
+emit("build.completed.artifact_in_db", land_uuid == "dir_smoke_b", f"db={land_uuid}")
+# Audit row fired.
+n_recv = _q(f"SELECT count(*) FROM spine_audit.audit_event "
+            f"WHERE project_id={pid_b} AND action='build_completed_received';")
+emit("build.completed.audit", n_recv == "1", f"rows={n_recv}")
+
+# 6) build_history grows on second ingest.
+good_art2 = dict(good_art); good_art2["directive_id"] = "dir_smoke_b2"
+r = call("build_completed", {"project_id": str(pid_b), "actor": "smoke-build",
+                             "artifact": good_art2})
+emit("build.completed.ok_second",
+     r["status"] == "ok", json.dumps(r)[:200])
+hlen = _q(f"SELECT jsonb_array_length(metadata->'build_history') FROM spine_lifecycle.project "
+          f"WHERE id={pid_b};")
+emit("build.completed.history_grows", hlen == "2", f"history_length={hlen}")
+PY
+  out="$(SPINE_DB_URL="$SPINE_DB_URL" SMOKE_NAME="$SMOKE_NAME_PREFIX-build" \
+         python3 "$script" 2>&1 || true)"
+  rm -f "$script"
+  local line cid st msg
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    if [[ "$line" == *"|"*"|"* ]]; then
+      cid="${line%%|*}"; line="${line#*|}"; st="${line%%|*}"; msg="${line#*|}"
+      _emit "$st" "$cid" "$msg"
+    elif [[ $VERBOSE -eq 1 ]]; then _info build.trace "$line"; fi
+  done <<< "$out"
+}
+
 # ─── cleanup + formatters ────────────────────────────────────────────
 cleanup_fixtures() {
   [[ $CLEANUP -eq 1 ]] || { _info cleanup.skip "--no-cleanup: fixtures left in DB"; return 0; }
@@ -550,7 +714,7 @@ usage() {
   cat <<'USAGE'
 Usage: tools/smoke-test.sh [--phase N|all] [--format text|json|junit]
                            [--verbose] [--no-cleanup] [--ci] [--no-color]
-Phases: 1 env, 2 db, 3 python, 4 pydantic, 5 lifecycle, 6 kg, 7 optional, 8 mcp-tools, 9 intake.
+Phases: 1 env, 2 db, 3 python, 4 pydantic, 5 lifecycle, 6 kg, 7 optional, 8 mcp-tools, 9 intake, 10 build.
 Exit:   0=PASS  1=FAIL  2=env-problem  3=harness-error  64=unknown-flag.
 USAGE
 }
@@ -572,10 +736,10 @@ parse_args() {
 }
 run_phases() {
   case "$PHASE" in
-    all) phase1_env; phase2_db; phase3_python; phase4_pydantic; phase5_lifecycle; phase6_kg; phase7_optional; phase8_mcp_tools; phase9_intake;;
+    all) phase1_env; phase2_db; phase3_python; phase4_pydantic; phase5_lifecycle; phase6_kg; phase7_optional; phase8_mcp_tools; phase9_intake; phase10_build;;
     1) phase1_env;; 2) phase2_db;; 3) phase3_python;; 4) phase4_pydantic;;
     5) phase5_lifecycle;; 6) phase6_kg;; 7) phase7_optional;; 8) phase8_mcp_tools;;
-    9) phase9_intake;;
+    9) phase9_intake;; 10) phase10_build;;
     *) printf 'invalid --phase %s\n' "$PHASE" >&2; exit 64;;
   esac
 }

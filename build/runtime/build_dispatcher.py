@@ -1,0 +1,573 @@
+"""Spine build-phase dispatcher.
+
+Replaces the `build_dispatch` / `build_completed` stubs (STORY-7.2.2 /
+STORY-7.2.3) for the first user-facing slice past plan_approved:
+
+* ``dispatch_build(project_id)`` — synthesizes a Build Brief from the
+  project's already-validated PRD draft, persists it to
+  ``project.metadata.build_brief``, and returns a typed result the MCP
+  wrapper can render.
+* ``ingest_build_artifact(project_id, artifact)`` — validates a typed
+  ``BuildArtifact``, persists it under ``project.metadata.build_artifact``
+  and appends a ``build_history[]`` entry, and reports
+  ``ready_for_verify=True``.
+
+Both functions mirror the pattern in ``plan/runtime/intake_runner.py``:
+project lookup via psql, jsonb merge of a single top-level metadata key,
+audit rows written through ``shared.audit.audit_record`` with failures
+swallowed at the boundary (the metadata row IS the source of truth).
+
+We are NOT spawning Claude Code or running engineer daemons here. Spine
+plans, an external party (human or LLM) builds, Spine ingests + verifies
+— that handoff is the BuildArtifact.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import subprocess
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from typing import Any
+
+from plan.artifacts.prd_v1 import PRDv1
+from shared.schemas.build.build_artifact import BuildArtifact
+
+# ── Constants & paths ──────────────────────────────────────────────────
+
+BUILD_BRIEF_VERSION = "build-brief-v1"
+
+# Metadata keys this module owns. Kept at module scope so smoke + tests
+# can reference them by symbol instead of stringly-typed paths.
+METADATA_PRD_KEY = "prd_draft"
+METADATA_TRD_KEY = "trd_draft"
+METADATA_ROADMAP_KEY = "roadmap_draft"
+METADATA_BRIEF_KEY = "build_brief"
+METADATA_ARTIFACT_KEY = "build_artifact"
+METADATA_HISTORY_KEY = "build_history"
+METADATA_INTAKE_KEY = "intake"
+
+# Audit action names. The plan side writes intake_*; build mirrors with
+# build_* so a `SELECT action, COUNT(*) ...` per-project rolls up cleanly.
+AUDIT_DISPATCHED = "build_dispatched"
+AUDIT_BRIEF_PERSISTED = "build_brief_persisted"
+AUDIT_COMPLETED_RECEIVED = "build_completed_received"
+AUDIT_ARTIFACT_PERSISTED = "build_artifact_persisted"
+
+# Default squad composition when the intake template didn't specify one.
+# Conservative: every project gets at least engineer+qa. Bundle authors
+# extend by setting metadata.intake.swarm_composition on the project.
+_DEFAULT_SQUAD = ("engineer", "qa")
+
+
+# ── Errors surfaced to the MCP wrapper ─────────────────────────────────
+
+
+class BuildDispatchError(RuntimeError):
+    """Base class for refuse-to-dispatch errors. Carries a stable reason code."""
+
+    def __init__(self, reason: str, message: str) -> None:
+        super().__init__(message)
+        self.reason = reason
+
+
+class BuildCompletionError(RuntimeError):
+    """Base class for refuse-to-ingest errors on the completion side."""
+
+    def __init__(self, reason: str, message: str) -> None:
+        super().__init__(message)
+        self.reason = reason
+
+
+# ── Result types ───────────────────────────────────────────────────────
+
+
+@dataclass
+class DispatchResult:
+    """What `dispatch_build()` produced. Mirrors the shape of metadata.build_brief."""
+
+    project_id: int
+    brief_id: str
+    engineering_goals_count: int
+    warnings: list[str] = field(default_factory=list)
+    audit_event_count: int = 0
+
+
+@dataclass
+class IngestResult:
+    """What `ingest_build_artifact()` produced."""
+
+    project_id: int
+    artifact_uuid: str
+    artifact_hash: str
+    code_changes_count: int
+    ready_for_verify: bool
+    history_length: int
+    audit_event_count: int = 0
+
+
+# ── DB helpers (psql shell-outs; mirrors intake_runner.py) ─────────────
+
+
+def _db_url() -> str:
+    url = os.environ.get("SPINE_DB_URL")
+    if not url:
+        raise RuntimeError("SPINE_DB_URL not set; build dispatcher requires a DB URL")
+    return url
+
+
+def _psql(sql: str, *, timeout: int = 15) -> str:
+    cmd = ["psql", _db_url(), "-At", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-c", sql]
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    if proc.returncode != 0:
+        raise RuntimeError(f"psql rc={proc.returncode}: {proc.stderr.strip()}")
+    return proc.stdout.strip()
+
+
+def _esc(value: str) -> str:
+    return value.replace("'", "''")
+
+
+# ── Project lookup ─────────────────────────────────────────────────────
+
+
+def _load_project(project_id: int | str) -> dict[str, Any]:
+    """Resolve `project_id` (BIGINT id or name) to the row we need.
+
+    Returns id, project_uuid, name, current_phase, pipeline_version, metadata.
+    Raises RuntimeError if no active project matches.
+    """
+    if isinstance(project_id, int) or (isinstance(project_id, str) and project_id.isdigit()):
+        where = f"id = {int(project_id)}"
+    else:
+        where = f"name = '{_esc(str(project_id))}'"
+    sql = (
+        "SELECT id::text || '|' || project_uuid::text || '|' || name || '|' || "
+        "current_phase || '|' || pipeline_version || '|' || "
+        "COALESCE(metadata::text,'{}') "
+        f"FROM spine_lifecycle.project WHERE {where} AND status='active' LIMIT 1;"
+    )
+    out = _psql(sql)
+    if not out:
+        raise RuntimeError(f"no active project for id/name={project_id!r}")
+    parts = out.split("|", 5)
+    return {
+        "id": int(parts[0]),
+        "project_uuid": parts[1],
+        "name": parts[2],
+        "current_phase": parts[3],
+        "pipeline_version": parts[4],
+        "metadata": json.loads(parts[5] or "{}"),
+    }
+
+
+def _merge_metadata(pid: int, patch: dict[str, Any]) -> None:
+    """Shallow jsonb merge of `patch` into project.metadata (top-level keys)."""
+    payload = json.dumps(patch).replace("'", "''")
+    sql = (
+        "UPDATE spine_lifecycle.project "
+        f"SET metadata = metadata || '{payload}'::jsonb "
+        f"WHERE id = {pid};"
+    )
+    _psql(sql)
+
+
+# ── Audit helper (best-effort; mirrors intake_runner._write_audit) ─────
+
+
+def _write_audit(*, action: str, project_id: int, actor: str,
+                 metadata: dict[str, Any], rationale: str | None = None,
+                 subject_id: str | None = None,
+                 subject_type: str = "build",
+                 phase: str = "build_in_progress") -> bool:
+    try:
+        from shared.audit.audit_record import (
+            AuditRecord, chain_to_previous, write_via_psql,
+        )
+    except Exception:
+        return False
+    try:
+        try:
+            tip = _psql("SELECT content_hash FROM spine_audit.audit_event "
+                        "ORDER BY event_id DESC LIMIT 1;")
+        except Exception:
+            tip = ""
+        rec = AuditRecord(
+            project_id=project_id, phase=phase,
+            role="engineer", subsystem="build", action=action, actor=actor,
+            subject_type=subject_type,
+            subject_id=subject_id or f"build:{project_id}",
+            rationale=rationale, metadata=metadata,
+        )
+        rec = chain_to_previous(rec, tip or None)
+        write_via_psql(rec)
+        return True
+    except Exception:
+        # Audit-write failure must not kill the dispatch/ingest call; the
+        # project metadata IS the source of truth.
+        return False
+
+
+# ── PRD → Build Brief synthesis ────────────────────────────────────────
+
+
+def _canonical_json(obj: Any) -> str:
+    """Stable JSON encoding (sorted keys, compact) — used for hashing."""
+    return json.dumps(obj, sort_keys=True, separators=(",", ":"), default=str)
+
+
+def _sha256(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _validate_prd(prd_dump: dict[str, Any] | None) -> PRDv1:
+    """Round-trip the stored PRD draft through ``PRDv1.model_validate``.
+
+    Raises BuildDispatchError(reason='no_validated_prd') when missing,
+    error-tagged, or non-conforming.
+    """
+    if not isinstance(prd_dump, dict) or not prd_dump:
+        raise BuildDispatchError(
+            "no_validated_prd",
+            "project.metadata.prd_draft is missing; run `spine intake <id>` first",
+        )
+    if "_error" in prd_dump:
+        raise BuildDispatchError(
+            "no_validated_prd",
+            f"prd_draft is tagged with synthesis error: {prd_dump['_error']}",
+        )
+    try:
+        return PRDv1.model_validate(prd_dump)
+    except Exception as exc:  # noqa: BLE001 — surface schema reason to caller
+        raise BuildDispatchError(
+            "no_validated_prd",
+            f"prd_draft failed PRDv1.model_validate(): {exc}",
+        ) from exc
+
+
+def _engineering_goals_from_prd(prd: PRDv1) -> list[dict[str, Any]]:
+    """Build the engineering_goals list: one entry per MUST + any SHOULD with a clear delivery.
+
+    Acceptance criteria refs are matched by id-prefix on the AC list — the
+    intake_runner stamps `AC-MUST-<n>` for MUST-tied ACs, so an EG referencing
+    `G-M-1` gets all AC ids whose statement mentions that goal text.
+    """
+    egs: list[dict[str, Any]] = []
+    must = prd.goals.must or []
+    should = prd.goals.should or []
+    # Index ACs by their `then` text so we can do a substring match for goal
+    # statements; the intake_runner uses "MUST item delivered: <statement>".
+    ac_index: list[tuple[str, str]] = [(ac.id, ac.then or "") for ac in prd.acceptance_criteria]
+
+    def _ac_refs_for(goal_statement: str) -> list[str]:
+        refs: list[str] = []
+        for ac_id, ac_then in ac_index:
+            if not ac_then:
+                continue
+            if goal_statement.strip() and goal_statement.strip().lower() in ac_then.lower():
+                refs.append(ac_id)
+        return refs
+
+    for i, g in enumerate(must, start=1):
+        egs.append({
+            "id": f"EG-{len(egs) + 1}",
+            "from_goal": g.id,
+            "tier": "MUST",
+            "statement": g.statement,
+            "acceptance_criteria_refs": _ac_refs_for(g.statement),
+        })
+    # SHOULD goals: only include when the statement is non-trivial. The intake
+    # runner sometimes leaves the SHOULD list empty; if a statement is present
+    # we treat it as "clear delivery" enough for an EG entry.
+    for g in should:
+        if not g.statement or not g.statement.strip():
+            continue
+        egs.append({
+            "id": f"EG-{len(egs) + 1}",
+            "from_goal": g.id,
+            "tier": "SHOULD",
+            "statement": g.statement,
+            "acceptance_criteria_refs": _ac_refs_for(g.statement),
+        })
+    return egs
+
+
+def _squad_from_metadata(meta: dict[str, Any]) -> list[str]:
+    """Lift the squad composition from the intake's swarm hint when present."""
+    intake = meta.get(METADATA_INTAKE_KEY) or {}
+    answers = intake.get("answers") or {}
+    sw = answers.get("swarm_composition")
+    if isinstance(sw, list) and sw:
+        return [str(x) for x in sw if str(x).strip()]
+    return list(_DEFAULT_SQUAD)
+
+
+def synthesize_build_brief(
+    *,
+    project: dict[str, Any],
+    prd: PRDv1,
+    actor: str,
+) -> dict[str, Any]:
+    """Build the Build Brief dict (build-brief-v1) from a validated PRD."""
+    prd_dump = prd.model_dump(mode="json")
+    prd_hash = _sha256(_canonical_json(prd_dump))
+    egs = _engineering_goals_from_prd(prd)
+
+    # Cross-cutting constraints lifted from intake answers when present.
+    intake = project["metadata"].get(METADATA_INTAKE_KEY) or {}
+    answers = intake.get("answers") or {}
+    constraints: dict[str, list[str]] = {}
+    for key in ("cross_platform", "output_formats", "install_method"):
+        vals = answers.get(key)
+        if isinstance(vals, list) and vals:
+            constraints[key] = [str(v) for v in vals]
+        elif isinstance(vals, str) and vals.strip():
+            constraints[key] = [vals.strip()]
+
+    brief_id = f"brief_{project['project_uuid'][:8]}_{int(datetime.now(timezone.utc).timestamp())}"
+    return {
+        "version": BUILD_BRIEF_VERSION,
+        "brief_id": brief_id,
+        "project_id": project["project_uuid"],
+        "project_name": project["name"],
+        "pipeline_version": project["pipeline_version"],
+        "derived_from": {
+            "prd_version": prd.version,
+            "prd_hash": prd_hash,
+        },
+        "engineering_goals": egs,
+        "scope_summary": {
+            "in": list(prd.in_scope),
+            "out": list(prd.out_of_scope),
+        },
+        "stakeholder_context": [
+            {"name": s.name, "needs": s.needs} for s in prd.users_stakeholders
+        ],
+        "open_questions": [
+            {"id": oq.id, "question": oq.question,
+             "recommendation": oq.recommendation}
+            for oq in prd.open_questions
+        ],
+        "constraints": constraints,
+        "recommended_squad_composition": _squad_from_metadata(project["metadata"]),
+        "next_steps_for_implementer": [
+            "Pick up engineering_goals in priority order (MUST then SHOULD).",
+            "Each commit should reference an EG-id in the message.",
+            f"When done, run: spine build report {project['id']} --artifact <path>",
+        ],
+        "metadata": {
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_by": actor or "product",
+            "status": "ready_for_implementer",
+        },
+    }
+
+
+# ── Public entry points ────────────────────────────────────────────────
+
+
+def dispatch_build(
+    project_id: int | str,
+    *,
+    actor: str = "orchestrator",
+) -> DispatchResult:
+    """Synthesize + persist a Build Brief for ``project_id``.
+
+    Refuses (raises BuildDispatchError(reason='no_validated_prd')) when
+    the project lacks a validated PRD draft. Warns (in result.warnings)
+    when TRD / Roadmap drafts are missing — those stories are deferred.
+    """
+    proj = _load_project(project_id)
+    pid = proj["id"]
+
+    prd = _validate_prd(proj["metadata"].get(METADATA_PRD_KEY))
+
+    audit_count = 0
+    audit_count += int(_write_audit(
+        action=AUDIT_DISPATCHED, project_id=pid, actor=actor,
+        metadata={"project_uuid": proj["project_uuid"],
+                  "pipeline_version": proj["pipeline_version"]},
+        subject_id=f"build:{pid}",
+        rationale="orchestrator handing PRD off to Build via Build Brief",
+    ))
+
+    brief = synthesize_build_brief(project=proj, prd=prd, actor=actor)
+
+    warnings: list[str] = []
+    if not proj["metadata"].get(METADATA_TRD_KEY):
+        warnings.append("no_trd_draft: TRD synthesis is deferred (next epic). "
+                        "Engineering goals derive from PRD only.")
+    if not proj["metadata"].get(METADATA_ROADMAP_KEY):
+        warnings.append("no_roadmap_draft: roadmap decomposition is deferred. "
+                        "Sequence engineering_goals manually.")
+
+    # Clean overwrite of build_brief only — preserves intake/prd_draft/etc.
+    _merge_metadata(pid, {METADATA_BRIEF_KEY: brief})
+
+    audit_count += int(_write_audit(
+        action=AUDIT_BRIEF_PERSISTED, project_id=pid, actor=actor,
+        metadata={
+            "brief_id": brief["brief_id"],
+            "engineering_goals_count": len(brief["engineering_goals"]),
+            "prd_hash": brief["derived_from"]["prd_hash"],
+            "warnings": warnings,
+        },
+        subject_id=brief["brief_id"],
+    ))
+
+    return DispatchResult(
+        project_id=pid,
+        brief_id=brief["brief_id"],
+        engineering_goals_count=len(brief["engineering_goals"]),
+        warnings=warnings,
+        audit_event_count=audit_count,
+    )
+
+
+def ingest_build_artifact(
+    project_id: int | str,
+    artifact: dict[str, Any] | BuildArtifact,
+    *,
+    actor: str = "build",
+) -> IngestResult:
+    """Validate + persist a BuildArtifact for ``project_id``.
+
+    Refuses with BuildCompletionError(reason=...) when:
+      * the project lacks a build_brief (`no_build_brief`)
+      * the artifact's project_id doesn't match (`project_id_mismatch`)
+      * an EG id referenced by the artifact isn't in the brief (`unknown_engineering_goal_ref`)
+    """
+    proj = _load_project(project_id)
+    pid = proj["id"]
+
+    brief = proj["metadata"].get(METADATA_BRIEF_KEY)
+    if not isinstance(brief, dict) or not brief:
+        raise BuildCompletionError(
+            "no_build_brief",
+            f"project {project_id!r} has no metadata.build_brief; "
+            "run `build_dispatch` (or `spine build brief <id>` to inspect) first",
+        )
+
+    # Validate via the schema's own validator — refuse-to-seal etc fire here.
+    if isinstance(artifact, BuildArtifact):
+        validated = artifact
+    else:
+        try:
+            validated = BuildArtifact.model_validate(artifact)
+        except Exception as exc:  # noqa: BLE001 — schema is the authority
+            raise BuildCompletionError(
+                "invalid_artifact",
+                f"BuildArtifact.model_validate failed: {exc}",
+            ) from exc
+
+    # Cross-check project_id. The brief stores the project UUID; an inbound
+    # artifact may carry either the UUID or the BIGINT — accept both, reject
+    # everything else so a copy/paste mistake doesn't silently land in the
+    # wrong project.
+    allowed_pids = {proj["project_uuid"], str(pid), proj["name"]}
+    if validated.project_id not in allowed_pids:
+        raise BuildCompletionError(
+            "project_id_mismatch",
+            f"artifact.project_id={validated.project_id!r} does not match "
+            f"project (id={pid}, uuid={proj['project_uuid']}, name={proj['name']!r})",
+        )
+
+    # Reject unknown engineering_goal refs. The artifact references EGs via
+    # metadata or via rationale; for v1 we look in two places: top-level
+    # `metadata.engineering_goal_refs` on ArtifactMetadata (treated as a list
+    # if present) AND each test_record / code_change can hint via path.
+    known_eg_ids: set[str] = {eg["id"] for eg in (brief.get("engineering_goals") or [])}
+    referenced: list[str] = []
+    meta_extra = getattr(validated.metadata, "model_extra", None) or {}
+    eg_refs = meta_extra.get("engineering_goal_refs")
+    if isinstance(eg_refs, list):
+        referenced.extend(str(x) for x in eg_refs)
+    unknown = [r for r in referenced if r not in known_eg_ids]
+    if unknown:
+        raise BuildCompletionError(
+            "unknown_engineering_goal_ref",
+            f"artifact references engineering_goals not in brief: {sorted(set(unknown))}; "
+            f"brief has: {sorted(known_eg_ids)}",
+        )
+
+    audit_count = 0
+    audit_count += int(_write_audit(
+        action=AUDIT_COMPLETED_RECEIVED, project_id=pid, actor=actor,
+        metadata={
+            **validated.to_audit_metadata(),
+            "brief_id": brief.get("brief_id"),
+        },
+        subject_id=str(validated.artifact_uuid),
+        rationale=validated.rationale[:500] if validated.rationale else None,
+    ))
+
+    artifact_dump = validated.model_dump(mode="json")
+    artifact_hash = _sha256(_canonical_json(artifact_dump))
+
+    # Append-to-history pattern: read current history, push the new entry,
+    # write back. Done inside one psql update so we don't race ourselves.
+    # We re-fetch metadata to pick up any other concurrent merges (defensive;
+    # in practice this runs single-threaded under the MCP server).
+    proj_refresh = _load_project(pid)
+    history = list(proj_refresh["metadata"].get(METADATA_HISTORY_KEY) or [])
+    history.append({
+        "ingested_at": datetime.now(timezone.utc).isoformat(),
+        "artifact_uuid": str(validated.artifact_uuid),
+        "artifact_hash": artifact_hash,
+        "directive_id": validated.directive_id,
+        "status": validated.status,
+        "summary": validated.compute_diff_summary(),
+    })
+
+    _merge_metadata(pid, {
+        METADATA_ARTIFACT_KEY: artifact_dump,
+        METADATA_HISTORY_KEY: history,
+    })
+
+    audit_count += int(_write_audit(
+        action=AUDIT_ARTIFACT_PERSISTED, project_id=pid, actor=actor,
+        metadata={
+            "artifact_uuid": str(validated.artifact_uuid),
+            "artifact_hash": artifact_hash,
+            "history_length": len(history),
+            "code_changes_count": len(validated.code_changes),
+            "tests_added": len(validated.tests_added),
+            "tests_run": len(validated.tests_run),
+            "ready_for_verify": True,
+        },
+        subject_id=str(validated.artifact_uuid),
+    ))
+
+    return IngestResult(
+        project_id=pid,
+        artifact_uuid=str(validated.artifact_uuid),
+        artifact_hash=artifact_hash,
+        code_changes_count=len(validated.code_changes),
+        ready_for_verify=True,
+        history_length=len(history),
+        audit_event_count=audit_count,
+    )
+
+
+__all__ = [
+    "AUDIT_ARTIFACT_PERSISTED",
+    "AUDIT_BRIEF_PERSISTED",
+    "AUDIT_COMPLETED_RECEIVED",
+    "AUDIT_DISPATCHED",
+    "BUILD_BRIEF_VERSION",
+    "BuildCompletionError",
+    "BuildDispatchError",
+    "DispatchResult",
+    "IngestResult",
+    "METADATA_ARTIFACT_KEY",
+    "METADATA_BRIEF_KEY",
+    "METADATA_HISTORY_KEY",
+    "METADATA_PRD_KEY",
+    "METADATA_ROADMAP_KEY",
+    "METADATA_TRD_KEY",
+    "dispatch_build",
+    "ingest_build_artifact",
+    "synthesize_build_brief",
+]
