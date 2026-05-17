@@ -30,7 +30,9 @@ import os
 import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
+from uuid import UUID
 
 from plan.artifacts.prd_v1 import PRDv1
 from shared.schemas.build.build_artifact import BuildArtifact
@@ -111,11 +113,74 @@ class IngestResult:
 # ── DB helpers (psql shell-outs; mirrors intake_runner.py) ─────────────
 
 
+# `db/.env` lives two levels up from this file (build/runtime/ → repo root).
+# Composed lazily so a missing file doesn't blow up at import time.
+_REPO_ROOT_FROM_HERE = Path(__file__).resolve().parents[2]
+_DB_ENV_KEYS = ("POSTGRES_USER", "POSTGRES_PASSWORD", "POSTGRES_HOST_PORT",
+                "POSTGRES_DB", "POSTGRES_BIND_HOST")
+# Fallback constants mirror orchestrator/lib/_env_loader.sh exactly so a
+# bare-Python `build_dispatch` call lands on the same Postgres as the bash CLI.
+_DB_ENV_DEFAULTS = {
+    "POSTGRES_USER": "spine", "POSTGRES_PASSWORD": "spine",
+    "POSTGRES_HOST_PORT": "33001", "POSTGRES_DB": "spine",
+    "POSTGRES_BIND_HOST": "127.0.0.1",
+}
+
+
+def _load_db_env_file(path: Path) -> dict[str, str]:
+    """Read POSTGRES_* keys from a db/.env without sourcing arbitrary shell."""
+    out: dict[str, str] = {}
+    if not path.is_file():
+        return out
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return out
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        key = key.strip()
+        if key not in _DB_ENV_KEYS:
+            continue
+        # Strip a single layer of surrounding quotes; do NOT unescape.
+        v = val.strip()
+        if len(v) >= 2 and v[0] == v[-1] and v[0] in ("'", '"'):
+            v = v[1:-1]
+        out[key] = v
+    return out
+
+
 def _db_url() -> str:
+    """SPINE_DB_URL precedence: env > POSTGRES_* env > db/.env > hardcoded.
+
+    The MCP server and bare-python invocations don't run through bash's
+    _env_loader.sh, so we mirror its rules here. Operators who already
+    exported SPINE_DB_URL pay nothing.
+    """
     url = os.environ.get("SPINE_DB_URL")
-    if not url:
-        raise RuntimeError("SPINE_DB_URL not set; build dispatcher requires a DB URL")
-    return url
+    if url:
+        return url
+    parts: dict[str, str] = {}
+    for key in _DB_ENV_KEYS:
+        ev = os.environ.get(key)
+        if ev:
+            parts[key] = ev
+    file_path = Path(os.environ.get("SPINE_ENV_FILE") or (_REPO_ROOT_FROM_HERE / "db/.env"))
+    from_file = _load_db_env_file(file_path)
+    for k, v in from_file.items():
+        parts.setdefault(k, v)
+    for k, v in _DB_ENV_DEFAULTS.items():
+        parts.setdefault(k, v)
+    composed = (
+        f"postgresql://{parts['POSTGRES_USER']}:{parts['POSTGRES_PASSWORD']}"
+        f"@{parts['POSTGRES_BIND_HOST']}:{parts['POSTGRES_HOST_PORT']}"
+        f"/{parts['POSTGRES_DB']}"
+    )
+    # Cache for repeat callers in the same process; cheap belt-and-braces.
+    os.environ["SPINE_DB_URL"] = composed
+    return composed
 
 
 def _psql(sql: str, *, timeout: int = 15) -> str:
@@ -134,24 +199,37 @@ def _esc(value: str) -> str:
 
 
 def _load_project(project_id: int | str) -> dict[str, Any]:
-    """Resolve `project_id` (BIGINT id or name) to the row we need.
+    """Resolve `project_id` (BIGINT id, project_uuid, or name) to the row we need.
 
-    Returns id, project_uuid, name, current_phase, pipeline_version, metadata.
-    Raises RuntimeError if no active project matches.
+    Accepts the same three identifier shapes as
+    ``shared.mcp.tools.orchestrator._resolve_project`` — BIGINT, UUID, or
+    name — so callers can pass whichever they have without first
+    translating. Returns id, project_uuid, name, current_phase,
+    pipeline_version, metadata. Raises RuntimeError if no active project
+    matches.
     """
-    if isinstance(project_id, int) or (isinstance(project_id, str) and project_id.isdigit()):
-        where = f"id = {int(project_id)}"
-    else:
-        where = f"name = '{_esc(str(project_id))}'"
+    pid_str = str(project_id)
+    candidates: list[str] = []
+    if isinstance(project_id, int) or pid_str.isdigit():
+        candidates.append(f"id = {int(pid_str)}")
+    # UUID is 36 chars w/ dashes; let Python validate via try/except.
+    try:
+        UUID(pid_str)
+        candidates.append(f"project_uuid = '{_esc(pid_str)}'::uuid")
+    except (ValueError, AttributeError):
+        pass
+    candidates.append(f"name = '{_esc(pid_str)}'")
+    where = " OR ".join(candidates)
     sql = (
         "SELECT id::text || '|' || project_uuid::text || '|' || name || '|' || "
         "current_phase || '|' || pipeline_version || '|' || "
         "COALESCE(metadata::text,'{}') "
-        f"FROM spine_lifecycle.project WHERE {where} AND status='active' LIMIT 1;"
+        f"FROM spine_lifecycle.project WHERE ({where}) AND status='active' "
+        "ORDER BY id ASC LIMIT 1;"
     )
     out = _psql(sql)
     if not out:
-        raise RuntimeError(f"no active project for id/name={project_id!r}")
+        raise RuntimeError(f"no active project for id/uuid/name={project_id!r}")
     parts = out.split("|", 5)
     return {
         "id": int(parts[0]),

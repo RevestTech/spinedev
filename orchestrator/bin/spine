@@ -319,11 +319,27 @@ cmd_build_brief() {
 cmd_build_report() {
   [[ "${REST_ARGS[0]:-}" == "--help" || ${#REST_ARGS[@]} -eq 0 ]] && {
     _help_for build-report >&2; return 0; }
-  local pid="${REST_ARGS[0]}"; REST_ARGS=("${REST_ARGS[@]:1}")
+  local pid="${REST_ARGS[0]}"
   [[ -z "$pid" ]] && _die 2 "build report: <project_id> required"
-  local artifact actor payload result status
-  artifact="$(_flag_val --artifact)"
-  actor="$(_flag_val --actor)"; actor="${actor:-build}"
+  # Walk a local snapshot ourselves instead of `$(_flag_val …)` — that
+  # forks a subshell, the subshell's REST_ARGS=(…) write doesn't reach
+  # the parent, and on bash 3.2 the subshell-printed value occasionally
+  # comes back empty under file-level `IFS=$'\n\t'`. Tracked as Bug 5.
+  local artifact="" actor="" payload result status arg
+  local -a _ba_left=()
+  local _i=1
+  while (( _i < ${#REST_ARGS[@]} )); do
+    arg="${REST_ARGS[$_i]}"
+    case "$arg" in
+      --artifact)     artifact="${REST_ARGS[$((_i+1))]:-}"; _i=$((_i+2)) ;;
+      --artifact=*)   artifact="${arg#--artifact=}";        _i=$((_i+1)) ;;
+      --actor)        actor="${REST_ARGS[$((_i+1))]:-}";    _i=$((_i+2)) ;;
+      --actor=*)      actor="${arg#--actor=}";              _i=$((_i+1)) ;;
+      *)              _ba_left+=("$arg");                   _i=$((_i+1)) ;;
+    esac
+  done
+  REST_ARGS=(${_ba_left[@]+"${_ba_left[@]}"})
+  actor="${actor:-build}"
   [[ -z "$artifact" ]] && _die 2 "build report: --artifact <path> required"
   [[ -f "$artifact" ]] || _die 2 "build report: artifact file not found: $artifact"
   # Embed the file content as the `artifact` field. Python on the other side

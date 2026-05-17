@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -84,6 +85,61 @@ class IntakeNotInteractive(RuntimeError):
 
 class IntakeTemplateNotFound(FileNotFoundError):
     """The template file for the requested project type is missing."""
+
+
+class IntakeAnswerRejected(ValueError):
+    """An open-text answer failed the minimum-substance heuristic.
+
+    Carries the offending question id + raw value so the MCP wrapper can
+    surface a structured `answer_too_thin` error to non-interactive callers
+    instead of looping on stdin forever.
+    """
+
+    def __init__(self, question_id: str, value: Any, reason: str) -> None:
+        super().__init__(f"{reason}: question_id={question_id!r} value={value!r}")
+        self.question_id = question_id
+        self.value = value
+        self.reason = reason
+
+
+# ── Open-text substance heuristics ─────────────────────────────────────
+
+# Threshold + placeholder set kept narrow on purpose: this is a heuristic
+# guard against dogfood-tier non-answers like "x" or "tbd", not a quality
+# judge. Real review still happens in the product role's PRD pass.
+_OPEN_ANSWER_MIN_CHARS = 8
+_OPEN_ANSWER_MIN_WORDS = 2
+_OPEN_ANSWER_PLACEHOLDERS = {
+    "tbd", "todo", "n/a", "na", "none", "nil", "null", "?", "??", "-", "--",
+}
+_OPEN_ANSWER_PLACEHOLDER_PREFIXES = ("other:",)
+
+
+def _is_thin_open_answer(value: Any) -> str | None:
+    """Return a reason string when `value` reads as a placeholder, else None.
+
+    Only applied to `type: open` answers — yes_no / single_choice /
+    multi_choice are already constrained by the loader.
+    """
+    if value is None:
+        return "empty"
+    if not isinstance(value, str):
+        return None  # lists/bools handled by their own type's normalisation
+    stripped = value.strip()
+    if not stripped:
+        return "empty"
+    low = stripped.lower()
+    if low in _OPEN_ANSWER_PLACEHOLDERS:
+        return "placeholder"
+    if any(low.startswith(p) for p in _OPEN_ANSWER_PLACEHOLDER_PREFIXES):
+        return "placeholder"
+    # The two-clause check: short AND single-word. Either alone is fine
+    # (a short multi-word answer like "no daemon" is meaningful; a long
+    # single-word answer like "foobarbazquux" is likely intentional).
+    word_count = len({w for w in re.findall(r"\w+", low) if w})
+    if len(stripped) < _OPEN_ANSWER_MIN_CHARS and word_count < _OPEN_ANSWER_MIN_WORDS:
+        return "too_short"
+    return None
 
 
 # ── Data classes ───────────────────────────────────────────────────────
@@ -298,6 +354,22 @@ def _ask_one(question: dict[str, Any], *, in_, out) -> Any:
         if normalized is None or (required and _is_empty(normalized)):
             print("   (required — please answer)", file=out)
             continue
+        # Substance check: only fires on open-text; reject placeholders
+        # and 1-3 char single-word answers so the synthesizer doesn't
+        # cheerfully emit a "MUST: x" goal.
+        if qtype == "open" and required:
+            reason = _is_thin_open_answer(normalized)
+            if reason is not None:
+                # Interactive: re-prompt (loop). Non-tty / StringIO test
+                # harness: bubble the rejection so plan_dispatch returns
+                # answer_too_thin instead of looping forever.
+                is_tty = getattr(in_, "isatty", lambda: False)()
+                if is_tty:
+                    print(f"   (too thin — {reason}; try more detail)", file=out)
+                    continue
+                raise IntakeAnswerRejected(
+                    question_id=question["id"], value=normalized, reason=reason,
+                )
         return normalized
 
 
@@ -368,39 +440,65 @@ def _as_list(value: Any) -> list[str]:
     return [text]
 
 
-def _parse_must_should_could(raw: str | None) -> tuple[list[str], list[str], list[str]]:
-    """Parse a free-form 'MUST: a / SHOULD: b / COULD: c' answer into three lists.
+# Tier markers: case-insensitive, in any order, possibly mid-sentence.
+# Match `MUST:` / `SHOULD:` / `COULD:` (also `WON'T:` / `WONT:` -> dropped,
+# we don't carry it into the PRD; the schema has no `wont` bucket).
+_TIER_MARKER_RE = re.compile(
+    r"(?ix)(?P<tier>MUST|SHOULD|COULD|WON'?T)\s*[:\-]\s*"
+)
 
-    Designed to be forgiving: each tier can appear once, on its own line, or
-    inline separated by ` / `. Items within a tier split on `,`.
+
+def _parse_must_should_could(raw: str | None) -> tuple[list[str], list[str], list[str]]:
+    """Split a free-form 'MUST: a, b. SHOULD: c. COULD: d' answer by tier.
+
+    Strategy: locate each tier marker (MUST: / SHOULD: / COULD:), slice
+    the text between consecutive markers as that tier's payload, then
+    split each payload on `,` / `;` / newline. Anything before the first
+    marker is treated as a single MUST goal (back-compat freeform).
+
+    Per-tier item separators are `,`, `;`, and newline only — NOT `.`,
+    which would split "1.5x faster" or "e.g. foo".
     """
     must: list[str] = []
     should: list[str] = []
     could: list[str] = []
-    if not raw:
+    if not raw or not str(raw).strip():
         return must, should, could
-    text = raw.replace(" / ", "\n").replace("/", "\n")
-    current: list[str] | None = None
-    for line in text.splitlines():
-        line = line.strip(" -*")
-        if not line:
-            continue
-        upper = line.upper()
-        if upper.startswith("MUST"):
-            current = must
-            line = line.split(":", 1)[1].strip() if ":" in line else ""
-        elif upper.startswith("SHOULD"):
-            current = should
-            line = line.split(":", 1)[1].strip() if ":" in line else ""
-        elif upper.startswith("COULD") or upper.startswith("WONT") or upper.startswith("WON'T"):
-            current = could
-            line = line.split(":", 1)[1].strip() if ":" in line else ""
-        if current is None or not line:
-            continue
-        for item in line.split(","):
-            item = item.strip()
+    text = str(raw)
+
+    bucket = {"MUST": must, "SHOULD": should, "COULD": could}
+    matches = list(_TIER_MARKER_RE.finditer(text))
+
+    if not matches:
+        # Back-compat: no tier markers → treat the whole answer as one
+        # MUST goal (don't split on `.` — that mangles abbreviations).
+        only = text.strip().strip(" -*")
+        if only:
+            must.append(only)
+        return must, should, could
+
+    # Anything before the first marker is treated as MUST (forgiving for
+    # "Items: MUST: a. SHOULD: b" or similar lede text).
+    pre = text[: matches[0].start()].strip().strip(" -*")
+    if pre:
+        for item in re.split(r"[,;\n]+", pre):
+            item = item.strip(" -*")
             if item:
-                current.append(item)
+                must.append(item)
+
+    for i, m in enumerate(matches):
+        tier = m.group("tier").upper().replace("'", "")
+        if tier == "WONT":
+            continue  # PRD schema has no won't bucket; drop the items
+        start = m.end()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        payload = text[start:end].strip().strip(" -*.")
+        if not payload:
+            continue
+        for item in re.split(r"[,;\n]+", payload):
+            item = item.strip(" -*.")
+            if item:
+                bucket[tier].append(item)
     return must, should, could
 
 
@@ -652,6 +750,7 @@ def _count_populated(prd_dump: dict[str, Any]) -> int:
 
 
 __all__ = [
+    "IntakeAnswerRejected",
     "IntakeNotInteractive",
     "IntakeTemplateNotFound",
     "IntakeResult",
