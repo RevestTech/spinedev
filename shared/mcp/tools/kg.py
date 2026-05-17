@@ -1,13 +1,13 @@
 """Knowledge-graph MCP tools.
 
 Tools from REQ-INIT-6 FR-6 (EPIC-6.5) plus the hybrid retrieval tool from
-FR-8 (EPIC-6.7). The following tools are wired through to Postgres:
+FR-8 (EPIC-6.7). All tools are wired through to Postgres:
+``graph_query`` (STORY-6.5.1 — typed escape hatch over kg_node/kg_edge),
 ``find_callers`` (STORY-6.5.2), ``impact_radius`` (STORY-6.5.5),
 ``trace_dependency`` (STORY-6.5.3), ``code_neighborhood`` (STORY-6.5.4),
 ``doc_for_region`` (STORY-6.5.6), ``who_owns`` (STORY-6.5.7),
 ``find_by_satisfies`` (STORY-6.5.8), and ``hybrid_search`` (STORY-6.7.3 —
 embedding pipeline + RRF re-rank; see ``build/kg/embeddings/embedder_README.md``).
-``graph_query`` remains scaffolding pending its own story.
 
 Tools registered: ``graph_query``, ``find_callers``, ``trace_dependency``,
 ``code_neighborhood``, ``impact_radius``, ``doc_for_region``, ``who_owns``,
@@ -25,7 +25,7 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from shared.mcp.schemas import ToolResponse, ToolStatus
+from shared.mcp.schemas import ToolError, ToolResponse, ToolStatus
 from shared.mcp.tools import register_tool
 
 logger = logging.getLogger(__name__)
@@ -73,19 +73,39 @@ def _log(tool: str, project_id: str) -> None:
     logger.info("mcp_tool_call", extra={"tool": tool, "project_id": project_id, "actor": "agent"})
 
 
-def _stub(data: dict) -> ToolResponse:
-    return ToolResponse(status="stub_implementation", data=data)
-
-
 # -- Input models (one per tool so the registry can introspect them) -------
 
 
 class GraphQueryInput(BaseModel):
-    """Inputs for ``graph_query``."""
+    """Inputs for ``graph_query`` (STORY-6.5.1).
+
+    Generic escape-hatch over ``spine_kg.kg_node`` / ``kg_edge``. The 8 typed
+    KG tools (``find_callers``, ``code_neighborhood``, ...) cover the named
+    access patterns; this one exists so power users can run ad-hoc filtered
+    lookups without dropping to psql. At least one of ``node_type`` /
+    ``edge_type`` MUST be set — an unfiltered query would be a table scan.
+    """
 
     model_config = _FORBID
     project_id: str = Field(..., min_length=1)
-    query: str = Field(..., min_length=1, description="Raw cypher-like or SQL query against spine_kg.")
+    node_type: str | None = Field(default=None,
+        description="Filter nodes by `type` (e.g. 'Function', 'Document'). At least "
+                    "one of node_type/edge_type is required.")
+    where: dict[str, str] | None = Field(default=None,
+        description="Property filters as {key: value} pairs against kg_node_property "
+                    "(AND-joined). Keys are denormalized hot-key projections of "
+                    "kg_node.properties.")
+    edge_type: str | None = Field(default=None,
+        description="When set, return edges of this type. If node_type is also set, "
+                    "the edge's source node must also match node_type/where.")
+    repo: str | None = Field(default=None,
+        description="Optional repo scope; without this all repos are searched.")
+    commit_sha: str | None = Field(default=None,
+        description="Point-in-time snapshot (NFR-6); default = currently-valid rows.")
+    limit: int = Field(default=50, ge=1, le=500,
+        description="Cap on returned rows; max 500 (use a typed tool for large sweeps).")
+    actor: str = Field(default="system", min_length=1,
+        description="Role / subsystem invoking the query (audit attribution).")
 
 
 class FindCallersInput(BaseModel):
@@ -194,6 +214,43 @@ class FindBySatisfiesInput(BaseModel):
 
 
 # -- Output models (returned inside ToolResponse.data) ---------------------
+
+
+class GraphQueryNode(BaseModel):
+    """One node row from ``graph_query`` (when ``edge_type`` is unset)."""
+
+    model_config = _FORBID
+    node_id: str
+    node_type: str
+    name: str
+    path: str
+    properties: dict[str, str]
+
+
+class GraphQueryEdge(BaseModel):
+    """One edge row from ``graph_query`` (when ``edge_type`` is set)."""
+
+    model_config = _FORBID
+    edge_id: int
+    edge_type: str
+    from_node_id: str
+    to_node_id: str
+    from_node_type: str
+    to_node_type: str
+
+
+class GraphQueryOutput(BaseModel):
+    """Structured payload for ``graph_query``. ``mode`` echoes which arm of
+    the dispatcher ran so callers don't have to inspect both lists."""
+
+    model_config = _FORBID
+    status: str
+    mode: Literal["nodes", "edges"]
+    nodes: list[GraphQueryNode] = Field(default_factory=list)
+    edges: list[GraphQueryEdge] = Field(default_factory=list)
+    total_returned: int
+    query_latency_ms: int
+    audit_id: UUID
 
 
 class CallerInfo(BaseModel):
@@ -417,14 +474,16 @@ def _run_psql_query(sql: str, params: dict[str, Any]) -> list[dict[str, str]]:
     ``:'name'`` (quoted) or ``:name`` (raw) in the SQL — same convention used
     elsewhere in this repo. Output is parsed as US-separated, header-led rows.
     """
+    # `:var` substitution does NOT work with `psql -c "..."` — only with stdin
+    # or `-f`. Pipe SQL via stdin so the -v bindings actually fire.
     cmd: list[str] = ["psql", _db_url(), "-A", "-X", "-q", "-v", "ON_ERROR_STOP=1",
                       "-F", _SEP, "--pset=footer=off"]
     for k, v in params.items():
         # Coerce to str; psql -v always takes string values.
         cmd.extend(["-v", f"{k}={v}"])
-    cmd.extend(["-c", sql])
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=10, check=True)
+        proc = subprocess.run(cmd, input=sql, capture_output=True, text=True,
+                              timeout=10, check=True)
     except subprocess.CalledProcessError as e:
         raise RuntimeError(f"psql query failed: {e.stderr.strip()}") from e
     lines = [ln for ln in proc.stdout.splitlines() if ln]
@@ -647,12 +706,208 @@ def _write_kg_audit(action: str, subject_id: str, metadata: dict[str, Any]) -> U
 # -- Tool functions --------------------------------------------------------
 
 
+def _sanitize_identifier(value: str) -> str | None:
+    """Allow A-Z a-z 0-9 underscore only; None if anything else slips in.
+
+    Used for ``node_type`` / ``edge_type`` / property keys before string-
+    interpolating into SQL (psql ``-v`` parameters can't help inside ``IN``
+    lists or column names). Matches the upstream taxonomy in V2 — types are
+    PascalCase, edge types SHOUTY_SNAKE_CASE, property keys snake_case.
+    """
+    if not value:
+        return None
+    if all(c.isalnum() or c == "_" for c in value):
+        return value
+    return None
+
+
 @register_tool(name="graph_query", input_model=GraphQueryInput, story="STORY-6.5.1",
-               description="Raw KG query escape hatch for power users.", tags=("kg",))
+               description="Filtered escape-hatch query over kg_node/kg_edge for ad-hoc lookups.",
+               tags=("kg",))
 def graph_query(payload: GraphQueryInput) -> ToolResponse:
-    """Stub. TODO STORY-6.5.1: real implementation."""
+    """Open-ended KG lookup with mandatory ``node_type`` and/or ``edge_type``
+    scoping. With only ``node_type`` (+ optional ``where``), returns matching
+    nodes; with ``edge_type`` set, returns edges of that type whose source
+    node also matches the node filter. ``where`` filters AND-join against
+    ``spine_kg.kg_node_property`` (the denormalized hot-key projection).
+    """
     _log("graph_query", payload.project_id)
-    return _stub({"rows": []})
+    started = time.perf_counter()
+
+    # Mandatory scoping: at least one of node_type/edge_type must be set.
+    if payload.node_type is None and payload.edge_type is None:
+        audit_id = _write_kg_audit("kg_query", payload.project_id,
+                                   {"tool": "graph_query", "result": "no_filter"})
+        return ToolResponse(status="error", audit_id=audit_id, error=ToolError(
+            code="no_filter",
+            message="graph_query requires at least one of node_type or edge_type; "
+                    "an unfiltered sweep would table-scan kg_node. Use one of the "
+                    "typed tools (find_callers, code_neighborhood, ...) for named "
+                    "access patterns.",
+            retryable=False))
+
+    # Defense in depth: input model caps limit at 500 but a missing alias
+    # could let a callsite pass a raw dict — re-check before we trust it.
+    if payload.limit > 500:
+        audit_id = _write_kg_audit("kg_query", payload.project_id,
+                                   {"tool": "graph_query", "result": "limit_too_large",
+                                    "requested_limit": payload.limit})
+        return ToolResponse(status="error", audit_id=audit_id, error=ToolError(
+            code="limit_too_large",
+            message=f"limit={payload.limit} exceeds the 500-row cap.",
+            retryable=False))
+
+    node_type = _sanitize_identifier(payload.node_type) if payload.node_type else None
+    edge_type = _sanitize_identifier(payload.edge_type) if payload.edge_type else None
+    if (payload.node_type and node_type is None) or (payload.edge_type and edge_type is None):
+        audit_id = _write_kg_audit("kg_query", payload.project_id,
+                                   {"tool": "graph_query", "result": "invalid_identifier"})
+        return ToolResponse(status="error", audit_id=audit_id, error=ToolError(
+            code="invalid_identifier",
+            message="node_type / edge_type must be alphanumeric + underscore only.",
+            retryable=False))
+
+    # Pre-validate property-filter keys — values are bound via psql params,
+    # keys would be interpolated so they must pass the same gauntlet.
+    where = payload.where or {}
+    for k in where:
+        if _sanitize_identifier(k) is None:
+            audit_id = _write_kg_audit("kg_query", payload.project_id,
+                                       {"tool": "graph_query", "result": "invalid_property_key",
+                                        "key": k})
+            return ToolResponse(status="error", audit_id=audit_id, error=ToolError(
+                code="invalid_property_key",
+                message=f"property key {k!r} must be alphanumeric + underscore only.",
+                retryable=False))
+
+    # Build the WHERE clauses for kg_node. node_type is interpolated (already
+    # sanitised); repo/commit_sha go through the param channel.
+    node_clauses: list[str] = [_commit_filter(payload.commit_sha, "n")]
+    params: dict[str, Any] = {"limit": payload.limit}
+    if node_type is not None:
+        node_clauses.append(f"n.type = '{node_type}'")
+    if payload.repo:
+        node_clauses.append("n.repo = :'repo'")
+        params["repo"] = payload.repo
+    if payload.commit_sha:
+        params["commit_sha"] = payload.commit_sha
+    # AND-join one EXISTS subquery per property filter so the planner can use
+    # the (key, value) index on kg_node_property.
+    for i, (k, v) in enumerate(where.items()):
+        pk = f"prop_v_{i}"
+        node_clauses.append(
+            f"EXISTS (SELECT 1 FROM spine_kg.kg_node_property p{i} "
+            f"WHERE p{i}.node_id = n.id AND p{i}.key = '{k}' "
+            f"AND p{i}.value = :'{pk}')"
+        )
+        params[pk] = v
+
+    if edge_type is None:
+        # NODE MODE — return nodes matching the filter set.
+        sql = (
+            "SELECT n.node_id, n.type, COALESCE(n.name, n.node_id) AS name, "
+            "       COALESCE(n.path, '') AS path "
+            "FROM spine_kg.kg_node n "
+            f"WHERE {' AND '.join(node_clauses)} "
+            "ORDER BY n.created_at DESC, n.id ASC "
+            "LIMIT :limit;"
+        )
+        rows = _run_psql_query(sql, params)
+
+        # Hydrate properties via the denormalised hot-key table — one batch
+        # query keyed by node_id so we don't N+1 the DB.
+        node_ids_str = [r.get("node_id", "") for r in rows if r.get("node_id")]
+        props_by_node: dict[str, dict[str, str]] = {nid: {} for nid in node_ids_str}
+        if node_ids_str:
+            # node_id is a TEXT column; build a quoted SQL array literal.
+            esc = lambda s: s.replace("'", "''")  # noqa: E731
+            id_csv = ",".join(f"'{esc(nid)}'" for nid in node_ids_str)
+            prop_sql = (
+                "SELECT n.node_id, p.key, p.value "
+                "FROM spine_kg.kg_node_property p "
+                "JOIN spine_kg.kg_node n ON n.id = p.node_id "
+                f"WHERE n.node_id IN ({id_csv}) "
+                "LIMIT 5000;"
+            )
+            for pr in _run_psql_query(prop_sql, {}):
+                nid = pr.get("node_id", "")
+                k = pr.get("key", "")
+                if nid and k and nid in props_by_node:
+                    props_by_node[nid][k] = pr.get("value", "")
+
+        nodes = [GraphQueryNode(
+            node_id=r.get("node_id", ""),
+            node_type=r.get("type", ""),
+            name=r.get("name", ""),
+            path=r.get("path", ""),
+            properties=props_by_node.get(r.get("node_id", ""), {}),
+        ) for r in rows]
+
+        latency_ms = int((time.perf_counter() - started) * 1000)
+        audit_id = _write_kg_audit("kg_query", payload.project_id,
+                                   {"tool": "graph_query", "mode": "nodes",
+                                    "node_type": node_type,
+                                    "where_keys": sorted(where.keys()),
+                                    "result_count": len(nodes),
+                                    "latency_ms": latency_ms})
+        out = GraphQueryOutput(status="ok", mode="nodes", nodes=nodes,
+                               edges=[], total_returned=len(nodes),
+                               query_latency_ms=latency_ms, audit_id=audit_id)
+        return ToolResponse(status="ok", data=out.model_dump(mode="json"),
+                            audit_id=audit_id)
+
+    # EDGE MODE — return edges of `edge_type`. The node filter (if present)
+    # constrains the FROM node; the TO node is hydrated for display only.
+    edge_clauses: list[str] = [
+        f"e.type = '{edge_type}'",
+        _commit_filter(payload.commit_sha, "e"),
+        _commit_filter(payload.commit_sha, "n"),
+    ]
+    # Reuse node_clauses (already includes the n.* commit filter) for the
+    # FROM-side node restriction.
+    for c in node_clauses:
+        if c not in edge_clauses:
+            edge_clauses.append(c)
+
+    edge_sql = (
+        "SELECT e.id AS edge_id, e.type AS edge_type, "
+        "       n.node_id AS from_node_id, n.type AS from_node_type, "
+        "       t.node_id AS to_node_id, t.type AS to_node_type "
+        "FROM spine_kg.kg_edge e "
+        "JOIN spine_kg.kg_node n ON n.id = e.from_node_id "
+        "JOIN spine_kg.kg_node t ON t.id = e.to_node_id "
+        f"WHERE {' AND '.join(edge_clauses)} "
+        f"AND {_commit_filter(payload.commit_sha, 't')} "
+        "ORDER BY e.id DESC "
+        "LIMIT :limit;"
+    )
+    erows = _run_psql_query(edge_sql, params)
+    edges: list[GraphQueryEdge] = []
+    for r in erows:
+        try:
+            edges.append(GraphQueryEdge(
+                edge_id=int(r.get("edge_id", "0")),
+                edge_type=r.get("edge_type", ""),
+                from_node_id=r.get("from_node_id", ""),
+                to_node_id=r.get("to_node_id", ""),
+                from_node_type=r.get("from_node_type", ""),
+                to_node_type=r.get("to_node_type", ""),
+            ))
+        except (KeyError, ValueError):
+            continue
+
+    latency_ms = int((time.perf_counter() - started) * 1000)
+    audit_id = _write_kg_audit("kg_query", payload.project_id,
+                               {"tool": "graph_query", "mode": "edges",
+                                "edge_type": edge_type, "node_type": node_type,
+                                "where_keys": sorted(where.keys()),
+                                "result_count": len(edges),
+                                "latency_ms": latency_ms})
+    out = GraphQueryOutput(status="ok", mode="edges", nodes=[], edges=edges,
+                           total_returned=len(edges),
+                           query_latency_ms=latency_ms, audit_id=audit_id)
+    return ToolResponse(status="ok", data=out.model_dump(mode="json"),
+                        audit_id=audit_id)
 
 
 @register_tool(name="find_callers", input_model=FindCallersInput, story="STORY-6.5.2",
@@ -1559,7 +1814,8 @@ __all__: list[str] = [
     "CallerInfo", "CodeNeighborhoodInput", "CodeNeighborhoodOutput",
     "DependencyPath", "DocForRegionInput", "DocForRegionOutput", "DocReference",
     "FindBySatisfiesInput", "FindBySatisfiesOutput",
-    "FindCallersInput", "FindCallersOutput", "GraphQueryInput",
+    "FindCallersInput", "FindCallersOutput", "GraphQueryEdge", "GraphQueryInput",
+    "GraphQueryNode", "GraphQueryOutput",
     "HybridSearchInput", "HybridSearchOutput", "HybridSearchResult",
     "ImpactedNode", "ImpactRadiusInput", "ImpactRadiusOutput",
     "NeighborEdge", "NeighborNode", "Owner", "SatisfyingRegion",
