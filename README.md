@@ -18,7 +18,7 @@ make smoke                # 78+ PASS  /  0 FAIL  ← the v2 acceptance gate
 
 `make bootstrap` runs `tools/bootstrap.sh`, which: checks `docker` / `python3>=3.10` / `psql` / `make` are on PATH; creates `.venv` and `pip install -r requirements.txt`; brings up the Spine Postgres (`spine_postgres` on `127.0.0.1:33001`) and the TRON Postgres (`spine_tron_postgres` on `127.0.0.1:33010`); runs Flyway migrations (and reconciles the wave-9 F2 history drift); runs TRON's Alembic migrations; and finally runs the smoke test as the acceptance gate. Idempotent end-to-end.
 
-To cold-start from a clean state: `make nuke && make bootstrap` (asks before destroying volumes + `.venv`). See `docs/STATUS.md §6` for the full v2 state.
+To cold-start from a clean state: `make nuke && make bootstrap` (asks before destroying volumes + `.venv`). See `docs/STATUS.md §6` for the full v2 state, and `§8` for the dogfood "external implementer" workflow + the Claude Code subagent sandbox gotcha.
 
 The rest of this README documents the v1 installer (`bash install.sh <target-project>`) for installing the agent team into a *different* project.
 

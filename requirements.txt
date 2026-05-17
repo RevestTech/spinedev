@@ -55,3 +55,8 @@ cryptography==48.0.0
 # ── Console output (TRON CLI helpers + bandit output formatting) ─────
 click==8.3.3
 rich==15.0.0
+
+# ── Test runner (used by smoke-test phase 11 + ad-hoc dogfood tests) ──
+# Without this in the venv, dogfooders hit "No module named pytest" the
+# first time they run an implementer's test suite (see docs/STATUS.md §8).
+pytest==9.0.3

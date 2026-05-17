@@ -291,3 +291,23 @@ After: `tools/spine-flyway-sync.sh` (called from `tools/bootstrap.sh` as step 6)
 - **`spine doctor`** is now a real surface — extend further as new subsystems land (KG ingestion, audit query API, calibration UI, etc.).
 - **CI**: a GitHub Actions workflow that runs `make bootstrap && bash tools/smoke-test.sh --ci` on every PR. Out of scope for this pass; the pieces are in place.
 - **Real MCP tool stubs** (`graph_query`, `iso_invoke`, `org_standards_get`) — explicitly out of scope here; tracked in the §6 stub map.
+
+---
+
+## 8. Sandbox additionalDirectories gotcha — for future dogfooders
+
+Spine v2 dogfood is an "external implementer" model: Spine produces a Build Brief, you (or an agent — typically a Claude Code subagent via the Agent tool) build the artifact *somewhere else*, then `spine build report` ingests it back. The boundary matters because the implementer process is sandboxed differently than the parent Spine session.
+
+**The trap.** When the implementer is a Claude Code subagent launched via the Agent tool, that subagent does **not** inherit `/add-dir` directories from the parent session. It gets:
+- the parent session's `additionalDirectories` array from `settings.json` (if set), plus
+- the `permissions.allow` entries in `.claude/settings.local.json`.
+
+That's it. Any directory the parent added live via `/add-dir` is invisible to the child.
+
+**For build agents that need to write outside the Spine repo (the faithful workflow), do one of:**
+- (a) Add explicit `Bash`/`Write`/`Edit` permission entries to `.claude/settings.local.json` for the target paths *before* spawning the subagent, **or**
+- (b) Build inside a subpath under an already-allowed dir — e.g. we used `~/Projects/downloads-organizer/.dogfood-scratch/` as the scratch target because `~/Projects/downloads-organizer/**` was already approved.
+
+**Concrete bug we hit.** `/tmp/dogfood-downloads/**` allow rules in `settings.local.json` did **not** take effect for `Bash` invocations from subagents, even with broad `Bash(touch *)` patterns. Likely harness-specific (Claude Code v2.1.141). The workaround was option (b) — build under `~/Projects/<project-name>/.dogfood-scratch/` rather than `/tmp/`.
+
+See commits `a347e37` through `dd2f1e4` for the full dogfood loop that surfaced this.

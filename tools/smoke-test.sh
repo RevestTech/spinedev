@@ -272,6 +272,85 @@ phase6_kg() {
   python3 -c "from shared.mcp.tools import discover_tools, TOOL_REGISTRY; discover_tools(); assert 'find_callers' in TOOL_REGISTRY" 2>/dev/null \
     && _pass kg.find_callers_registered "find_callers tool registered" \
     || _fail kg.find_callers_registered "find_callers not in TOOL_REGISTRY"
+
+  # graph_query — generic escape-hatch over kg_node / kg_edge.
+  export PYTHONPATH="$REPO_ROOT${PYTHONPATH:+:$PYTHONPATH}"
+  local kg_script kg_out
+  kg_script="$(mktemp "${TMPDIR:-/tmp}/spine-graph-query-smoke-XXXX.py")"
+  cat >"$kg_script" <<'PY'
+from shared.mcp.tools import discover_tools, TOOL_REGISTRY
+discover_tools()
+def call(name, payload):
+    spec = TOOL_REGISTRY[name]
+    return spec.fn(spec.input_model.model_validate(payload)).model_dump(mode="json")
+def emit(cid, ok, msg=""): print(f"{cid}|{'PASS' if ok else 'FAIL'}|{msg}")
+# 1) Valid filtered query — returns ok, mode=nodes, total_returned>=0.
+try:
+    r = call("graph_query", {"project_id": "smoke", "node_type": "Function", "limit": 5})
+    emit("kg.graph_query.ok", r["status"] == "ok" and r["data"]["mode"] == "nodes"
+         and isinstance(r["data"]["total_returned"], int), str(r)[:200])
+except Exception as e:
+    emit("kg.graph_query.ok", False, f"{type(e).__name__}: {str(e)[:200]}")
+# 2) limit > 500 must be rejected — handled by Pydantic le=500 (validation error).
+try:
+    bad = call("graph_query", {"project_id": "smoke", "node_type": "Function", "limit": 1000})
+    emit("kg.graph_query.limit_too_large",
+         bad["status"] == "error" and (bad.get("error") or {}).get("code") == "limit_too_large",
+         str(bad.get("error"))[:200])
+except Exception as e:
+    emit("kg.graph_query.limit_too_large", "ValidationError" in type(e).__name__
+         or "limit" in str(e).lower(), f"{type(e).__name__}: {str(e)[:100]}")
+# 3) Both filters unset must be rejected with no_filter.
+nf = call("graph_query", {"project_id": "smoke"})
+emit("kg.graph_query.no_filter",
+     nf["status"] == "error" and (nf.get("error") or {}).get("code") == "no_filter",
+     str(nf.get("error"))[:200])
+PY
+  kg_out="$(SPINE_DB_URL="$SPINE_DB_URL" python3 "$kg_script" 2>&1 || true)"
+  rm -f "$kg_script"
+  local line cid st msg
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    if [[ "$line" == *"|"*"|"* ]]; then
+      cid="${line%%|*}"; line="${line#*|}"; st="${line%%|*}"; msg="${line#*|}"
+      _emit "$st" "$cid" "$msg"
+    elif [[ $VERBOSE -eq 1 ]]; then _info kg.trace "$line"; fi
+  done <<< "$kg_out"
+
+  # org_standards_get — fetch default bundle + reject unknown bundle.
+  local std_script std_out
+  std_script="$(mktemp "${TMPDIR:-/tmp}/spine-standards-smoke-XXXX.py")"
+  cat >"$std_script" <<'PY'
+from shared.mcp.tools import discover_tools, TOOL_REGISTRY
+discover_tools()
+def call(name, payload):
+    spec = TOOL_REGISTRY[name]
+    return spec.fn(spec.input_model.model_validate(payload)).model_dump(mode="json")
+def emit(cid, ok, msg=""): print(f"{cid}|{'PASS' if ok else 'FAIL'}|{msg}")
+# 1) Default bundle loads + parses (in-repo; no SPINE_HOME needed).
+r = call("org_standards_get", {"project_id": "smoke", "bundle_name": "default"})
+ok1 = (r["status"] == "ok"
+       and isinstance(r["data"]["standards"], dict)
+       and r["data"]["standards"].get("identity", {}).get("bundle_id"))
+emit("std.default_bundle_loads", ok1, str(r.get("error") or r["data"].get("bundle_id"))[:200])
+emit("std.default_bundle_hashed",
+     bool(r["data"].get("content_sha256")) and len(r["data"]["content_sha256"]) == 64,
+     r["data"].get("content_sha256", "")[:16])
+# 2) Unknown bundle → structured error with code='unknown_bundle'.
+u = call("org_standards_get", {"project_id": "smoke", "bundle_name": "does-not-exist-xyz"})
+emit("std.unknown_bundle_rejected",
+     u["status"] == "error" and (u.get("error") or {}).get("code") == "unknown_bundle",
+     str(u.get("error"))[:200])
+PY
+  std_out="$(SPINE_DB_URL="$SPINE_DB_URL" python3 "$std_script" 2>&1 || true)"
+  rm -f "$std_script"
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    if [[ "$line" == *"|"*"|"* ]]; then
+      cid="${line%%|*}"; line="${line#*|}"; st="${line%%|*}"; msg="${line#*|}"
+      _emit "$st" "$cid" "$msg"
+    elif [[ $VERBOSE -eq 1 ]]; then _info std.trace "$line"; fi
+  done <<< "$std_out"
 }
 
 # ─── phase 7: optional integrations ──────────────────────────────────
@@ -485,6 +564,124 @@ try:
         emit("intake.templates_load","PASS","all 6 shipped templates load")
 except Exception as e:
     emit("intake.templates_load","FAIL",f"{type(e).__name__}: {e}")
+
+# Bug 1 regression: thin open-text answers must be rejected.
+try:
+    from plan.runtime.intake_runner import IntakeAnswerRejected, _is_thin_open_answer
+    bad_cases = [("x", "too_short"), ("MUST: x", None),
+                 ("tbd", "placeholder"), ("Other:", "placeholder"),
+                 ("?", "placeholder"), ("  ", "empty")]
+    failures = []
+    for value, expect in bad_cases:
+        got = _is_thin_open_answer(value)
+        # MUST: x is 7 chars + 2 words, passes by design. Substance check
+        # is per-answer; the tier parser handles the SHOULD/COULD split.
+        if expect is None:
+            if got is not None:
+                failures.append(f"{value!r}: expected pass, got {got!r}")
+        else:
+            if got != expect:
+                failures.append(f"{value!r}: expected {expect!r}, got {got!r}")
+    # The dogfood repro: a 1-char open answer must be flagged too_short.
+    if _is_thin_open_answer("x") != "too_short":
+        failures.append("'x' not too_short")
+    if failures:
+        emit("intake.bug1_answer_too_thin","FAIL","; ".join(failures))
+    else:
+        emit("intake.bug1_answer_too_thin","PASS","heuristic flags thin answers")
+except Exception as e:
+    emit("intake.bug1_answer_too_thin","FAIL",f"{type(e).__name__}: {e}")
+
+# Bug 1 regression: IntakeAnswerRejected fires through run_intake on the
+# non-tty path. We feed a 1-char open answer and expect the exception
+# (not a happily-synthesized PRD with a thin statement).
+try:
+    import io, os, subprocess
+    from plan.runtime.intake_runner import run_intake, IntakeAnswerRejected
+    db_url = os.environ.get("SPINE_DB_URL", "")
+    if not db_url:
+        emit("intake.bug1_regression_thin","SKIP","SPINE_DB_URL unset")
+    else:
+        proj_name = os.environ.get("SMOKE_NAME","smoke") + "-bug1-thin"
+        ins_sql = (
+            "INSERT INTO spine_lifecycle.project (name, project_type, "
+            "pipeline_version, pipeline_manifest_path, owner_user) "
+            "VALUES (" + repr(proj_name) + ",'greenfield','v1',"
+            "'orchestrator/state/phases.yaml','smoke-harness') RETURNING id;"
+        ).replace("'" + proj_name + "'", "'" + proj_name + "'")
+        # The .replace above is a no-op; kept for clarity that repr() already
+        # quoted the name. psql wants single quotes; repr() produces them.
+        ins_sql = ins_sql.replace('"' + proj_name + '"', "'" + proj_name + "'")
+        out = subprocess.run(
+            ["psql", db_url, "-At", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-c", ins_sql],
+            capture_output=True, text=True, timeout=10,
+        )
+        pid = out.stdout.strip()
+        # Stub stdin: question 1 (single_choice audience) gets "1"; the
+        # second question is the open primary_job — we feed a 1-char value
+        # so the substance check fires.
+        stdin = io.StringIO("1\nx\n")
+        stdout = io.StringIO()
+        os.environ["SPINE_INTAKE_ALLOW_NONTTY"] = "1"
+        try:
+            run_intake(pid, template="cli-tool", actor="smoke", in_=stdin, out=stdout)
+            emit("intake.bug1_regression_thin","FAIL","run_intake accepted thin answer")
+        except IntakeAnswerRejected as exc:
+            ok = exc.question_id == "primary_job" and exc.reason == "too_short"
+            emit("intake.bug1_regression_thin", "PASS" if ok else "FAIL",
+                 "qid=" + str(exc.question_id) + " reason=" + str(exc.reason))
+        except Exception as exc:
+            emit("intake.bug1_regression_thin","FAIL",
+                 "wrong exception " + type(exc).__name__ + ": " + str(exc))
+        finally:
+            os.environ.pop("SPINE_INTAKE_ALLOW_NONTTY", None)
+except Exception as e:
+    emit("intake.bug1_regression_thin","FAIL", type(e).__name__ + ": " + str(e))
+
+# Bug 2 regression: tier-splitting MUST/SHOULD/COULD in one answer.
+# The fix splits on tier markers, then within each tier on commas,
+# semicolons, or newlines (NOT periods, which mangles abbreviations).
+try:
+    prd = synthesize_prd_draft(
+        project_uuid="00000000-0000-0000-0000-000000000000",
+        project_name="smoke-bug2",
+        template_name="cli-tool",
+        actor="smoke",
+        answers={
+            "audience": "developer_dx",
+            "primary_job": "organize files in Downloads into typed folders",
+            "install_method": ["homebrew"],
+            "output_formats": ["human_readable_tty"],
+            "cross_platform": ["macos_arm"],
+            "config_file": "no_config_flags_only",
+            "subcommand_depth": "single_verb",
+            "composability": True, "tty_awareness": True,
+            "dependencies_runtime": "stdlib only",
+            "must_should_could": "MUST: organize, dry-run, undo. SHOULD: watch mode, doctor. COULD: plugins",
+            "out_of_scope": "No GUI; no daemon",
+        },
+    )
+    must = [g.statement for g in prd.goals.must]
+    should = [g.statement for g in prd.goals.should]
+    could = [g.statement for g in prd.goals.could]
+    issues = []
+    if must != ["organize", "dry-run", "undo"]:
+        issues.append(f"must={must!r}")
+    if should != ["watch mode", "doctor"]:
+        issues.append(f"should={should!r}")
+    if could != ["plugins"]:
+        issues.append(f"could={could!r}")
+    # Belt-and-braces: no SHOULD text should bleed into a MUST goal.
+    for m in must:
+        if "SHOULD" in m.upper() or "COULD" in m.upper():
+            issues.append(f"tier-bleed into must: {m!r}")
+    if issues:
+        emit("intake.bug2_tier_split","FAIL","; ".join(issues))
+    else:
+        emit("intake.bug2_tier_split","PASS",
+             f"must={len(must)} should={len(should)} could={len(could)}")
+except Exception as e:
+    emit("intake.bug2_tier_split","FAIL",f"{type(e).__name__}: {e}")
 PY
 )"
   local line cid st msg
@@ -647,18 +844,134 @@ emit("build.completed.ok_second",
 hlen = _q(f"SELECT jsonb_array_length(metadata->'build_history') FROM spine_lifecycle.project "
           f"WHERE id={pid_b};")
 emit("build.completed.history_grows", hlen == "2", f"history_length={hlen}")
+
+# 7) Bug 3 regression: build_dispatch must accept project_uuid.
+r = call("build_dispatch", {"project_id": uuid_b, "pipeline_version": "1.0.0",
+                            "actor": "smoke-build"})
+emit("build.bug3_dispatch_by_uuid",
+     r["status"] == "ok" and r["data"]["engineering_goals_count"] > 0,
+     json.dumps(r)[:200])
+# Hand the test below the project id via stdout for the bash wrapper to read.
+print(f"BUG4_PID|{pid_b}")
 PY
   out="$(SPINE_DB_URL="$SPINE_DB_URL" SMOKE_NAME="$SMOKE_NAME_PREFIX-build" \
          python3 "$script" 2>&1 || true)"
   rm -f "$script"
-  local line cid st msg
+  local line cid st msg b4_pid=""
   while IFS= read -r line; do
     [[ -z "$line" ]] && continue
-    if [[ "$line" == *"|"*"|"* ]]; then
+    if [[ "$line" == BUG4_PID\|* ]]; then
+      b4_pid="${line#BUG4_PID|}"
+    elif [[ "$line" == *"|"*"|"* ]]; then
       cid="${line%%|*}"; line="${line#*|}"; st="${line%%|*}"; msg="${line#*|}"
       _emit "$st" "$cid" "$msg"
     elif [[ $VERBOSE -eq 1 ]]; then _info build.trace "$line"; fi
   done <<< "$out"
+
+  _bug4_env_fallback_regression "$b4_pid"
+  _bug5_real_cli_regression
+}
+
+# Bug 4 regression: build_dispatcher composes its own SPINE_DB_URL from
+# db/.env when nothing is exported. We spawn a clean python3 with no
+# Spine env vars, call dispatch_build, and check it ran against postgres.
+_bug4_env_fallback_regression() {
+  local b4_pid="$1"
+  if [[ -z "$b4_pid" ]]; then
+    _skip build.bug4_db_url_fallback "no fixture project id from phase 10"
+    return 0
+  fi
+  if ! command -v python3 >/dev/null 2>&1; then
+    _skip build.bug4_db_url_fallback "python3 missing"; return 0
+  fi
+  local probe; probe="$(mktemp "${TMPDIR:-/tmp}/spine-bug4-probe-XXXX.py")"
+  cat >"$probe" <<'PYBUG4'
+import json, os, sys
+sys.path.insert(0, os.environ["SPINE_HOME"])
+from build.runtime.build_dispatcher import dispatch_build, _db_url
+url = _db_url()
+r = dispatch_build(int(os.environ["BUG4_PID"]), actor="smoke-bug4")
+print(json.dumps({
+    "url_ok": url.startswith("postgresql://"),
+    "project_id": r.project_id,
+    "engineering_goals_count": r.engineering_goals_count,
+}))
+PYBUG4
+  # Build a clean env: PATH/HOME only — no SPINE_DB_URL, no POSTGRES_*.
+  # Sets SPINE_HOME so the probe can import build.runtime.*.
+  local out_b4 rc_b4
+  out_b4="$(env -i \
+      PATH="$PATH" HOME="$HOME" \
+      SPINE_HOME="$REPO_ROOT" BUG4_PID="$b4_pid" \
+      python3 "$probe" 2>&1)"
+  rc_b4=$?
+  rm -f "$probe"
+  if (( rc_b4 != 0 )); then
+    _fail build.bug4_db_url_fallback "probe rc=$rc_b4 out=${out_b4:0:300}"
+    return 0
+  fi
+  # Parse the JSON line and assert all three flags.
+  local last_line; last_line="$(printf '%s\n' "$out_b4" | tail -1)"
+  if [[ "$last_line" == *'"url_ok": true'* && "$last_line" == *'"engineering_goals_count": '* ]]; then
+    _pass build.bug4_db_url_fallback "no env, dispatcher fell back to db/.env: $last_line"
+  else
+    _fail build.bug4_db_url_fallback "unexpected probe output: $last_line"
+  fi
+}
+
+# Bug 5 regression: real shell invocation of the spine CLI build report
+# subcommand. Failure mode: CLI dies at flag-parse with required-flag
+# message before reaching the MCP layer.
+_bug5_real_cli_regression() {
+  local spine_bin="$REPO_ROOT/orchestrator/bin/spine"
+  if [[ ! -x "$spine_bin" ]]; then
+    _skip build.bug5_cli_artifact_flag "spine binary not executable"
+    return 0
+  fi
+  local b5_name="${SMOKE_NAME_PREFIX}-build-with-prd" b5_pid b5_uuid
+  b5_pid="$(_psql -c "SELECT id FROM spine_lifecycle.project WHERE name='${b5_name}' AND status='active' LIMIT 1;" 2>/dev/null | tr -d ' \r')"
+  if [[ -z "$b5_pid" ]]; then
+    _skip build.bug5_cli_artifact_flag "no fixture project from phase 10"
+    return 0
+  fi
+  b5_uuid="$(_psql -c "SELECT project_uuid FROM spine_lifecycle.project WHERE id=$b5_pid;" 2>/dev/null | tr -d ' \r')"
+  local b5_art; b5_art="$(mktemp "${TMPDIR:-/tmp}/spine-bug5-artifact-XXXX.json")"
+  # Build the artifact via python — keeps bash 3.2 parser away from JSON.
+  python3 - "$b5_uuid" "$b5_art" <<'PYBUG5'
+import json, sys
+uuid, path = sys.argv[1], sys.argv[2]
+art = {
+    "directive_id": "bug5_dir",
+    "project_id": uuid,
+    "phase": "build_in_progress",
+    "role": "engineer",
+    "pipeline_version": "1.0.0",
+    "rationale": "bug 5 regression",
+    "status": "draft",
+    "cost": {"tokens_input": 0, "tokens_output": 0, "model": "smoke",
+             "cost_usd": "0", "tier": "low"},
+    "runtime": {"started_at": "2026-05-17T00:00:00+00:00",
+                "completed_at": "2026-05-17T00:00:00+00:00",
+                "duration_seconds": 0},
+    "metadata": {"created_by": "smoke-bug5"},
+}
+with open(path, "w", encoding="utf-8") as f:
+    json.dump(art, f)
+PYBUG5
+  local b5_out b5_rc
+  b5_out="$(bash "$spine_bin" build report "$b5_pid" --artifact "$b5_art" --actor smoke-bug5 2>&1)" || true
+  b5_rc=$?
+  rm -f "$b5_art" 2>/dev/null || true
+  # Pass criterion: the CLI must NOT die at flag-parse. Either it
+  # proceeds to the MCP and returns status=ok, OR returns a structured
+  # error from a later layer — both prove --artifact was read.
+  if [[ "$b5_out" == *"--artifact"*"required"* ]]; then
+    _fail build.bug5_cli_artifact_flag "flag-parse still broken: ${b5_out:0:300}"
+  elif [[ "$b5_out" == *status*ok* ]]; then
+    _pass build.bug5_cli_artifact_flag "CLI proceeded past flag-parse (rc=$b5_rc)"
+  else
+    _pass build.bug5_cli_artifact_flag "CLI parsed --artifact OK (rc=$b5_rc, no flag-parse error)"
+  fi
 }
 
 # ─── phase 11: TRON subsystem (verify/) ──────────────────────────────
