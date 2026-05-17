@@ -287,6 +287,119 @@ phase7_optional() {
   else _skip opt.pgvector "DB unreachable"; fi
 }
 
+# ─── phase 8: orchestrator MCP tools (D8 wave) ───────────────────────
+# End-to-end: project_create -> project_status -> approval_grant ->
+# phase_advance. Verifies real DB writes land + the HMAC token actually
+# verifies. Skips cleanly if Python or DB are unavailable.
+phase8_mcp_tools() {
+  _phase_banner 8 "Orchestrator MCP tools (D8)"
+  if ! command -v python3 >/dev/null 2>&1; then _skip mcp.runtime "python3 missing"; return 0; fi
+  _load_db_env
+  _db_alive || { _skip mcp.runtime "DB unreachable"; return 0; }
+  export PYTHONPATH="$REPO_ROOT${PYTHONPATH:+:$PYTHONPATH}"
+  # Use a throwaway key path so we don't disturb the dev install at ~/.spine.
+  local key_dir; key_dir="$(mktemp -d "${TMPDIR:-/tmp}/spine-mcp-smoke-XXXX")"
+  local key_path="$key_dir/hmac.key"
+  export SPINE_APPROVAL_KEY_PATH="$key_path"
+
+  local name="${SMOKE_NAME_PREFIX}-mcp"
+  local out script
+  script="$(mktemp "${TMPDIR:-/tmp}/spine-mcp-smoke-script-XXXX.py")"
+  cat >"$script" <<'PY'
+import json, os, sys
+from shared.mcp.tools import discover_tools, TOOL_REGISTRY
+discover_tools()
+def call(name, payload):
+    spec = TOOL_REGISTRY[name]
+    return spec.fn(spec.input_model.model_validate(payload)).model_dump(mode="json")
+def emit(cid, ok, msg=""): print(f"{cid}|{'PASS' if ok else 'FAIL'}|{msg}")
+NAME = os.environ["SMOKE_NAME"]
+# 1) project_create
+r = call("project_create", {"name": NAME, "project_type": "greenfield", "owner": "smoke-mcp"})
+emit("mcp.project_create.ok", r["status"] == "ok", json.dumps(r)[:200])
+if r["status"] != "ok":
+    sys.exit(0)
+proj_uuid = r["data"]["project_uuid"]
+proj_id   = r["data"]["id"]
+emit("mcp.project_create.row", isinstance(proj_id, int) and proj_id > 0, f"id={proj_id}")
+emit("mcp.project_create.uuid", len(proj_uuid) == 36 and proj_uuid.count("-") == 4, proj_uuid)
+emit("mcp.project_create.initial_phase", r["data"]["initial_phase"] == "intake", r["data"]["initial_phase"])
+# 2) project_status (by UUID)
+s = call("project_status", {"project_id": proj_uuid})
+emit("mcp.project_status.ok", s["status"] == "ok", "")
+emit("mcp.project_status.phase", s["data"].get("current_phase") == "intake", s["data"].get("current_phase"))
+# 3) advance intake -> plan_in_progress (no gate)
+adv = call("phase_advance", {"project_id": proj_uuid, "target_phase": "plan_in_progress",
+                              "actor": "smoke-mcp", "rationale": "D8 smoke"})
+emit("mcp.phase_advance.no_gate", adv["status"] == "ok" and adv["data"]["accepted"], json.dumps(adv)[:200])
+emit("mcp.phase_advance.transition_id", adv["data"]["transition_id"] > 0, f"tid={adv['data']['transition_id']}")
+# 4) approval_grant for plan_approved (gated phase)
+g = call("approval_grant", {"project_id": proj_uuid, "phase": "plan_approved",
+                             "approver": "smoke-approver", "notes": "D8 smoke",
+                             "ttl_hours": 1})
+emit("mcp.approval_grant.ok", g["status"] == "ok", json.dumps(g)[:200])
+token = g["data"].get("token", "")
+emit("mcp.approval_grant.token_shape", "." in token and len(token) > 40, f"len={len(token)}")
+# Verify the token round-trips through verify_token.
+from pathlib import Path
+from orchestrator.lib.approval import verify_token
+vt = verify_token(token, Path(os.environ["SPINE_APPROVAL_KEY_PATH"]),
+                  expected_project_id=str(proj_id), expected_phase="plan_approved")
+emit("mcp.approval_grant.verifies", vt["valid"], ",".join(vt.get("errors", [])))
+# 5) phase_advance to plan_approved with the token (gated path)
+adv2 = call("phase_advance", {"project_id": proj_uuid, "target_phase": "plan_approved",
+                               "actor": "smoke-mcp", "rationale": "D8 gated",
+                               "approval_token": token})
+emit("mcp.phase_advance.gated", adv2["status"] == "ok" and adv2["data"]["accepted"], json.dumps(adv2)[:200])
+# 6) project_status reflects the advance
+s2 = call("project_status", {"project_id": proj_uuid})
+emit("mcp.project_status.after", s2["data"].get("current_phase") == "plan_approved",
+     s2["data"].get("current_phase"))
+# 7) Idempotency: second project_create with same name+owner must error.
+dup = call("project_create", {"name": NAME, "project_type": "greenfield", "owner": "smoke-mcp"})
+emit("mcp.project_create.idempotent", dup["status"] == "error" and
+     (dup.get("error") or {}).get("code") == "project_already_exists",
+     (dup.get("error") or {}).get("code", ""))
+# 8) Invalid approval token rejected on a gated target phase.
+bad = call("phase_advance", {"project_id": proj_uuid, "target_phase": "verify_approved",
+                              "actor": "smoke-mcp", "approval_token": "tampered.token"})
+emit("mcp.phase_advance.invalid_token", bad["status"] == "error" and
+     (bad.get("error") or {}).get("code") == "invalid_approval_token",
+     (bad.get("error") or {}).get("code", ""))
+# 9) Audit rows actually landed in spine_audit (one per consequential op).
+import subprocess
+db_url = os.environ["SPINE_DB_URL"]
+def _q(sql):
+    p = subprocess.run(["psql", db_url, "-At", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-c", sql],
+                       capture_output=True, text=True, timeout=10)
+    return p.stdout.strip() if p.returncode == 0 else f"ERR:{p.stderr.strip()}"
+n_created  = _q(f"SELECT count(*) FROM spine_audit.audit_event WHERE project_id={proj_id} AND action='project_created';")
+n_advanced = _q(f"SELECT count(*) FROM spine_audit.audit_event WHERE project_id={proj_id} AND action='phase_advanced';")
+n_approved = _q(f"SELECT count(*) FROM spine_audit.audit_event WHERE project_id={proj_id} AND action='approval_granted';")
+emit("mcp.audit.project_created",  n_created == "1",  f"rows={n_created}")
+emit("mcp.audit.phase_advanced",   n_advanced == "2", f"rows={n_advanced}")
+emit("mcp.audit.approval_granted", n_approved == "1", f"rows={n_approved}")
+# 10) phase_history rows: intake (closed) + plan_in_progress (closed) + plan_approved (open)
+n_phist = _q(f"SELECT count(*) FROM spine_lifecycle.phase_history WHERE project_id={proj_id};")
+emit("mcp.lifecycle.phase_history_rows", n_phist == "3", f"rows={n_phist}")
+PY
+  out="$(SPINE_DB_URL="$SPINE_DB_URL" SPINE_APPROVAL_KEY_PATH="$key_path" \
+         SMOKE_NAME="$name" python3 "$script" 2>&1 || true)"
+  rm -f "$script"
+  local line cid st msg
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    if [[ "$line" == *"|"*"|"* ]]; then
+      cid="${line%%|*}"; line="${line#*|}"; st="${line%%|*}"; msg="${line#*|}"
+      _emit "$st" "$cid" "$msg"
+    elif [[ $VERBOSE -eq 1 ]]; then _info mcp.trace "$line"; fi
+  done <<< "$out"
+
+  # Tidy: rm the throwaway key + dir; the project rows are removed by cleanup_fixtures.
+  rm -rf "$key_dir" 2>/dev/null || true
+  unset SPINE_APPROVAL_KEY_PATH
+}
+
 # ─── cleanup + formatters ────────────────────────────────────────────
 cleanup_fixtures() {
   [[ $CLEANUP -eq 1 ]] || { _info cleanup.skip "--no-cleanup: fixtures left in DB"; return 0; }
@@ -340,7 +453,7 @@ usage() {
   cat <<'USAGE'
 Usage: tools/smoke-test.sh [--phase N|all] [--format text|json|junit]
                            [--verbose] [--no-cleanup] [--ci] [--no-color]
-Phases: 1 env, 2 db, 3 python, 4 pydantic, 5 lifecycle, 6 kg, 7 optional.
+Phases: 1 env, 2 db, 3 python, 4 pydantic, 5 lifecycle, 6 kg, 7 optional, 8 mcp-tools.
 Exit:   0=PASS  1=FAIL  2=env-problem  3=harness-error  64=unknown-flag.
 USAGE
 }
@@ -362,9 +475,9 @@ parse_args() {
 }
 run_phases() {
   case "$PHASE" in
-    all) phase1_env; phase2_db; phase3_python; phase4_pydantic; phase5_lifecycle; phase6_kg; phase7_optional;;
+    all) phase1_env; phase2_db; phase3_python; phase4_pydantic; phase5_lifecycle; phase6_kg; phase7_optional; phase8_mcp_tools;;
     1) phase1_env;; 2) phase2_db;; 3) phase3_python;; 4) phase4_pydantic;;
-    5) phase5_lifecycle;; 6) phase6_kg;; 7) phase7_optional;;
+    5) phase5_lifecycle;; 6) phase6_kg;; 7) phase7_optional;; 8) phase8_mcp_tools;;
     *) printf 'invalid --phase %s\n' "$PHASE" >&2; exit 64;;
   esac
 }

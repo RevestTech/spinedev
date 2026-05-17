@@ -82,13 +82,18 @@ def chain_to_previous(record: AuditRecord, prev_hash: Optional[str]) -> AuditRec
     return updated
 
 def serialize_for_postgres(record: AuditRecord) -> dict[str, Any]:
-    """psql-ready param dict (UUID/datetime/Decimal -> str; metadata -> JSON)."""
+    """psql-ready param dict (UUID/datetime/Decimal -> str; dict -> dict).
+
+    Nested dicts are kept as Python dicts so the outer ``json.dumps`` in
+    ``write_via_psql`` encodes them as proper JSON objects; pre-stringifying
+    here would make ``jsonb_populate_record`` see a quoted string for the
+    JSONB column and fail with `invalid input syntax for type jsonb`.
+    """
     if record.content_hash is None:
         raise ValueError("content_hash unset; call chain_to_previous() first")
     def _v(v: Any) -> Any:
-        if v is None or isinstance(v, (str, int, float, bool)): return v
+        if v is None or isinstance(v, (str, int, float, bool, dict, list)): return v
         if isinstance(v, (UUID, datetime, Decimal)): return _canon(v)
-        if isinstance(v, dict): return json.dumps(v, default=_canon)
         return v
     return {k: _v(v) for k, v in record.model_dump(exclude={"event_id"}, mode="python").items()}
 def _redact_enabled() -> bool:
@@ -131,13 +136,27 @@ def write_via_psql(record: AuditRecord, db_url: Optional[str] = None,
         raise RuntimeError("SPINE_DB_URL not set and db_url not provided")
     if not skip_redaction and _redact_enabled():
         record = _apply_redaction(record)
-    payload = json.dumps(serialize_for_postgres(record), default=_canon).replace("'", "''")
-    sql = ("INSERT INTO spine_audit.audit_event SELECT * FROM "
-           "jsonb_populate_record(NULL::spine_audit.audit_event, "
-           f"'{payload}'::jsonb) RETURNING event_id;")
-    proc = subprocess.run(["psql", url, "-At", "-v", "ON_ERROR_STOP=1", "-c", sql],
+    serialized = serialize_for_postgres(record)
+    payload = json.dumps(serialized, default=_canon).replace("'", "''")
+    # Explicit column list (omitting event_id so BIGSERIAL fires its default);
+    # SELECT only the columns we're inserting from the populated record so
+    # type widening still happens via the row constructor.
+    cols = list(serialized.keys())
+    col_csv = ", ".join(cols)
+    sel_csv = ", ".join(f"t.{c}" for c in cols)
+    sql = (f"INSERT INTO spine_audit.audit_event ({col_csv}) "
+           f"SELECT {sel_csv} FROM jsonb_populate_record("
+           f"NULL::spine_audit.audit_event, '{payload}'::jsonb) t "
+           "RETURNING event_id;")
+    proc = subprocess.run(["psql", url, "-At", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-c", sql],
                           check=True, capture_output=True, text=True)
-    return int(proc.stdout.strip().splitlines()[-1])
+    # psql can emit a command tag ("INSERT 0 1") alongside RETURNING in some
+    # configurations; grab the first numeric line which is the event_id.
+    for line in proc.stdout.strip().splitlines():
+        s = line.strip()
+        if s.isdigit():
+            return int(s)
+    raise RuntimeError(f"write_via_psql: no event_id in psql output: {proc.stdout!r}")
 
 
 # ─── Convenience constructors (monkey-patched onto AuditRecord) ──────────────
