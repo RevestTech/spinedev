@@ -132,7 +132,9 @@ _flag_val() {
     elif [[ "${REST_ARGS[$i]}" == "$want="*  ]]; then out="${REST_ARGS[$i]#$want=}";  i=$((i+1)); continue; fi
     keep+=("${REST_ARGS[$i]}"); i=$((i+1))
   done
-  REST_ARGS=("${keep[@]}"); printf '%s' "$out"
+  # `${keep[@]}` is undefined under `set -u` when the array is empty on
+  # bash 3.2; guard with `${keep[@]+...}` (param-set expansion).
+  REST_ARGS=(${keep[@]+"${keep[@]}"}); printf '%s' "$out"
 }
 
 _help_for() { case "$1" in
@@ -143,6 +145,7 @@ _help_for() { case "$1" in
   rollback) echo "spine project rollback <id> <target_phase> --reason R";;
   list)     echo "spine project list [--phase P] [--status active|paused|terminated|completed]";;
   show)     echo "spine project show <id>";; audit) echo "spine project audit <id> [--export csv|json]";;
+  intake)   echo "spine intake <project_id> [--template T] [--actor A]";;
   *) return 1 ;;
 esac; }
 
@@ -246,6 +249,43 @@ cmd_project_audit() {
   esac
 }
 
+# ─── intake — interactive Q&A for plan_in_progress (STORY-9.4.1) ───
+# Run the plan/runtime/intake_runner loop with stdin attached so the user
+# can answer questions. We bypass _mcp_call here because that path uses a
+# heredoc to feed the Python interpreter — which closes stdin. Instead we
+# import the runner module directly and let it read from the real tty.
+cmd_intake() {
+  [[ "${REST_ARGS[0]:-}" == "--help" || ${#REST_ARGS[@]} -eq 0 ]] && {
+    _help_for intake >&2; return 0; }
+  local pid="${REST_ARGS[0]}"; REST_ARGS=("${REST_ARGS[@]:1}")
+  [[ -z "$pid" ]] && _die 2 "intake: <project_id> required"
+  local template actor
+  template="$(_flag_val --template)"
+  actor="$(_flag_val --actor)"; actor="${actor:-product}"
+  [[ -z "$_SPINE_PY" ]] && _die 4 "intake: python3 unavailable"
+  SPINE_INTAKE_PID="$pid" SPINE_INTAKE_TEMPLATE="$template" \
+  SPINE_INTAKE_ACTOR="$actor" SPINE_HOME="$SPINE_HOME" \
+    "$_SPINE_PY" -c "$(cat <<'PY'
+import os, sys
+sys.path.insert(0, os.environ["SPINE_HOME"])
+from plan.runtime.intake_runner import (
+    run_intake, IntakeNotInteractive, IntakeTemplateNotFound,
+)
+pid = os.environ["SPINE_INTAKE_PID"]
+tpl = os.environ.get("SPINE_INTAKE_TEMPLATE") or None
+actor = os.environ.get("SPINE_INTAKE_ACTOR") or "product"
+try:
+    result = run_intake(pid, template=tpl, actor=actor)
+except IntakeNotInteractive as exc:
+    print(f"error: {exc}", file=sys.stderr); sys.exit(3)
+except IntakeTemplateNotFound as exc:
+    print(f"error: {exc}", file=sys.stderr); sys.exit(2)
+print(f"\nintake_runner: template={result.template} answers={len(result.answers)} "
+      f"prd_valid={result.prd_valid} audit_events={result.audit_event_count}")
+PY
+)"
+}
+
 # ─── portfolio + doctor + help ────────────────────────────────────────
 cmd_status() {
   { printf 'phase|count\n'; _psql -c "SELECT current_phase, COUNT(*) FROM spine_lifecycle.project
@@ -291,6 +331,9 @@ Gates / transitions:
   spine project reject   <id> <phase> --reason R   [--approver A]
   spine project rollback <id> <target_phase> --reason R
 
+Plan-phase intake (interactive):
+  spine intake <project_id> [--template T] [--actor A]
+
 Portfolio / ops:  spine status | spine doctor | spine help [<topic>]
 Global flags:     --quiet/-q  --verbose/-v  --dry-run  --format json|table|brief  --help/-h
 Env:              SPINE_DB_URL  SPINE_MCP_HTTP_URL  SPINE_DEFAULT_BUNDLE  SPINE_DEFAULT_OWNER
@@ -313,7 +356,8 @@ main() {
         ""|help|-h|--help) cmd_help ;;
         *) _die 64 "unknown project subcommand: $sub (try: spine help)" ;;
       esac ;;
-    status) cmd_status ;; doctor) cmd_doctor ;; help|-h|--help|"") cmd_help ;;
+    status) cmd_status ;; doctor) cmd_doctor ;; intake) cmd_intake ;;
+    help|-h|--help|"") cmd_help ;;
     *) _die 64 "unknown command: $cmd (try: spine help)" ;;
   esac
 }

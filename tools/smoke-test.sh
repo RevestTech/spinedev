@@ -400,6 +400,103 @@ PY
   unset SPINE_APPROVAL_KEY_PATH
 }
 
+# ─── phase 9: plan_dispatch + intake_runner (D8 follow-up) ───────────
+# Asserts the non-interactive guard fires on plan_dispatch (so the MCP
+# tool doesn't block forever on stdin), the runner module is importable,
+# and a PRD built from a minimal stub of intake answers round-trips.
+phase9_intake() {
+  _phase_banner 9 "Plan dispatch + intake runner"
+  if ! command -v python3 >/dev/null 2>&1; then _skip intake.runtime "python3 missing"; return 0; fi
+  export PYTHONPATH="$REPO_ROOT${PYTHONPATH:+:$PYTHONPATH}"
+  local out
+  out="$(python3 - <<'PY' 2>&1 || true
+def emit(c,s,m=""): print(f"{c}|{s}|{m}")
+# Importable?
+try:
+    from plan.runtime.intake_runner import (
+        run_intake, IntakeNotInteractive, synthesize_prd_draft,
+    )
+    emit("intake.import","PASS","plan.runtime.intake_runner OK")
+except Exception as e:
+    emit("intake.import","FAIL",f"{type(e).__name__}: {e}")
+    raise SystemExit(0)
+
+# Non-tty guard on plan_dispatch fires?
+try:
+    from shared.mcp.tools import discover_tools, TOOL_REGISTRY
+    discover_tools()
+    spec = TOOL_REGISTRY["plan_dispatch"]
+    payload = spec.input_model.model_validate({
+        "project_id": "0", "phase": "plan_in_progress",
+        "directive": "smoke directive — non-tty guard",
+        "pipeline_version": "1.0.0",
+    })
+    resp = spec.fn(payload).model_dump(mode="json")
+    if resp.get("status") == "error" and (resp.get("error") or {}).get("code") == "intake_requires_tty":
+        emit("intake.plan_dispatch_no_tty","PASS","friendly error fired")
+    else:
+        emit("intake.plan_dispatch_no_tty","FAIL",str(resp)[:200])
+except Exception as e:
+    emit("intake.plan_dispatch_no_tty","FAIL",f"{type(e).__name__}: {e}")
+
+# PRD synthesized from minimal cli-tool answers validates round-trip?
+try:
+    from plan.artifacts.prd_v1 import PRDv1
+    prd = synthesize_prd_draft(
+        project_uuid="00000000-0000-0000-0000-000000000000",
+        project_name="smoke-intake",
+        template_name="cli-tool",
+        actor="smoke",
+        answers={
+            "audience": "developer_dx",
+            "primary_job": "`foo bar` runs the smoke check",
+            "install_method": ["homebrew"],
+            "output_formats": ["human_readable_tty"],
+            "cross_platform": ["macos_arm"],
+            "config_file": "no_config_flags_only",
+            "subcommand_depth": "single_verb",
+            "composability": True, "tty_awareness": True,
+            "dependencies_runtime": "None — single static binary",
+            "must_should_could": "MUST: init / SHOULD: doctor / COULD: plugins",
+            "out_of_scope": "No GUI; no daemon",
+        },
+    )
+    dump = prd.model_dump(mode="json")
+    PRDv1.model_validate(dump)
+    if dump.get("project_name") == "smoke-intake" and dump["goals"]["must"]:
+        emit("intake.prd_round_trip","PASS",f"fields={len(dump)} must_goals={len(dump['goals']['must'])}")
+    else:
+        emit("intake.prd_round_trip","FAIL","unexpected PRD shape")
+except Exception as e:
+    emit("intake.prd_round_trip","FAIL",f"{type(e).__name__}: {e}")
+
+# Template loader sees every shipped template.
+try:
+    from plan.runtime.intake_runner import load_template, TEMPLATES_DIR
+    missing = []
+    for t in ("cli-tool","web-app","internal-tool","data-pipeline","mobile","api-service"):
+        try:
+            load_template(t)
+        except Exception as e:
+            missing.append(f"{t}({e.__class__.__name__})")
+    if missing:
+        emit("intake.templates_load","FAIL",",".join(missing))
+    else:
+        emit("intake.templates_load","PASS","all 6 shipped templates load")
+except Exception as e:
+    emit("intake.templates_load","FAIL",f"{type(e).__name__}: {e}")
+PY
+)"
+  local line cid st msg
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    if [[ "$line" == *"|"*"|"* ]]; then
+      cid="${line%%|*}"; line="${line#*|}"; st="${line%%|*}"; msg="${line#*|}"
+      _emit "$st" "$cid" "$msg"
+    elif [[ $VERBOSE -eq 1 ]]; then _info intake.trace "$line"; fi
+  done <<< "$out"
+}
+
 # ─── cleanup + formatters ────────────────────────────────────────────
 cleanup_fixtures() {
   [[ $CLEANUP -eq 1 ]] || { _info cleanup.skip "--no-cleanup: fixtures left in DB"; return 0; }
@@ -453,7 +550,7 @@ usage() {
   cat <<'USAGE'
 Usage: tools/smoke-test.sh [--phase N|all] [--format text|json|junit]
                            [--verbose] [--no-cleanup] [--ci] [--no-color]
-Phases: 1 env, 2 db, 3 python, 4 pydantic, 5 lifecycle, 6 kg, 7 optional, 8 mcp-tools.
+Phases: 1 env, 2 db, 3 python, 4 pydantic, 5 lifecycle, 6 kg, 7 optional, 8 mcp-tools, 9 intake.
 Exit:   0=PASS  1=FAIL  2=env-problem  3=harness-error  64=unknown-flag.
 USAGE
 }
@@ -475,9 +572,10 @@ parse_args() {
 }
 run_phases() {
   case "$PHASE" in
-    all) phase1_env; phase2_db; phase3_python; phase4_pydantic; phase5_lifecycle; phase6_kg; phase7_optional; phase8_mcp_tools;;
+    all) phase1_env; phase2_db; phase3_python; phase4_pydantic; phase5_lifecycle; phase6_kg; phase7_optional; phase8_mcp_tools; phase9_intake;;
     1) phase1_env;; 2) phase2_db;; 3) phase3_python;; 4) phase4_pydantic;;
     5) phase5_lifecycle;; 6) phase6_kg;; 7) phase7_optional;; 8) phase8_mcp_tools;;
+    9) phase9_intake;;
     *) printf 'invalid --phase %s\n' "$PHASE" >&2; exit 64;;
   esac
 }
