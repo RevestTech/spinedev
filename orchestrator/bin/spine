@@ -11,9 +11,19 @@ IFS=$'\n\t'
 # password the operator chose. Fixes wave-8 smoke F6/F8/F9.
 # shellcheck source=../lib/_env_loader.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")/../lib" && pwd)/_env_loader.sh"
-SPINE_MCP_HTTP_URL="${SPINE_MCP_HTTP_URL:-http://127.0.0.1:8765}"
+SPINE_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# SPINE_MCP_HTTP_URL is *not* defaulted: an unset value means "no HTTP
+# transport configured" (try in-process Python instead). Default-on would
+# hide the legitimate dev case where there's no MCP server running.
 SPINE_DEFAULT_BUNDLE="${SPINE_DEFAULT_BUNDLE:-}"
 SPINE_DEFAULT_OWNER="${SPINE_DEFAULT_OWNER:-${USER:-unknown}}"
+
+# Pick a Python: project venv takes precedence so the deps installed by
+# `python3 -m venv .venv && .venv/bin/pip install …` are visible without
+# having to activate first.
+if [[ -x "$SPINE_HOME/.venv/bin/python3" ]]; then _SPINE_PY="$SPINE_HOME/.venv/bin/python3"
+elif command -v python3 >/dev/null 2>&1; then    _SPINE_PY="$(command -v python3)"
+else _SPINE_PY=""; fi
 
 QUIET=0; VERBOSE=0; DRY_RUN=0; FORMAT=human
 
@@ -28,18 +38,66 @@ _jq()  { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
 _sql() { printf '%s' "$1" | sed "s/'/''/g"; }
 _psql(){ psql "$SPINE_DB_URL" -A -t -X -q -v ON_ERROR_STOP=1 "$@"; }
 
-# MCP transport — prefer `mcp` CLI (stdio), fall back to HTTP POST to
-# shared/mcp/server.py. Exit 4 if neither reachable. Mirrors router.sh.
+# MCP transport — three options, tried in this order:
+#   1. `mcp` CLI on PATH (stdio) — purpose-built, fastest
+#   2. in-process Python (loads shared.mcp.tools and calls the tool fn
+#      directly) — works in any dev/repo context with python3 available;
+#      same code the server would run, just no socket in between
+#   3. HTTP only if SPINE_MCP_HTTP_URL is explicitly set — note the
+#      current FastMCP HTTP transport is Streamable-HTTP (session-based)
+#      and a raw POST won't work; left as an escape hatch for a future
+#      REST gateway or stub server
+# Exit 4 if none reachable.
+_mcp_inprocess_call() {
+  local tool="$1" payload="$2"
+  SPINE_TOOL="$tool" SPINE_PAYLOAD="$payload" SPINE_HOME="$SPINE_HOME" \
+    "$_SPINE_PY" - <<'PY'
+import json, os, sys, traceback
+sys.path.insert(0, os.environ["SPINE_HOME"])
+try:
+    from shared.mcp.tools import TOOL_REGISTRY, discover_tools
+except Exception as e:
+    print(json.dumps({"status": "error", "error": f"import_failed: {e}", "data": None}))
+    sys.exit(0)
+discover_tools()
+name = os.environ["SPINE_TOOL"]
+spec = TOOL_REGISTRY.get(name)
+if spec is None:
+    print(json.dumps({"status": "error", "error": f"unknown_tool: {name}", "data": None}))
+    sys.exit(0)
+try:
+    payload = spec.input_model.model_validate_json(os.environ["SPINE_PAYLOAD"])
+    result = spec.fn(payload)
+except Exception as e:
+    print(json.dumps({"status": "error", "error": str(e),
+                      "data": None, "trace": traceback.format_exc()}))
+    sys.exit(0)
+if hasattr(result, "model_dump_json"):
+    print(result.model_dump_json())
+elif hasattr(result, "model_dump"):
+    print(json.dumps(result.model_dump(mode="json"), default=str))
+else:
+    print(json.dumps(result, default=str))
+PY
+}
+
 _mcp_call() {
   local tool="$1" payload="$2"
   _dbg "mcp_call tool=$tool payload=$payload"
   [[ $DRY_RUN -eq 1 ]] && { printf '{"ok":true,"dry_run":true,"tool":"%s","payload":%s}\n' "$tool" "$payload"; return 0; }
-  if   command -v mcp  >/dev/null 2>&1; then mcp call "$tool" --json "$payload" 2>/dev/null \
-       || { _log ERROR "mcp $tool (stdio) failed"; return 4; }
-  elif command -v curl >/dev/null 2>&1; then curl -fsS -H 'Content-Type: application/json' \
-       -X POST "$SPINE_MCP_HTTP_URL/tools/$tool" --data "$payload" \
-       || { _log ERROR "mcp $tool (http) failed"; return 4; }
-  else _die 4 "no 'mcp' CLI and no curl on PATH — cannot reach MCP server"; fi
+  if command -v mcp >/dev/null 2>&1; then
+    mcp call "$tool" --json "$payload" 2>/dev/null \
+      || { _log ERROR "mcp $tool (stdio) failed"; return 4; }
+  elif [[ -n "$_SPINE_PY" && -d "$SPINE_HOME/shared/mcp" ]]; then
+    _mcp_inprocess_call "$tool" "$payload" \
+      || { _log ERROR "mcp $tool (in-process python) failed"; return 4; }
+  elif [[ -n "${SPINE_MCP_HTTP_URL:-}" ]] && command -v curl >/dev/null 2>&1; then
+    curl -fsS -H 'Content-Type: application/json' \
+      -X POST "$SPINE_MCP_HTTP_URL/tools/$tool" --data "$payload" \
+      || { _log ERROR "mcp $tool (http) failed — note FastMCP needs Streamable-HTTP, raw POST won't work"; return 4; }
+  else
+    _die 4 "no mcp transport reachable: install 'mcp' CLI, run from a Spine repo with python3, or set SPINE_MCP_HTTP_URL"
+  fi
 }
 
 _emit() { case "$FORMAT" in
@@ -201,9 +259,17 @@ cmd_doctor() {
   if _psql -c 'SELECT 1;' >/dev/null 2>&1
   then printf '  %sok%s   postgres reachable (%s)\n'  "$C_G" "$C_X" "$SPINE_DB_URL"
   else printf '  %sFAIL%s postgres unreachable (%s)\n' "$C_R" "$C_X" "$SPINE_DB_URL"; rc=4; fi
-  if   command -v mcp >/dev/null 2>&1;                         then printf '  %sok%s   mcp CLI on PATH\n' "$C_G" "$C_X"
-  elif curl -fsS "$SPINE_MCP_HTTP_URL/health" >/dev/null 2>&1; then printf '  %sok%s   mcp http reachable (%s)\n' "$C_G" "$C_X" "$SPINE_MCP_HTTP_URL"
-  else printf '  %swarn%s no mcp transport found\n' "$C_Y" "$C_X"; rc=$((rc>1?rc:1)); fi
+  if command -v mcp >/dev/null 2>&1; then
+    printf '  %sok%s   mcp transport: stdio (`mcp` CLI on PATH)\n' "$C_G" "$C_X"
+  elif [[ -n "$_SPINE_PY" && -d "$SPINE_HOME/shared/mcp" ]] \
+       && "$_SPINE_PY" -c 'import sys; sys.path.insert(0, "'"$SPINE_HOME"'"); from shared.mcp.tools import TOOL_REGISTRY, discover_tools; discover_tools()' >/dev/null 2>&1; then
+    printf '  %sok%s   mcp transport: in-process python (%s)\n' "$C_G" "$C_X" "$_SPINE_PY"
+  elif [[ -n "${SPINE_MCP_HTTP_URL:-}" ]] && curl -fsS "$SPINE_MCP_HTTP_URL/health" >/dev/null 2>&1; then
+    printf '  %sok%s   mcp transport: http (%s)\n' "$C_G" "$C_X" "$SPINE_MCP_HTTP_URL"
+  else
+    printf '  %swarn%s no mcp transport reachable (install `mcp` CLI, ensure python3+shared/mcp importable, or set SPINE_MCP_HTTP_URL)\n' "$C_Y" "$C_X"
+    rc=$((rc>1?rc:1))
+  fi
   [[ -n "$SPINE_DEFAULT_BUNDLE" ]] && printf '  %sok%s   default bundle: %s\n' "$C_G" "$C_X" "$SPINE_DEFAULT_BUNDLE" \
                                    || printf '  %s--%s   no SPINE_DEFAULT_BUNDLE set\n' "$C_D" "$C_X"
   return $rc
