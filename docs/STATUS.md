@@ -260,3 +260,34 @@ Smoke-test artifacts left in DB:
 - All 9 schemas created (`spine_audit`, `spine_calibration`, `spine_eval`, `spine_kg`, `spine_lifecycle`, `spine_memory`, `spine_recording`, `spine_verify_audit`, `spine_verify_threat_intel`)
 
 Run `DELETE FROM spine_lifecycle.project WHERE name='smoke-test-001'` to reset. Schemas can stay.
+
+---
+
+## 7. Bootstrap closed — 2026-05-17
+
+**Goal:** make a fresh clone runnable in one command (was ~7 manual steps across two databases, two migration tools, a venv, and pip installs).
+
+**Verdict:** Done. `git clone && make bootstrap` brings the whole v2 stack up; `bash tools/smoke-test.sh` is the acceptance gate.
+
+### What landed
+
+| File | Purpose | LOC |
+|---|---|---|
+| `tools/bootstrap.sh` | One-command cold-start (preflight → venv → pip → spine pg → tron pg → flyway → alembic → smoke). Idempotent: re-runs in seconds when nothing changed. | ~190 |
+| `tools/spine-flyway-sync.sh` | Reconciles `flyway_schema_history` with the actual DB (the F2 follow-up — V2 + V14-V21 were applied via direct psql during wave 9 and the history was never updated). Inserts the missing rows with flyway-compatible CRC32 checksums. Idempotent and no-op on a clean DB. | ~150 |
+| `requirements.txt` (new, root) | The actual Spine v2 runtime pip set — MCP/FastAPI/pydantic/SQLAlchemy[asyncio]/asyncpg/temporalio/bandit/alembic/psycopg2/pyyaml/etc. Curated subset of `verify/requirements.txt`'s 84 deps + Spine-specific. | ~45 |
+| `Makefile` (top-level, extended) | New targets: `bootstrap`, `bootstrap-clean`, `nuke`, `doctor`, `smoke`, `flyway-sync`. All previous targets preserved. | +35 |
+| `orchestrator/bin/spine` (`cmd_doctor` rewrite) | Was 3 checks; now 9 sections: host binaries, venv + imports, spine pg, spine schemas, tron pg, TRON AuditManager constructable, MCP transport, bundle, API keys. `--verbose` adds remediation hints. Exits 0/1/4. | +120 |
+| `tools/smoke-test.sh` (phase 12) | New "bootstrap artifacts" phase — structural checks (Makefile has `bootstrap` target, `requirements.txt` exists, `tools/bootstrap.sh` exists, `make help` parses). Does *not* invoke bootstrap itself (circular). | +25 |
+
+### F2 cleanup
+
+Before: `flyway info` showed V2 = `Ignored`, V14-V21 = `Pending`, even though all 9 schemas + tables existed in the DB. `docker compose up watcher` failed its `flyway: service_completed_successfully` dependency.
+
+After: `tools/spine-flyway-sync.sh` (called from `tools/bootstrap.sh` as step 6) inserts the missing rows with correct CRC32 checksums; `flyway -outOfOrder=true migrate` is then a no-op; `flyway info` shows all migrations as `Success`. `docker compose up watcher` no longer needs `--no-deps`.
+
+### What's left
+
+- **`spine doctor`** is now a real surface — extend further as new subsystems land (KG ingestion, audit query API, calibration UI, etc.).
+- **CI**: a GitHub Actions workflow that runs `make bootstrap && bash tools/smoke-test.sh --ci` on every PR. Out of scope for this pass; the pieces are in place.
+- **Real MCP tool stubs** (`graph_query`, `iso_invoke`, `org_standards_get`) — explicitly out of scope here; tracked in the §6 stub map.

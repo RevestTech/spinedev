@@ -702,6 +702,36 @@ phase11_tron() {
   done <<< "$out"
 }
 
+# ─── phase 12: bootstrap artifacts (don't actually run bootstrap) ────
+# Asserts the files + targets that `make bootstrap` depends on are in
+# place. We deliberately do NOT call `make bootstrap` from inside smoke
+# — that would be circular, since bootstrap calls smoke as its
+# acceptance gate. Cheap structural checks only.
+phase12_bootstrap() {
+  _phase_banner 12 "bootstrap artifacts"
+  [[ -f "$REPO_ROOT/Makefile" ]] && grep -qE '^bootstrap:' "$REPO_ROOT/Makefile" \
+    && _pass boot.make_target "top-level Makefile has 'bootstrap' target" \
+    || _fail boot.make_target "Makefile missing 'bootstrap' target"
+  [[ -f "$REPO_ROOT/Makefile" ]] && grep -qE '^nuke:' "$REPO_ROOT/Makefile" \
+    && _pass boot.nuke_target "top-level Makefile has 'nuke' target" \
+    || _fail boot.nuke_target "Makefile missing 'nuke' target"
+  [[ -f "$REPO_ROOT/requirements.txt" ]] \
+    && _pass boot.requirements "requirements.txt present at repo root" \
+    || _fail boot.requirements "requirements.txt missing — bootstrap can't install python deps"
+  [[ -f "$REPO_ROOT/tools/bootstrap.sh" ]] \
+    && _pass boot.script "tools/bootstrap.sh present" \
+    || _fail boot.script "tools/bootstrap.sh missing"
+  [[ -f "$REPO_ROOT/tools/spine-flyway-sync.sh" ]] \
+    && _pass boot.flyway_sync "tools/spine-flyway-sync.sh present (F2 fix helper)" \
+    || _fail boot.flyway_sync "tools/spine-flyway-sync.sh missing"
+  # `make help` works (cheap structural check; no expensive subtargets fired).
+  if ( cd "$REPO_ROOT" && make -n help >/dev/null 2>&1 ); then
+    _pass boot.make_help "'make help' parses without error"
+  else
+    _fail boot.make_help "'make help' fails — Makefile syntax broken"
+  fi
+}
+
 # ─── cleanup + formatters ────────────────────────────────────────────
 cleanup_fixtures() {
   [[ $CLEANUP -eq 1 ]] || { _info cleanup.skip "--no-cleanup: fixtures left in DB"; return 0; }
@@ -755,7 +785,7 @@ usage() {
   cat <<'USAGE'
 Usage: tools/smoke-test.sh [--phase N|all] [--format text|json|junit]
                            [--verbose] [--no-cleanup] [--ci] [--no-color]
-Phases: 1 env, 2 db, 3 python, 4 pydantic, 5 lifecycle, 6 kg, 7 optional, 8 mcp-tools, 9 intake, 10 build, 11 tron.
+Phases: 1 env, 2 db, 3 python, 4 pydantic, 5 lifecycle, 6 kg, 7 optional, 8 mcp-tools, 9 intake, 10 build, 11 tron, 12 bootstrap.
 Exit:   0=PASS  1=FAIL  2=env-problem  3=harness-error  64=unknown-flag.
 USAGE
 }
@@ -777,10 +807,10 @@ parse_args() {
 }
 run_phases() {
   case "$PHASE" in
-    all) phase1_env; phase2_db; phase3_python; phase4_pydantic; phase5_lifecycle; phase6_kg; phase7_optional; phase8_mcp_tools; phase9_intake; phase10_build; phase11_tron;;
+    all) phase1_env; phase2_db; phase3_python; phase4_pydantic; phase5_lifecycle; phase6_kg; phase7_optional; phase8_mcp_tools; phase9_intake; phase10_build; phase11_tron; phase12_bootstrap;;
     1) phase1_env;; 2) phase2_db;; 3) phase3_python;; 4) phase4_pydantic;;
     5) phase5_lifecycle;; 6) phase6_kg;; 7) phase7_optional;; 8) phase8_mcp_tools;;
-    9) phase9_intake;; 10) phase10_build;; 11) phase11_tron;;
+    9) phase9_intake;; 10) phase10_build;; 11) phase11_tron;; 12) phase12_bootstrap;;
     *) printf 'invalid --phase %s\n' "$PHASE" >&2; exit 64;;
   esac
 }

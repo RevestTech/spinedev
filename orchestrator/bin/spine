@@ -353,25 +353,195 @@ cmd_status() {
     | column -t -s'|' || _die 4 "db unreachable at $SPINE_DB_URL"
 }
 
+# cmd_doctor — extended in M.bootstrap. Checks (in order, fail-fast on env):
+#   1. binaries on PATH: docker, python3>=3.10, psql, jq (warn-only)
+#   2. .venv + critical python imports (mcp, pydantic, yaml, shared.mcp tools)
+#   3. spine postgres reachable
+#   4. spine schemas present (the 9 spine_* schemas — mirrors smoke phase 2)
+#   5. tron postgres reachable (spine_tron_postgres on 33010)
+#   6. tron importable (tron.agents.manager.AuditManager — mirrors phase 11.3)
+#   7. mcp transport (stdio CLI > in-process python > HTTP)
+#   8. bundle config (SPINE_DEFAULT_BUNDLE)
+#   9. api keys (ANTHROPIC_API_KEY / OPENAI_API_KEY — INFO, never FAIL)
+# Pass --verbose for remediation hints on any non-OK row.
+# Exit: 0 = all ok, 1 = warns only, 4 = any FAIL.
 cmd_doctor() {
-  local rc=0
+  # `--verbose`/`-v` is consumed by the global `_parse_flags`, which sets
+  # VERBOSE=1. We mirror it under a local name so the row helpers below
+  # don't have to know about the global.
+  local rc=0 verbose="$VERBOSE"
+
+  local fail_count=0 warn_count=0
+  _bump_fail() { rc=4; fail_count=$((fail_count+1)); }
+  _bump_warn() { (( rc < 1 )) && rc=1; warn_count=$((warn_count+1)); }
+  _row_ok()   { printf '  %sok%s   %s\n'   "$C_G" "$C_X" "$*"; }
+  _row_fail() { printf '  %sFAIL%s %s\n'   "$C_R" "$C_X" "$1"; [[ -n "${2:-}" && $verbose -eq 1 ]] && printf '       %s→ %s%s\n' "$C_D" "$2" "$C_X"; _bump_fail; }
+  _row_warn() { printf '  %swarn%s %s\n'   "$C_Y" "$C_X" "$1"; [[ -n "${2:-}" && $verbose -eq 1 ]] && printf '       %s→ %s%s\n' "$C_D" "$2" "$C_X"; _bump_warn; }
+  _row_dim()  { printf '  %s--%s   %s\n'   "$C_D" "$C_X" "$*"; }
+  _row_info() { printf '  %sinfo%s %s\n'   "$C_G" "$C_X" "$*"; }
+
   printf 'spine doctor — %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  if _psql -c 'SELECT 1;' >/dev/null 2>&1
-  then printf '  %sok%s   postgres reachable (%s)\n'  "$C_G" "$C_X" "$SPINE_DB_URL"
-  else printf '  %sFAIL%s postgres unreachable (%s)\n' "$C_R" "$C_X" "$SPINE_DB_URL"; rc=4; fi
+
+  # ── 1. binaries ─────────────────────────────────────────────────
+  printf '\n%s[1] host binaries%s\n' "$C_D" "$C_X"
+  command -v docker >/dev/null 2>&1 \
+    && _row_ok "docker present ($(docker --version 2>/dev/null | head -1))" \
+    || _row_fail "docker not on PATH" "install Docker Desktop or 'brew install --cask docker'"
+  if command -v python3 >/dev/null 2>&1 \
+     && python3 -c 'import sys;sys.exit(0 if sys.version_info>=(3,10) else 1)' 2>/dev/null; then
+    _row_ok "python3 $(python3 -c 'import sys;print("%d.%d.%d"%sys.version_info[:3])')"
+  else
+    _row_fail "python3 >= 3.10 missing" "'brew install python@3.12' or apt install python3.12"
+  fi
+  command -v psql >/dev/null 2>&1 \
+    && _row_ok "psql present ($(psql --version 2>/dev/null | head -1))" \
+    || _row_fail "psql not on PATH" "'brew install libpq' or apt install postgresql-client"
+  command -v jq >/dev/null 2>&1 \
+    && _row_ok "jq present (pretty-printing only)" \
+    || _row_warn "jq missing — output won't be pretty-printed" "'brew install jq' / apt install jq"
+
+  # ── 2. python venv + critical imports ───────────────────────────
+  printf '\n%s[2] python venv + critical imports%s\n' "$C_D" "$C_X"
+  if [[ -x "$SPINE_HOME/.venv/bin/python3" ]]; then
+    _row_ok ".venv at $SPINE_HOME/.venv"
+    local venv_py="$SPINE_HOME/.venv/bin/python3"
+    local imp_out tool_n
+    imp_out="$(SPINE_HOME="$SPINE_HOME" "$venv_py" - <<'PY' 2>&1
+import sys, json, os
+res = {}
+for mod in ("mcp", "pydantic", "yaml", "fastapi", "alembic", "psycopg2"):
+    try: __import__(mod); res[mod] = "ok"
+    except Exception as e: res[mod] = f"FAIL: {type(e).__name__}"
+try:
+    sys.path.insert(0, os.environ["SPINE_HOME"])
+    from shared.mcp.tools import TOOL_REGISTRY, discover_tools
+    discover_tools(); res["shared.mcp.tools"] = f"ok ({len(TOOL_REGISTRY)} tools)"
+except Exception as e:
+    res["shared.mcp.tools"] = f"FAIL: {type(e).__name__}: {e}"
+print(json.dumps(res))
+PY
+)"
+    if printf '%s' "$imp_out" | python3 -c 'import sys,json;d=json.load(sys.stdin); sys.exit(0 if all(v.startswith("ok") for v in d.values()) else 1)' 2>/dev/null; then
+      tool_n="$(printf '%s' "$imp_out" | python3 -c 'import sys,json;print(json.load(sys.stdin)["shared.mcp.tools"])' 2>/dev/null)"
+      _row_ok "all critical imports: $tool_n"
+    else
+      printf '%s' "$imp_out" | python3 -c 'import sys,json;d=json.load(sys.stdin)
+for k,v in d.items():
+    print(f"     {k}: {v}")' 2>/dev/null || printf '%s\n' "$imp_out" | sed 's/^/     /'
+      _row_fail "critical imports broken — run 'make bootstrap' (or pip install -r requirements.txt)" \
+        "make bootstrap"
+    fi
+  else
+    _row_fail ".venv missing at $SPINE_HOME/.venv" "make bootstrap"
+  fi
+
+  # ── 3. spine postgres ───────────────────────────────────────────
+  printf '\n%s[3] spine postgres%s\n' "$C_D" "$C_X"
+  if _psql -c 'SELECT 1;' >/dev/null 2>&1; then
+    _row_ok "reachable at $SPINE_DB_URL"
+  else
+    _row_fail "unreachable at $SPINE_DB_URL" "cd db && docker compose up -d postgres"
+  fi
+
+  # ── 4. spine schemas ────────────────────────────────────────────
+  # File-level `IFS=$'\n\t'` means `for x in $space_separated_string`
+  # won't word-split — use an explicit array.
+  printf '\n%s[4] spine schemas%s\n' "$C_D" "$C_X"
+  if _psql -c 'SELECT 1;' >/dev/null 2>&1; then
+    local -a need=(spine_audit spine_calibration spine_eval spine_kg \
+                   spine_lifecycle spine_memory spine_recording \
+                   spine_verify_audit spine_verify_threat_intel)
+    local present; present="$(_psql -c "SELECT nspname FROM pg_namespace WHERE nspname LIKE 'spine_%' ORDER BY 1;" 2>/dev/null)"
+    local miss="" sch
+    for sch in "${need[@]}"; do
+      printf '%s\n' "$present" | grep -qx "$sch" || miss="$miss $sch"
+    done
+    if [[ -z "$miss" ]]; then
+      _row_ok "all 9 spine_* schemas present"
+    else
+      _row_fail "missing schemas:$miss" "cd db && docker compose run --rm flyway -outOfOrder=true migrate"
+    fi
+  else
+    _row_dim "skipped (postgres unreachable)"
+  fi
+
+  # ── 5. tron postgres ────────────────────────────────────────────
+  # psql parses user+password from the URL itself; no need to split it.
+  printf '\n%s[5] tron postgres (verify/)%s\n' "$C_D" "$C_X"
+  local tron_db_url="${TRON_DATABASE_URL:-postgresql://tron:tron_dev_only@127.0.0.1:33010/tron}"
+  if psql "$tron_db_url" -A -t -X -q -v ON_ERROR_STOP=1 -c 'SELECT 1;' >/dev/null 2>&1; then
+    local rev; rev="$(psql "$tron_db_url" -A -t -X -q -c 'SELECT version_num FROM alembic_version;' 2>/dev/null | tr -d ' \n')"
+    if [[ -n "$rev" ]]; then
+      _row_ok "reachable (alembic=$rev)"
+    else
+      _row_warn "reachable but alembic_version empty" "tools/_tron_alembic_upgrade.py (run via .venv/bin/python)"
+    fi
+  else
+    _row_fail "unreachable at 127.0.0.1:33010" "cd verify && docker compose up -d postgres"
+  fi
+
+  # ── 6. TRON importable ──────────────────────────────────────────
+  printf '\n%s[6] TRON in-process AuditManager%s\n' "$C_D" "$C_X"
+  if [[ -x "$SPINE_HOME/.venv/bin/python3" && -d "$SPINE_HOME/verify/tron" ]]; then
+    if "$SPINE_HOME/.venv/bin/python3" -c "
+import sys
+sys.path.insert(0, '$SPINE_HOME')
+sys.path.insert(1, '$SPINE_HOME/verify')
+from tron.agents.manager import AuditManager
+AuditManager(secrets={})
+" >/dev/null 2>&1; then
+      _row_ok "tron.agents.manager.AuditManager constructable (empty secrets)"
+    else
+      _row_fail "AuditManager import/construct failed" "make bootstrap (pulls sqlalchemy[asyncio]+temporalio)"
+    fi
+  else
+    _row_dim "skipped (.venv or verify/tron missing)"
+  fi
+
+  # ── 7. MCP transport ────────────────────────────────────────────
+  printf '\n%s[7] mcp transport%s\n' "$C_D" "$C_X"
   if command -v mcp >/dev/null 2>&1; then
-    printf '  %sok%s   mcp transport: stdio (`mcp` CLI on PATH)\n' "$C_G" "$C_X"
+    _row_ok "stdio (mcp CLI on PATH)"
   elif [[ -n "$_SPINE_PY" && -d "$SPINE_HOME/shared/mcp" ]] \
        && "$_SPINE_PY" -c 'import sys; sys.path.insert(0, "'"$SPINE_HOME"'"); from shared.mcp.tools import TOOL_REGISTRY, discover_tools; discover_tools()' >/dev/null 2>&1; then
-    printf '  %sok%s   mcp transport: in-process python (%s)\n' "$C_G" "$C_X" "$_SPINE_PY"
+    _row_ok "in-process python ($_SPINE_PY)"
   elif [[ -n "${SPINE_MCP_HTTP_URL:-}" ]] && curl -fsS "$SPINE_MCP_HTTP_URL/health" >/dev/null 2>&1; then
-    printf '  %sok%s   mcp transport: http (%s)\n' "$C_G" "$C_X" "$SPINE_MCP_HTTP_URL"
+    _row_ok "http ($SPINE_MCP_HTTP_URL)"
   else
-    printf '  %swarn%s no mcp transport reachable (install `mcp` CLI, ensure python3+shared/mcp importable, or set SPINE_MCP_HTTP_URL)\n' "$C_Y" "$C_X"
-    rc=$((rc>1?rc:1))
+    _row_warn "no transport reachable" "install 'mcp' CLI OR ensure .venv has shared.mcp tools OR set SPINE_MCP_HTTP_URL"
   fi
-  [[ -n "$SPINE_DEFAULT_BUNDLE" ]] && printf '  %sok%s   default bundle: %s\n' "$C_G" "$C_X" "$SPINE_DEFAULT_BUNDLE" \
-                                   || printf '  %s--%s   no SPINE_DEFAULT_BUNDLE set\n' "$C_D" "$C_X"
+
+  # ── 8. bundle ───────────────────────────────────────────────────
+  printf '\n%s[8] bundle config%s\n' "$C_D" "$C_X"
+  if [[ -n "$SPINE_DEFAULT_BUNDLE" ]]; then
+    _row_ok "default bundle: $SPINE_DEFAULT_BUNDLE"
+  else
+    _row_dim "no SPINE_DEFAULT_BUNDLE set (optional)"
+  fi
+
+  # ── 9. API keys ─────────────────────────────────────────────────
+  printf '\n%s[9] LLM API keys (informational)%s\n' "$C_D" "$C_X"
+  if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
+    _row_info "ANTHROPIC_API_KEY present (${#ANTHROPIC_API_KEY} chars)"
+  else
+    _row_dim "ANTHROPIC_API_KEY absent (deterministic scanners run without; LLM ISO agents need it)"
+  fi
+  if [[ -n "${OPENAI_API_KEY:-}" ]]; then
+    _row_info "OPENAI_API_KEY present (${#OPENAI_API_KEY} chars)"
+  else
+    _row_dim "OPENAI_API_KEY absent (alternative to ANTHROPIC for LLM ISO agents)"
+  fi
+
+  # ── summary ─────────────────────────────────────────────────────
+  printf '\n'
+  if (( fail_count > 0 )); then
+    printf '%sdoctor: %d FAIL, %d warn — fix above (use --verbose for hints) and re-run%s\n' \
+      "$C_R" "$fail_count" "$warn_count" "$C_X"
+  elif (( warn_count > 0 )); then
+    printf '%sdoctor: %d warn (non-blocking)%s\n' "$C_Y" "$warn_count" "$C_X"
+  else
+    printf '%sdoctor: all green%s\n' "$C_G" "$C_X"
+  fi
   return $rc
 }
 

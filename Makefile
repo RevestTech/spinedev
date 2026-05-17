@@ -2,12 +2,44 @@
 
 help: ## Show available make targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
-	  | awk 'BEGIN {FS = ":.*?## "} {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
+	  | awk 'BEGIN {FS = ":.*?## "} {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
+
+# ── Spine v2 bootstrap (one-command cold-start) ─────────────────────
+# `make bootstrap` brings a fresh clone end-to-end: preflight → venv →
+# pip → spine pg → tron pg → flyway (with F2 history sync) → alembic →
+# smoke. Idempotent: a second run is a fast no-op. See tools/bootstrap.sh
+# for the implementation.
+
+.PHONY: bootstrap bootstrap-clean doctor nuke flyway-sync
+
+bootstrap: ## Cold-start the whole Spine v2 stack (preflight → venv → pg → migrations → smoke)
+	@bash tools/bootstrap.sh
+
+bootstrap-clean: nuke bootstrap ## Destroy state, then bootstrap from scratch (cold-start test)
+
+doctor: ## Run `spine doctor` (extends with venv + tron pg + key/import checks)
+	@bash orchestrator/bin/spine doctor
+
+flyway-sync: ## Reconcile flyway_schema_history with the DB (F2 fix; idempotent)
+	@bash tools/spine-flyway-sync.sh
+
+nuke: ## DESTROY .venv + both pg volumes (asks first); pair with `make bootstrap`
+	@printf 'This will DELETE: .venv, spine_pgdata volume, spine_tron postgres volume.\n'
+	@printf "Type 'yes' to continue: "
+	@read -r confirm; \
+	if [ "$$confirm" = "yes" ]; then \
+	  rm -rf .venv && printf '  removed .venv\n'; \
+	  ( cd db     && docker compose down -v >/dev/null 2>&1 ) && printf '  removed spine pg volume\n' || printf '  (spine pg already down)\n'; \
+	  ( cd verify && docker compose down -v >/dev/null 2>&1 ) && printf '  removed tron  pg volume\n' || printf '  (tron pg already down)\n'; \
+	  printf 'nuke complete. Run `make bootstrap` to rebuild.\n'; \
+	else \
+	  printf 'aborted.\n'; \
+	fi
 
 # ── Agent team (added by SpineDevelopment installer) ────────────────
 TESTS := $(wildcard lib/tests/test-*.sh)
 
-.PHONY: team-up team-down team-status team-restart team-budget team-clean team-footprint team-doctor team-rollback team-preflight dashboard selftest db-migrate db-shell db-reset db-watch dashboard-sync verify lint lint-shell lint-py lint-html lint-sql lint-md lint-fix
+.PHONY: team-up team-down team-status team-restart team-budget team-clean team-footprint team-doctor team-rollback team-preflight dashboard selftest db-migrate db-shell db-reset db-watch dashboard-sync verify lint lint-shell lint-py lint-html lint-sql lint-md lint-fix smoke
 
 team-up: ## Start agent team (all roles in scripts/roles.sh + watchdog)
 	bash scripts/team.sh up
@@ -50,6 +82,9 @@ selftest: ## Run all lib/tests/test-*.sh (Spine sanity checks)
 	@if [ -z "$(TESTS)" ]; then printf '%s\n' 'no matching lib/tests/test-*.sh' >&2; exit 1; fi
 	@for t in $(TESTS); do printf '▸ %s\n' "$$t"; bash "$$t" || exit 1; done
 	@printf '%s\n' '✓ all selftests passed'
+
+smoke: ## Run tools/smoke-test.sh (the Spine v2 integration smoke harness)
+	@bash tools/smoke-test.sh
 
 verify: ## Run every syntax + selftest check (bash -n, py_compile, pglast, selftests)
 	@bash lib/verify.sh

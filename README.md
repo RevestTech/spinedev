@@ -2,7 +2,31 @@
 
 Current package releases and history live in **`CHANGELOG.md`**.
 
-A reusable file-based agent team for any software project. **Eight role-specialized managers + up to 80 worker agents**, coordinating via a shared filesystem message bus. No SaaS orchestrator — bash daemons poll markdown directives and invoke your local CLI agent (Cursor, Claude Code, etc.) on demand.
+---
+
+## Developing Spine itself (v2)
+
+If you cloned this repo to work on Spine — not to install the agent team into
+another project — bring the whole stack up with one command:
+
+```bash
+git clone <spine-repo> && cd SpineDevelopment
+make bootstrap            # ~3–5 min cold;  re-runs are <30 s no-op
+make doctor               # all green checks, or precise actionable failures
+make smoke                # 78+ PASS  /  0 FAIL  ← the v2 acceptance gate
+```
+
+`make bootstrap` runs `tools/bootstrap.sh`, which: checks `docker` / `python3>=3.10` / `psql` / `make` are on PATH; creates `.venv` and `pip install -r requirements.txt`; brings up the Spine Postgres (`spine_postgres` on `127.0.0.1:33001`) and the TRON Postgres (`spine_tron_postgres` on `127.0.0.1:33010`); runs Flyway migrations (and reconciles the wave-9 F2 history drift); runs TRON's Alembic migrations; and finally runs the smoke test as the acceptance gate. Idempotent end-to-end.
+
+To cold-start from a clean state: `make nuke && make bootstrap` (asks before destroying volumes + `.venv`). See `docs/STATUS.md §6` for the full v2 state.
+
+The rest of this README documents the v1 installer (`bash install.sh <target-project>`) for installing the agent team into a *different* project.
+
+---
+
+A reusable file-based agent team for any software project. **Every manager role in `scripts/roles.sh` (13 in the stock template after ADR-001) × up to 10 worker agents each = 130 parallel worker slots**, plus a watchdog, coordinating via a shared filesystem message bus. No SaaS orchestrator — bash daemons poll markdown directives and invoke your local CLI agent (Cursor, Claude Code, etc.) on demand.
+
+Legacy **`engineering-backend`** / **`engineering-frontend`** top-level roles are **retired**; use **`engineer`** with worker fan-out (and optional discipline in directives) — see **`.planning/orchestration/DECISIONS.md` (ADR-001)** when installed, or **`lib/roles.sh`** in this package.
 
 Derived from iterative production use and generalized so any repo can adopt the same **parallel roles, constrained authority, durable context** pattern.
 
@@ -12,7 +36,7 @@ For **why** and **how to avoid drift** when many agents touch one codebase, read
 
 ## What you get
 
-```
+```text
 your-project/
 ├── .planning/orchestration/
 │   ├── AGENT_TEAM_PROTOCOL.md     ← protocol (every agent reads)
@@ -26,14 +50,9 @@ your-project/
 │   ├── docs/PROGRAM_DELIVERY.md
 │   ├── dashboard/index.html
 │   └── agent-handoff/teams/
-│       ├── planner/      ← high-level goals, orchestration
-│       ├── researcher/   ← read-only investigation
-│       ├── engineer/     ← code/config edits + tests
-│       ├── operator/     ← docker, env, deploy, infra
-│       ├── datawright/   ← inference, training, batch data
-│       ├── seer/         ← read-only observability digest
-│       ├── auditor/      ← verification of other roles' reports
-│       └── memory/       ← spine docs + per-role learning
+│       └── <role>/       ← one directory per ID in scripts/roles.sh (stock: product, planner,
+│                           architect, conductor, researcher, engineer, ux, qa, operator,
+│                           datawright, seer, auditor, memory)
 ├── scripts/
 │   ├── roles.sh                 ← canonical role ID list (single source of truth)
 │   ├── team-agent-daemon.sh
@@ -66,25 +85,41 @@ Without this, you sit in a single chat session with one AI, typing prompts one a
 
 ---
 
-## The eight roles
+## Manager roles
 
-### Five execution roles
+The **canonical list** is `scripts/roles.sh` (`SPINE_TEAM_ROLES`). The stock template ships **13 managers**; each runs **one manager daemon** and up to **10 workers** (see `PROTOCOL.md` §1). Do not add `teams/<new>/` directories without updating `roles.sh` and reinstalling.
+
+Top-level **`engineering-backend`** / **`engineering-frontend`** folders are **retired** (v2 targets a single **`engineer`** job family + worker decomposition); old prompts live under `lib/role-prompts/_archived/`.
+
+### Program delivery & quality (v1.4+)
+
 | Role | Authority | Default tier | Use for |
-|---|---|---|---|
+| --- | --- | --- | --- |
+| **product** | Requirements, scope, acceptance — normative REQ artifacts | medium | Discover/specify; gates implementation without approved REQ |
+| **architect** | Technical design, ADRs, cross-cutting constraints | medium | Architecture phase before locked build plans |
+| **conductor** | Locks sprint-style directives to squads (cites approved REQ) | medium | Build orchestration vs planner's ad-hoc decomposition |
+| **ux** | UX specs, design-system reviews (bounded write scope per prompt) | low–medium | Experience quality gate |
+| **qa** | Test planning, evidence, quality narrative | low–medium | Pairs with **auditor** / CI expectations |
+
+### Core execution roles
+
+| Role | Authority | Default tier | Use for |
+| --- | --- | --- | --- |
 | **planner** | Decompose goals → directives for other managers | medium | Multi-specialist work ("ship feature X end-to-end") |
 | **researcher** | Read-only: code, logs, DB, web | low | Investigation, audit, diagnosis |
-| **engineer** | Code/config edits + lint/test | medium | Implementing fixes, refactors, features |
+| **engineer** | Code/config edits + lint/test | medium | Implementation (use **workers/** for parallel slices; state backend vs frontend scope in the directive) |
 | **operator** | Docker, compose, env, deploy, daemons | low | Infrastructure ops |
 | **datawright** | Inference at scale, training, batch data | varies | ML and data-pipeline work |
 
-### Three meta roles (new in v1.1)
-| Role | Authority | Default tier | Use for |
-|---|---|---|---|
-| **seer** | Read-only across all manager directives | low | "What's happening?" — produces a single-page status across the team. `seer-tick.sh` nudges it every 5 minutes. |
-| **auditor** | Read-only verification | low | Re-runs claimed checks (lint, tests, smoke) against another role's report. "Did engineer's tests actually pass?" |
-| **memory** | Spine docs (DECISIONS.md, SESSION_HANDOFF.md, MASTER_TODO.md) + per-role memory.md + cross-project playbook | low | After significant decisions, after incidents, when a lesson is worth keeping. |
+### Meta roles (observability & memory)
 
-Each is described in detail in `lib/role-prompts/<role>.md`. Those become the system prompts loaded at agent invocation.
+| Role | Authority | Default tier | Use for |
+| --- | --- | --- | --- |
+| **seer** | Read-only across manager directives | low | Team-wide status digest; **`seer-tick.sh`** nudges periodically. |
+| **auditor** | Read-only verification | low | Re-runs claimed checks against another role's report. |
+| **memory** | Spine docs + per-role `memory.md` + cross-project playbook | low | ADR/session hygiene, durable lessons |
+
+Each active role is spelled out in `lib/role-prompts/<role>.md` (installed as each team's `role-prompt.md`).
 
 ---
 
@@ -102,10 +137,7 @@ The daemon parses this and tells the agent in its prompt:
 - **medium** — "Default-tier model. Sonnet-class / 13–34B-class is appropriate."
 - **high** — "Use the most capable model available — only justified for deep architecture, complex refactors, or subtle bugs."
 
-Per-role defaults if a hint isn't given:
-- planner / engineer → medium
-- researcher / operator / seer / auditor / memory → low
-- datawright → low (inference) but escalates to high for prompt design
+Per-role tier defaults vary by prompt (each `lib/role-prompts/<role>.md` ends with **Tier hint default**). Override any default with `## Tier hint:` in the directive — the daemon passes it through to the agent.
 
 Cost log lives at `teams/<role>/state/costs.csv`. `make team-budget` aggregates across all roles and shows totals + per-tier breakdown.
 
@@ -116,6 +148,7 @@ Cost log lives at `teams/<role>/state/costs.csv`. `make team-budget` aggregates 
 AI agents are sloppy with files by default. They drop fixture data, scratch scripts, `.bak` copies, debug experiments, and one-off test files all over the repo. This template makes that disallowed in three layers:
 
 **Sanctioned scratch space.** Every running daemon gets two ephemeral dirs:
+
 - `teams/<role>/scratch/<slot>/` — repo-local scratch dir
 - `/tmp/spine-<role>-<slot>/` — OS-level temp dir
 
@@ -150,6 +183,7 @@ Three layers, loaded automatically into every agent invocation:
 1. **Per-role memory** — `teams/<role>/memory.md`. Lessons specific to this project + this role. Agents read it on every invocation, append to it when they learn something durable.
 2. **Spine docs** — `DECISIONS.md`, `SESSION_HANDOFF.md`, `MASTER_TODO.md` at `.planning/orchestration/`. Maintained by the memory role. Loaded by anyone who needs context.
 3. **Cross-project playbook** — `~/.spine-development/playbook/<role>/lessons.md`. Lessons that apply across every project you use this template on. Append with:
+
    ```bash
    bash scripts/team.sh learn "lesson text" --role engineer
    ```
@@ -159,6 +193,8 @@ This is how the team gets smarter: corrections that used to live only in your he
 ---
 
 ## Install
+
+**Maintainers:** Shell helpers are authored and versioned under `lib/*.sh` in this package; `install.sh` copies them into a target project’s `scripts/` directory, which is what `Makefile` targets, daemons, and `bash scripts/…` invocations use at runtime. To publish changes, edit the `lib/` sources and run a **full** `install.sh` in consuming projects when you need refreshed scripts—`install.sh . --pull-knowledge-only` updates protocol text, recipes, and role prompts but intentionally skips replacing `scripts/*.sh` (see **Updating knowledge only** below), so use a normal install or manual copy from `lib/` when tooling behavior changes.
 
 Two paths:
 
@@ -179,7 +215,7 @@ bash /path/to/SpineDevelopment/install.sh .
 Either way, the full installer:
 
 1. Copies `lib/*.sh` helpers into your project's `scripts/` (daemon, team.sh, watchdog, executor, …)
-2. Creates team scaffolding under `.planning/orchestration/agent-handoff/teams/` for all eight roles
+2. Creates team scaffolding under `.planning/orchestration/agent-handoff/teams/` for **every role** in `scripts/roles.sh`
 3. Installs `role-prompt.md` per role from `lib/role-prompts/`
 4. Copies **`PROTOCOL.md`** and **`REQUIREMENTS.md`** into `.planning/orchestration/`
 5. Copies **`recipes/`**, **`docs/`** (practices + checklist + extensions), and **`templates/orchestration/`** (ADR scaffolds) into `.planning/orchestration/`
@@ -198,7 +234,7 @@ bash /path/to/SpineDevelopment/install.sh . --pull-knowledge-only
 Then:
 
 ```bash
-make team-up        # starts 8 manager daemons + 80 worker slots + watchdog
+make team-up        # starts every manager in roles.sh + 10 workers each + watchdog
 make team-status    # shows what each is working on
 make team-budget    # cost report (wall-clock, tier breakdown)
 make team-down      # clean shutdown
@@ -246,12 +282,13 @@ tail -f .planning/orchestration/agent-handoff/teams/engineer/log/manager.log
 
 # Visual dashboard (browser) — Spine Control Center
 make dashboard
-# → http://127.0.0.1:60005/dashboard/
+# → http://127.0.0.1:61105/dashboard/
+# (Default 61105 — many Docker setups use 60005; override with SPINE_DASH_PORT.)
 # Or: bash scripts/serve-dashboard.sh   (SPINE_DASH_PORT to change port)
 
 # Manual equivalent:
-cd .planning/orchestration && python3 -m http.server 60005
-# Open http://127.0.0.1:60005/dashboard/
+cd .planning/orchestration && python3 -m http.server 61105
+# Open http://127.0.0.1:61105/dashboard/
 
 # If your *app API* returns JSON { "Route GET:/dashboard/ not found" } — that server
 # does not host Spine static files; use make dashboard instead (different port/path).
@@ -267,7 +304,8 @@ The control center aggregates all manager `directive.md` files plus `state/costs
 - Each manager has 10 worker daemon slots: `team-agent-daemon.sh <role> worker 01..10`
 - Daemons poll their assigned file every 8 seconds
 - When a file's hash changes AND its first line is `# Directive`, the daemon parses tier hint, loads memory, invokes `cursor-agent` with the directive + role prompt + memory + tier guidance
-- The daemon enforces a hard timeout (default 25 min) and stall detection (default 8 min no stdout)
+- The daemon enforces a hard timeout (default **25 min**, overridable per file with **`## Long job:`** — see **`PROTOCOL.md`** §13) plus stall detection (scaled when long job is set)
+- Every completion appends **`costs.csv`** with **`outcome`** (`completed`, `timeout`, `stall`, `killed`) alongside **`rc`** — trust **`outcome`** when diagnosing daemon reaps
 - Cost row written to `state/costs.csv` on every invocation
 - The agent does the work, replaces the file with `# Report — ...`
 - For decomposition: manager writes worker directives, marks own file `# Plan`, exits. Workers run in parallel. When all workers report `# Worker Report`, daemon re-invokes manager in aggregate mode
@@ -279,7 +317,7 @@ The daemon is defensive bash — it never exits on inner failures. The agent inv
 ## Files
 
 | Path | Purpose |
-|---|---|
+| --- | --- |
 | `README.md` | This file |
 | `CHANGELOG.md` | Package history |
 | `PROTOCOL.md` | Agent contract → installed as `AGENT_TEAM_PROTOCOL.md` |
@@ -290,7 +328,10 @@ The daemon is defensive bash — it never exits on inner failures. The agent inv
 | `templates/program/` | REQ / phase ledger / policy stub scaffolds |
 | `lib/roles.sh` | `SPINE_TEAM_ROLES` canonical list (installed to `scripts/roles.sh`) |
 | `install.sh` | Bootstrap; supports `--pull-knowledge-only` |
-| `lib/team-agent-daemon.sh` | Daemon (manager + worker); tiers, memory, timeouts, costs |
+| `lib/spine-migrate.py` | v1 disk layout → v2 SQLite + `snapshot.json` for the Control Center (`make db-migrate`) |
+| `lib/costs-csv.sh` | Atomic legacy **`costs.csv` → 9 columns** (sourced by daemon; exercised by **`make selftest`**) |
+| `lib/tests/test-*.sh` | Package selftests — run **`make selftest`** (after install: tests live under **`lib/tests/`**) |
+| `lib/team-agent-daemon.sh` | Daemon (manager + worker); tiers, memory, timeouts, outcomes, costs |
 | `lib/team.sh` | up / down / status / budget / learn / clean / doctor |
 | `lib/team-clean.sh` | Footprint cleanup |
 | `lib/seer-tick.sh` | Periodic seer nudge |
@@ -299,12 +340,12 @@ The daemon is defensive bash — it never exits on inner failures. The agent inv
 | `lib/role-prompts/<role>.md` | System prompts for every `SPINE_TEAM_ROLES` entry |
 | `lib/playbook-defaults/*.md` | Seeds for `~/.spine-development/playbook/` |
 | `recipes/*.md` | Directive templates → `.planning/orchestration/recipes/` |
-| `docs/EXTENSIONS.md` | Optional future work |
+| `docs/EXTENSIONS.md` | Roadmap vs shipped template features |
 
 ---
 
 ## Lineage
 
-Early versions centered on five execution roles; **v1.4+** adds explicit program-delivery roles (**product, architect, conductor, engineering squads, UX, QA**) with `scripts/roles.sh` as the single source of truth. See **`CHANGELOG.md`**.
+Early versions centered on five execution roles; **v1.4+** adds explicit program-delivery roles (**product, architect, conductor, UX, QA**) and a single **`engineer`** implementation lane with worker fan-out; **`engineering-*` squad folders were retired** as top-level roles (ADR-001). See **`CHANGELOG.md`** and **`.planning/orchestration/DECISIONS.md`** when installed.
 
 The **orchestration spine** (`DECISIONS.md`, `MASTER_TODO.md`, `SESSION_HANDOFF.md`) lives under `.planning/orchestration/`. The agent team sits on top so parallel work stays tied to documented decisions.
