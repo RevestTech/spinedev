@@ -12,7 +12,15 @@ from typing import Annotated, Any, Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 
-from shared.api.dependencies import DbHandle, McpClient, current_user, get_db_pool, get_mcp_client
+from shared.api.dependencies import (
+    DbHandle,
+    McpClient,
+    actor_label,
+    current_user,
+    get_db_pool,
+    get_mcp_client,
+)
+from shared.identity.models import User
 
 router = APIRouter(prefix="/api/v2/projects", tags=["projects"])
 
@@ -77,18 +85,19 @@ class RollbackBody(BaseModel):
 async def create_project(
     body: ProjectCreate,
     mcp: Annotated[McpClient, Depends(get_mcp_client)],
-    user: Annotated[str, Depends(current_user)],
+    user: Annotated[User, Depends(current_user)],
 ) -> dict[str, Any]:
     """Create a project in ``intake`` via MCP ``project_create``."""
+    actor = actor_label(user)
     try:
         resp = mcp.call("project_create", {
-            "name": body.name, "project_type": body.project_type, "owner": body.owner or user,
+            "name": body.name, "project_type": body.project_type, "owner": body.owner or actor,
         })
     except KeyError as exc:
         raise _err(503, "mcp_tool_missing", str(exc)) from exc
     except ValueError as exc:
         raise _err(400, "invalid_input", str(exc)) from exc
-    return {"actor": user, **resp}
+    return {"actor": actor, **resp}
 
 
 @router.get("")
@@ -147,26 +156,26 @@ async def get_project(
 
 @router.patch("/{project_id}")
 async def patch_project(project_id: str, body: ProjectUpdate,
-                        user: Annotated[str, Depends(current_user)]) -> dict[str, Any]:
+                        user: Annotated[User, Depends(current_user)]) -> dict[str, Any]:
     """Update project ``status`` (paused/terminated) or ``metadata`` (stub)."""
     if body.status is None and body.metadata is None:
         raise _err(400, "invalid_input", "at least one of status, metadata required")
     return {"project_id": project_id, "applied": body.model_dump(exclude_none=True),
-            "actor": user, "note": "stub: wire to transition.sh"}
+            "actor": actor_label(user), "note": "stub: wire to transition.sh"}
 
 
 @router.post("/{project_id}/phase-advance")
 async def phase_advance(
     project_id: str, body: PhaseAdvanceBody,
     mcp: Annotated[McpClient, Depends(get_mcp_client)],
-    user: Annotated[str, Depends(current_user)],
+    user: Annotated[User, Depends(current_user)],
 ) -> dict[str, Any]:
     """Advance phase via MCP ``phase_advance``."""
     try:
         return mcp.call("phase_advance", {
             "project_id": project_id, "target_phase": body.target_phase,
             "approval_token": body.approval_token,
-        }) | {"actor": user}
+        }) | {"actor": actor_label(user)}
     except KeyError as exc:
         raise _err(503, "mcp_tool_missing", str(exc)) from exc
     except ValueError as exc:
@@ -175,7 +184,7 @@ async def phase_advance(
 
 @router.post("/{project_id}/rollback")
 async def rollback_project(project_id: str, body: RollbackBody,
-                           user: Annotated[str, Depends(current_user)]) -> dict[str, Any]:
+                           user: Annotated[User, Depends(current_user)]) -> dict[str, Any]:
     """Roll back to ``target_phase`` (stub — wire to transition.sh rollback)."""
     return {"project_id": project_id, "target_phase": body.target_phase,
-            "reason": body.reason, "actor": user, "note": "stub"}
+            "reason": body.reason, "actor": actor_label(user), "note": "stub"}

@@ -16,7 +16,13 @@ from typing import Annotated, Any, Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 
-from shared.api.dependencies import DbHandle, current_user, get_db_pool
+from shared.api.dependencies import (
+    DbHandle,
+    actor_label,
+    current_user,
+    get_db_pool,
+)
+from shared.identity.models import User
 
 router = APIRouter(prefix="/api/v2/approvals", tags=["approvals"])
 
@@ -104,10 +110,10 @@ async def list_approvals(
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def post_approval(
     body: ApprovalDecision,
-    user: Annotated[str, Depends(current_user)],
+    user: Annotated[User, Depends(current_user)],
 ) -> dict[str, Any]:
     """Record an approve / reject / request_changes decision via ``gate.sh``."""
-    actor = body.approver or user
+    actor = body.approver or actor_label(user)
     if body.action == "approve":
         args = ["approve", body.project_id, actor] + ([body.notes] if body.notes else [])
     elif body.action == "reject":
