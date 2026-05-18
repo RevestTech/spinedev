@@ -106,12 +106,44 @@ is `None` (i.e. when nobody has called `init_db()`), so postgres-down
 is non-fatal — but with it up, future work that hits the DB will Just
 Work without re-wiring.
 
-Spine's overlay at `verify/docker-compose.override.yml` does two things:
+Spine's overlay (materialized as `verify/docker-compose.override.yml` at
+runtime — see "Spine override placement" below) does two things:
 1. Renames containers to `spine_tron_*` so they don't collide with the
    pre-existing standalone TRON install (container names like
    `tron-postgres` belong to `/Users/.../Utilities/Tron`).
 2. Adds host port `127.0.0.1:33010 → 5432` for postgres (Spine's own
    postgres owns 33001; we reserve 33xxx for Spine's stack).
+
+### Spine override placement (T4 / Wave 1)
+
+The canonical override file lives **outside the TRON subtree** at
+`tools/verify-overrides/docker-compose.override.yml`. A small installer
+symlinks it into `verify/docker-compose.override.yml` at runtime:
+
+```bash
+bash tools/verify-overrides/install.sh             # install symlink
+bash tools/verify-overrides/install.sh --check     # report status
+bash tools/verify-overrides/install.sh --uninstall # remove symlink
+```
+
+**Why outside `verify/`:** `verify/` is `git subtree`-merged from TRON's
+upstream. Any Spine-authored file checked into `verify/` causes merge
+conflicts on the next subtree pull. The override file is Spine policy
+(container rename convention + Spine's `33xxx` port allocation), not TRON
+code, so it must not live in TRON's tree. The symlink pattern cleanly
+separates "Spine's verify integration" from "TRON's verify code":
+
+- TRON's subtree pulls stay conflict-free — no Spine file in `verify/`.
+- `verify/docker-compose.override.yml` still exists at compose-discovery
+  time, so `docker compose up -d <service>` in `verify/` continues to
+  auto-merge the overlay exactly as before.
+- The installer is idempotent and refuses to clobber non-symlink content
+  at the destination (defense against a hand-edit or a future TRON file
+  with the same name).
+
+Spine bootstrap / `tools/smoke-test.sh` phase 11 should invoke
+`tools/verify-overrides/install.sh` before `docker compose up -d postgres`
+in `verify/`.
 
 ### Bring it up
 
@@ -121,9 +153,12 @@ Spine's overlay at `verify/docker-compose.override.yml` does two things:
   'sqlalchemy[asyncio]>=2.0.36' temporalio bandit \
   alembic asyncpg psycopg2-binary
 
-# 2. Start TRON's postgres. verify/.env and verify/docker-compose.override.yml
-#    are force-tracked in Spine (TRON's .gitignore excludes them by default
-#    for standalone deploys; Spine carries them as the Spine-side overlay).
+# 2. Materialize the Spine override symlink (idempotent), then start TRON's
+#    postgres. The override file itself lives at tools/verify-overrides/
+#    so TRON subtree pulls stay conflict-free; the symlink lets compose
+#    discover it from verify/ at runtime. verify/.env.vault-refs is the
+#    Spine-side secrets manifest (vault-only, per #9).
+bash tools/verify-overrides/install.sh
 cd verify && docker compose up -d postgres && cd ..
 
 # 3. Apply TRON's alembic migrations (creates 14 tables).
