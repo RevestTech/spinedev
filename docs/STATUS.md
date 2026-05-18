@@ -51,6 +51,21 @@ TRON deploy.
 | 4.7 | Hosted demo sandbox deferred (pre-launch) | not blocking any wave |
 | 4.8 | Air-gapped v1.1 deferral holds | per #17 |
 
+### Wave 2 — Work-item types + charters + devops/: COMPLETE 2026-05-18
+
+5 commits:
+
+| Commit | Scope |
+|---|---|
+| `cfc23e0` | Squad 1 — 6 NEW industry-anchored charters (devops/customer_support/compliance_officer/security_engineer/tech_writer/release_manager) + `lib/role-prompts/` deprecation notice. +1498 lines |
+| `282f7d2` | Squad 3 — `devops/` top-level subsystem with 8 control planes + dispatcher + 3 MCP tools. +1912 lines, 21/21 tests |
+| `d9c65f3` | Squad 2 — 7 work-item type schemas + 6 intake YAML templates + `build_dispatcher.py` routing + `ProjectType` Literal 4→7 + `#13` implementer_kind + autonomy_tier. +1381 lines, 92 tests |
+| `4d46484` | Squad 4 — V33 audit_subsystem CHECK extension (applied LIVE) + V34 cross_llm provider backfill + stale tool-catalog test fix + auditor `requires_citation=True` tag + smoke-test ProjectType fixup |
+
+**Total Wave 2:** +5200 net lines, 119 new tests passing, smoke test 99 PASS / 0 FAIL maintained.
+
+**13 charter REBUILDs deferred to Wave 3** per Squad 1 Wave 3 handoff (architect→TOGAF+arc42, auditor→Cite-or-Refuse+NIST 800-53, conductor→Scrum+SAFe, datawright→DAMA-DMBOK+Kimball, engineer→#13 tier-bifurcation+Clean Code, operator→SRE-internal-platform-variant+12-factor, planner→PMBOK 7+Scrum, product→Inspired+Continuous Discovery+JTBD, qa→ISTQB, researcher→Cite-or-Refuse+IDEO+NN/g, ux→Nielsen+WCAG 2.2). `memory.md` + `seer.md` recommended DELETE (become Hub features per #3 + #27).
+
 ### Wave 1 — Substrate wiring: COMPLETE 2026-05-18
 
 4 commits:
