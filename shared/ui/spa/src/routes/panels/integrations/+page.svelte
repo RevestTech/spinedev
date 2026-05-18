@@ -87,15 +87,30 @@
     }
   }
 
-  function effectiveStatus(it: IntegrationDetail): 'configured' | 'unconfigured' | 'failing' | 'disabled' {
-    const last = probes[it.name];
-    if (last?.disabled) return 'disabled';
-    if (last && !last.healthy) return 'failing';
-    if (it.status === 'configured') return 'configured';
-    return 'unconfigured';
+  type EffectiveStatus = 'configured' | 'unconfigured' | 'failing' | 'disabled';
+
+  // Derived map keyed by integration name. Svelte's reactive statement
+  // tracks BOTH `items` and `probes` directly (function-call deps inside
+  // `{@const}` are not tracked across `{#each}`, which previously caused
+  // the status badge to stay stale after a probe mutated `probes`).
+  function computeStatuses(
+    list: IntegrationDetail[],
+    pr: typeof probes
+  ): Record<string, EffectiveStatus> {
+    const out: Record<string, EffectiveStatus> = {};
+    for (const it of list) {
+      const last = pr[it.name];
+      if (last?.disabled) out[it.name] = 'disabled';
+      else if (last && !last.healthy) out[it.name] = 'failing';
+      else if (it.status === 'configured') out[it.name] = 'configured';
+      else out[it.name] = 'unconfigured';
+    }
+    return out;
   }
 
-  const STATUS_TONE: Record<'configured' | 'unconfigured' | 'failing' | 'disabled', string> = {
+  $: statusByName = computeStatuses(items, probes);
+
+  const STATUS_TONE: Record<EffectiveStatus, string> = {
     configured: 'bg-severity-info text-white',
     unconfigured: 'bg-surface-200 text-surface-700 dark:bg-surface-700 dark:text-surface-200',
     failing: 'bg-severity-critical text-white',
@@ -128,7 +143,7 @@
     data-testid="integrations-list"
   >
     {#each items as it (it.name)}
-      {@const eff = effectiveStatus(it)}
+      {@const eff = statusByName[it.name] ?? 'unconfigured'}
       {@const last = probes[it.name]}
       <li
         class="panel-card flex flex-col gap-2"

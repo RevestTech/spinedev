@@ -72,11 +72,15 @@ describe('Integrations page', () => {
     await waitFor(() =>
       expect(api.post).toHaveBeenCalledWith('/api/v2/integrations/github/test-connection')
     );
-    // After an unhealthy probe the panel must surface the failure inline.
-    // (The data-status attr is computed via {@const eff = effectiveStatus(it)};
-    // Svelte 4's dep-tracking on @const does not re-evaluate function-call
-    // results when only `probes` changes, so we assert on the visibly-reactive
-    // "Last probe" / "Detail" row instead — same user-visible signal.)
+    // After an unhealthy probe the badge must flip to "failing" via the
+    // reactive statusByName derivation (regression guard for the prior
+    // {@const}-non-reactivity bug).
+    await waitFor(() => {
+      const card = screen
+        .getAllByTestId('integration-card')
+        .find((el) => el.getAttribute('data-integration-name') === 'github');
+      expect(card).toHaveAttribute('data-status', 'failing');
+    });
     await waitFor(() =>
       expect(screen.getByText(/vault secret missing/i)).toBeInTheDocument()
     );
@@ -93,7 +97,15 @@ describe('Integrations page', () => {
     const [first] = await screen.findAllByTestId('probe-button');
     await fireEvent.click(first);
     // 402 → panel stores probes[name] = { disabled: true, detail: 'requires flag', ... }.
-    // Verify the reactive "Detail" cell surfaces the upgrade-path message.
+    // Badge must flip to "disabled" (regression guard for the prior
+    // {@const}-non-reactivity bug) and the detail cell must surface the
+    // upgrade-path message.
+    await waitFor(() => {
+      const card = screen
+        .getAllByTestId('integration-card')
+        .find((el) => el.getAttribute('data-integration-name') === 'github');
+      expect(card).toHaveAttribute('data-status', 'disabled');
+    });
     await waitFor(() =>
       expect(screen.getByText(/requires flag/i)).toBeInTheDocument()
     );
