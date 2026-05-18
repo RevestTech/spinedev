@@ -1,4 +1,4 @@
-# Spine v3 — Design Decisions
+# Spine v3 — Design Decisions (34 locked)
 
 > **Status:** Canonical record of design decisions locked during the 2026-05-17 design session.
 > Reconstructed from `chatsession.md` (~21k-line transcript). Triage agents (T1–T6) used these
@@ -10,12 +10,13 @@
 > because everything else (ARCHITECTURE, PRD, READMEs, install scripts, operational guides) depends
 > on it.
 >
-> **Numbering note.** Conversation transcript shows a numbering gap: first locked tracker enumerated
-> #1–#10, then jumped to #13 without explicitly locking #11 and #12. Triage agents (T4, others) referenced
-> `#11 = Operate subsystem (devops + 8 control planes)` and `#12 = Cite-or-Refuse contract` as if they
-> were locked — both came from research recommendations (R3/R4/R7) and were treated as adopted in subsequent
-> design work. They are listed here with **(ratified retroactively)** tags and should be considered
-> locked unless explicitly revisited.
+> **Numbering note.** Conversation transcript showed a numbering gap: first locked tracker enumerated
+> #1–#10, then jumped to #13 without explicitly locking #11 and #12. `#11 = Operate subsystem (devops
+> + 8 control planes)` (from R7 research + W2 reframe) and `#12 = Cite-or-Refuse contract` (from R3/R4
+> research) were treated as locked by triage agents and have now been **formally ratified** in this
+> doc (2026-05-17). **#34 = Workspace hygiene as architectural concern** was previously a flagged-but-unnumbered
+> Spine design concern (per `feedback_workspace_hygiene` memory) and has been formally locked as #34
+> in this doc (2026-05-17).
 
 ---
 
@@ -33,8 +34,8 @@
 | 8 | Authority | Two-tier (Master + project) hybrid authority + bounded override |
 | 9 | Secrets | Vault-only, no exceptions, OpenBao Day-0 default |
 | 10 | Federation | Fractal Hub — "a Hub is a Hub is a Hub" |
-| 11 | Operate (ratified) | 6th corner — devops role + 8 control planes |
-| 12 | Verify contract (ratified) | Cite-or-Refuse for verify-class roles |
+| 11 | Operate | 6th corner — devops role + 8 control planes |
+| 12 | Verify contract | Cite-or-Refuse for verify-class roles |
 | 13 | Engineer | Hybrid by tier, wrapper over Claude Code / Cursor / Aider / OpenHands |
 | 14 | Target market | ALL three segments (solo founder → mid-market → enterprise) |
 | 15 | Hosting | NOT SaaS. Self-hosted every tier |
@@ -56,6 +57,7 @@
 | 31 | DR | BUILD properly for v1.0 (not scaffold) |
 | 32 | DR architecture | 12 layers (see #32 detail) |
 | 33 | Migration tools | 4 concerns (onboarding / portability / work-type / Spine version) |
+| 34 | Workspace hygiene | Architectural concern — per-agent workspace dirs + auto-cleanup + Conductor gate |
 
 ---
 
@@ -166,10 +168,9 @@ security incidents upward."
 
 ---
 
-## 11. Operate subsystem — the 6th corner *(ratified retroactively)*
+## 11. Operate subsystem — the 6th corner
 
-> Source: R7 research recommendation + W2 expansion. Referenced as locked by T4 triage. Not explicitly
-> numbered in the running tracker — ratified here.
+> Source: R7 research recommendation + W2 expansion. Formally ratified 2026-05-17.
 
 Spine builds AND **operates** production. Every competitor stops at "ship the code." Spine ships INIT-10
 Operate Subsystem.
@@ -182,9 +183,9 @@ human-in-loop seam. Detail to be captured in `lib/role-prompts/devops.md` REBUIL
 
 ---
 
-## 12. Cite-or-Refuse contract *(ratified retroactively)*
+## 12. Cite-or-Refuse contract
 
-> Source: R3 + R4 research recommendation. Referenced as locked by T4 triage. Ratified here.
+> Source: R3 + R4 research recommendation. Formally ratified 2026-05-17.
 
 **Strict tier for verify-class roles** (auditor / qa / verify): must cite supporting evidence (KG node
 ID, file:line, prior audit row hash) or **refuse to act**. Refusal is itself an audit event.
@@ -604,6 +605,49 @@ round-trippable. *"Try Spine; we already proved you can leave."*
 
 ---
 
+## 34. Workspace hygiene as architectural concern
+
+> Source: `feedback_workspace_hygiene` memory + recurring user concern across multi-agent sessions.
+> Formally ratified 2026-05-17.
+
+**Problem:** AI-generated work leaves cruft. Each agent locally optimizes — drops temp files, returns,
+moves on. Nobody's the janitor. Over days this becomes measurable signal-to-noise drop in the repo
+and makes onboarding new contributors (or the user returning) harder.
+
+**Spine must own this as a first-class architectural concern**, not a manual cleanup chore.
+
+**Design requirements:**
+
+1. **Per-run workspace dir.** Every agent / subagent invocation gets `.spine/work/<run_id>/`.
+   Agents write all intermediate state there. No more scattering `/tmp/*` or repo-root scratch.
+2. **Explicit promotion.** Final artifacts (DB writes, commits, copies-to-canonical) are explicitly
+   **promoted** out of the workspace before it closes. No implicit "and the workspace becomes the
+   artifact."
+3. **Archive on completion.** On agent completion (success OR failure), the workspace is
+   **archived to `.spine/archive/<date>/<run_id>.tar.zst`** (compressed) and then **deleted from
+   the live tree**.
+4. **Periodic sweep command.** `spine hygiene` (or `make hygiene`) sweeps:
+   - `/tmp/spine-*` orphans
+   - `.spine/archive/` past N days (configurable per bundle; default 30d)
+   - Stale workspaces from crashed agents (older than max-run-duration)
+   - `__pycache__/` not in `.gitignore`
+   - Repo-root files matching one-off scratch patterns
+5. **Conductor gate.** **Conductor role refuses to mark a project done if uncleaned workspace state
+   exists for it.** Hygiene is a release-blocking acceptance criterion, not a nice-to-have.
+6. **Per-bundle policy.** Bundle declares retention window + sweep cadence + acceptable workspace
+   patterns. Customer can tune for their environment (longer retention for debug, shorter for
+   throughput).
+
+**Implication for #11 (Operate):** workspace hygiene is one of the 8 control planes for the devops
+role. Hub UI surfaces hygiene status per project (currently uncleaned workspaces / next sweep ETA /
+last sweep result).
+
+**Why this matters strategically:** every other AI dev tool leaves cruft. Spine refusing to mark
+work done until the workspace is clean is the same trust mechanism as the audit chain — proves the
+work was actually completed, not just declared done with debris left behind.
+
+---
+
 # Deferred items (NOT numbered decisions)
 
 These came up during the session, were explicitly deferred, and should be revisited later:
@@ -641,7 +685,7 @@ These came up during the session, were explicitly deferred, and should be revisi
 # Architectural primitives that emerged (cross-decision)
 
 These weren't single decisions — they're patterns that emerged across multiple decisions and need
-explicit attention in the build:
+explicit attention in the build (10 patterns):
 
 1. **BYOC delegated-role pattern** (#15, #17): vendor automation provisions into customer's cloud
    via scoped IAM role; customer can revoke at any time
@@ -664,18 +708,13 @@ explicit attention in the build:
    policy
 10. **Cross-LLM consensus as learning signal, not just error** (#27): disagreement is data feeding
     calibration corpus
-11. **Workspace hygiene as Spine design concern** (separate from feedback_workspace_hygiene memory):
-    every agent / subagent invocation should get a workspace dir under `.spine/work/<run_id>/`; final
-    artifacts promoted explicitly; workspaces archived + cleaned. Conductor role refuses to mark a
-    project done if uncleaned workspace state exists for it. *(Not formally locked as a numbered
-    decision — flagged here as a known Spine design concern; ratify if confirmed.)*
 
 ---
 
 # v1.0 → v1.1+ split (consolidated)
 
 **Day 1 (v1.0):**
-- All 33 decisions above, with their scaffolds/builds as specified
+- All 34 decisions above, with their scaffolds/builds as specified
 - 4 deployment shapes (laptop / BYOC / customer-cloud / on-prem)
 - 5+ cloud providers
 - 7 work-item types
@@ -688,6 +727,7 @@ explicit attention in the build:
 - Migration A scaffolded with GitHub + (Linear OR Jira)
 - Mobile + voice + API+MCP scaffolds
 - Hosted demo sandbox `try.spine.dev`
+- Workspace hygiene primitive (#34): `.spine/work/`, `.spine/archive/`, `spine hygiene` sweep, Conductor gate
 
 **v1.1+ (post-v1.0):**
 - Air-gapped deployment shape
@@ -719,5 +759,8 @@ explicit attention in the build:
 - Status: **CANONICAL** — supersedes any conflicting content in ARCHITECTURE.md, PRD.md,
   BACKLOG.md, README.md, INSTALL.md, positioning.md until those are rewritten per #22 triage
   recommendations
-- Next update trigger: any retroactive ratification of #11 / #12 / workspace-hygiene-as-design-concern,
-  OR any new design decision locked in subsequent sessions
+- Revision 2 (2026-05-17): formally ratified #11 (Operate / devops + 8 control planes), #12
+  (Cite-or-Refuse contract), and added #34 (Workspace hygiene as architectural concern). Total locked
+  decisions: **34**.
+- Next update trigger: any new design decision locked in subsequent sessions, OR any locked decision
+  revisited and changed
