@@ -1,64 +1,56 @@
-# Markdown extractor — STORY-6.2.3 + REQ-INIT-6 FR-4.
+# Markdown extractor — DEPRECATED IN FAVOR OF build/kg/doc_parser/
 #
-# Two jobs:
-#  1. Structural — headings → Heading nodes (with level); links → LINKS_TO.
-#  2. Spine-ID detection — scan inline text for embedded IDs (INIT-N /
-#     EPIC-N.M / STORY-N.M.K / REQ-INIT-N / ADR-N / FR-N) → typed CITES edges.
-#     This makes "show every doc that cites STORY-6.2.3" sub-ms (FR-4).
+# Wave 1 (v3) decision: there are two implementations of the same job
+# in the tree —
 #
-# OUT OF SCOPE here: fenced code blocks. Parser core (STORY-6.2.1) hands the
-# inner text to the matching language extractor as a synthetic Module.
+#   1. THIS YAML — a tree-sitter declarative extractor config that
+#      handles heading nodes + LINKS_TO + CITES via inline regex.
+#   2. build/kg/doc_parser/ — a richer Python implementation that
+#      handles all of the above PLUS doc-subtype-specific child nodes:
+#      REQ / PRD / TRD / ADR / Initiative / Epic / Story / Role /
+#      MemoryLesson / Release. Plus the spine_id_resolver runs a
+#      typed lookup that promotes external IDs to real KG node IDs
+#      after subsequent indexing passes.
+#
+# The two overlap (both emit Heading + LINKS_TO + CITES), but only
+# doc_parser/ produces the typed Requirement / Story / ADR / role
+# subgraph that REQ-INIT-6 FR-4 actually asks for.
+#
+# Resolution (Wave 1, v3 — Squad B):
+#   * doc_parser/ is the source of truth for .md files. The indexer
+#     should route .md through doc_parser/markdown_parser.parse_markdown
+#     (and the per-subtype wrappers in spine_doc_parser.py) — not
+#     through the tree-sitter pipeline.
+#   * THIS file is reduced to documentation. It MUST NOT be loaded by
+#     the parser runtime; the indexer's file_filters logic should
+#     exclude .md files from tree-sitter extraction (see
+#     build/kg/extractors/README.md table).
+#   * The schema fragment retained below is intentionally empty
+#     (no node_extractors, no edge_extractors) so any indexer that
+#     accidentally enumerates this file extracts nothing — guarding
+#     against double-counting headings/edges if doc_parser/ also
+#     fires for the same file.
+#
+# Migration tracking: this consolidation closes the duplication entry
+# in docs/V3_BUILD_SEQUENCE.md Wave-1 quiet-bug list (#7).
 
 language: markdown
 
 grammar:
   package: tree_sitter_markdown
-  version: "0.3.*"                       # Block grammar; inline grammar sibling-loaded.
+  version: "0.3.*"
   language_function: language
 
-node_extractors:
-  - ast_type: __file_root__
-    node_kind: Document
-    subtype: __infer_from_path__         # `reqs/REQ-*` → REQ, `docs/PRD.md` → PRD, ...
-    name_field: __filename__
-    properties:
-      - { source_field: __file_path__, property_key: path, transform: stringify }
-    children_recurse: true
-
-  - ast_type: atx_heading                # `# h1`, `## h2`, ...
-    node_kind: Heading
-    name_field: heading_content
-    properties:
-      - { source_field: __heading_level__, property_key: level, transform: stringify }
-      - { source_field: __self__, property_key: lines, transform: line_range }
-
-  - ast_type: setext_heading             # `Title\n=====` (level 1) / `\n-----` (level 2).
-    node_kind: Heading
-    name_field: heading_content
-    properties:
-      - { source_field: __heading_level__, property_key: level, transform: stringify }
-
-edge_extractors:
-  - ast_type: inline_link                # `[text](url)` and reference-style.
-    edge_kind: LINKS_TO
-    from_resolver: enclosing_module
-    to_resolver: literal_text:link_destination
-    properties:
-      - { source_field: link_text, property_key: anchor_text, transform: stringify }
-
-  # Spine IDs in inline text → CITES. One edge per regex match. Alternation
-  # order matters (longest prefix first) so REQ-INIT-N isn't shadowed by
-  # INIT-N. Runtime joins the captured ID against Initiative/Epic/Story/
-  # Document nodes so cites anchor at real nodes, not strings.
-  - ast_type: inline
-    edge_kind: CITES
-    from_resolver: enclosing_module
-    to_resolver: "pattern:(REQ-INIT-\\d+|STORY-\\d+\\.\\d+\\.\\d+|EPIC-\\d+\\.\\d+|INIT-\\d+|ADR-\\d+|FR-\\d+)"
-    properties:
-      - { source_field: __match__, property_key: cited_id, transform: stringify }
+# DELIBERATELY EMPTY — see header. doc_parser/markdown_parser.py owns
+# Heading + LINKS_TO + CITES emission for .md files; this YAML must NOT
+# produce duplicates.
+node_extractors: []
+edge_extractors: []
 
 file_filters:
-  include_globs: ["**/*.md", "**/*.markdown"]
-  exclude_globs: ["**/node_modules/**", "**/.git/**", "**/CHANGELOG.md"]
+  # Exclude every .md file from tree-sitter routing. The indexer routes
+  # .md to build/kg/doc_parser/ instead (see doc_parser_README.md).
+  include_globs: []
+  exclude_globs: ["**/*.md", "**/*.markdown"]
 
-test_file_detection: { path_patterns: [], name_patterns: [] }  # No exec tests in MD.
+test_file_detection: { path_patterns: [], name_patterns: [] }

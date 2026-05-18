@@ -54,12 +54,38 @@ class MigrationPlan(BaseModel):
 
 
 def _psql(sql: str) -> str:
-    """Mirrors `project_lock._psql` so the package behaves uniformly."""
+    """Mirrors `project_lock._psql` so the package behaves uniformly.
+
+    Internal callers in this module are migrated to ``_psql_bound`` for
+    parameter binding; this raw form is kept for tooling / migrations
+    that need a free-form query.
+    """
     url = os.environ.get("SPINE_DB_URL")
     if not url: raise RuntimeError("SPINE_DB_URL not set — phase_evolution needs a database")
     r = subprocess.run(["psql", url, "-At", "-v", "ON_ERROR_STOP=1", "-c", sql],
                        check=True, capture_output=True, text=True)
     return r.stdout.strip()
+
+
+def _psql_bound(sql_with_binds: str, binds: dict[str, str]) -> str:
+    """Parameter-binding variant — see ``project_lock._psql_bound``."""
+    url = os.environ.get("SPINE_DB_URL")
+    if not url:
+        raise RuntimeError("SPINE_DB_URL not set — phase_evolution needs a database")
+    lines: list[str] = [r"\set ON_ERROR_STOP 1"]
+    for name, value in binds.items():
+        if not name.replace("_", "").isalnum():
+            raise ValueError(f"unsafe bind name: {name!r}")
+        safe = value.replace("'", "''")
+        lines.append(f"\\set {name} '{safe}'")
+    lines.append(sql_with_binds)
+    script = "\n".join(lines) + "\n"
+    proc = subprocess.run(
+        ["psql", url, "-At", "-X", "-q"],
+        input=script,
+        check=True, capture_output=True, text=True,
+    )
+    return proc.stdout.strip()
 
 
 def _phase_map(m: PipelineManifest) -> dict[str, dict[str, Any]]:
@@ -70,17 +96,63 @@ def _phase_order(m: PipelineManifest) -> list[str]:
     return [p.get("id") for p in (m.phases or []) if p.get("id")]
 
 
+def _label_for(p: dict[str, Any]) -> str:
+    """Return a non-empty label for a phase.
+
+    QUIET-BUG-FIX (Wave 1, v3): the rename heuristic previously read
+    ``p.get("label") or ""`` directly. Many phases in ``phases.yaml`` do
+    NOT carry an explicit ``label`` field — the runtime derives one from
+    ``id`` at render time. Without that fallback, ``_signature`` returned
+    ``("", "", artifact)`` for every label-less phase, which made the
+    add/remove pairing in ``_detect_renames`` collapse: e.g. adding
+    ``foo`` and removing ``bar`` would match as a rename whenever both
+    shared an ``artifact`` value (often the manifest's only such field).
+
+    Resolution order:
+      1. explicit ``label`` field, if present and non-empty
+      2. explicit ``name`` field (some bundles use this synonym)
+      3. ``id`` — guaranteed non-empty by _phase_map() (phases without
+         id are dropped upstream)
+    """
+    for key in ("label", "name"):
+        val = p.get(key)
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+    return str(p.get("id") or "").strip()
+
+
 def _signature(p: dict[str, Any]) -> tuple[str, str, str]:
-    """Rename heuristic identity: label + subsystem + artifact."""
-    return (str(p.get("label") or ""), str(p.get("subsystem") or ""), str(p.get("artifact") or ""))
+    """Rename heuristic identity: (label, subsystem, artifact).
+
+    All three components are filled with non-empty strings whenever the
+    source phase has any of them; ``label`` falls back to ``name`` then
+    ``id`` (see ``_label_for``). This guarantees two distinct phases
+    only share a signature when they are actually equivalent on all
+    three dimensions — the previous "" collapse bug is gone.
+    """
+    return (
+        _label_for(p),
+        str(p.get("subsystem") or "").strip(),
+        str(p.get("artifact") or "").strip(),
+    )
 
 
 def _detect_renames(adds: list[dict], rems: list[dict]
                     ) -> tuple[list[tuple[dict, dict]], list[dict], list[dict]]:
-    """Pair add/remove with matching signatures; return (renames, leftovers)."""
+    """Pair add/remove with matching signatures; return (renames, leftovers).
+
+    Defensive: an all-empty signature (``("", "", "")``) is *never*
+    treated as a rename match — even if two phases somehow lack id /
+    label / subsystem / artifact, they get classified as
+    distinct add/remove events so the operator sees them.
+    """
     renames: list[tuple[dict, dict]] = []; rems_left = list(rems); adds_left: list[dict] = []
+    _EMPTY: tuple[str, str, str] = ("", "", "")
     for a in adds:
-        m = next((r for r in rems_left if _signature(r) == _signature(a)), None)
+        a_sig = _signature(a)
+        if a_sig == _EMPTY:
+            adds_left.append(a); continue
+        m = next((r for r in rems_left if _signature(r) == a_sig), None)
         if m: renames.append((m, a)); rems_left.remove(m)
         else: adds_left.append(a)
     return renames, adds_left, rems_left
@@ -116,8 +188,18 @@ def detect_evolution_events(old: PipelineManifest,
 
     for old_p, new_p in renames:
         out.append(_mk("phase_renamed", v_old, v_new, new_p["id"],
-            detail={"from": old_p["id"], "to": new_p["id"]},
-            rationale="phase id changed; label/subsystem/artifact unchanged"))
+            detail={
+                "from": old_p["id"], "to": new_p["id"],
+                "label": _label_for(new_p),
+                "from_label": _label_for(old_p),
+                "subsystem": str(new_p.get("subsystem") or "").strip(),
+                "artifact": str(new_p.get("artifact") or "").strip(),
+            },
+            rationale=(
+                f"phase id changed ({old_p['id']!r} -> {new_p['id']!r}); "
+                f"label={_label_for(new_p)!r}, "
+                f"subsystem/artifact unchanged"
+            )))
     for p in adds_left:
         out.append(_mk("phase_added", v_old, v_new, p["id"], rationale=f"new phase {p['id']!r}"))
     for p in rems_left:
@@ -151,18 +233,27 @@ def detect_evolution_events(old: PipelineManifest,
 
 
 def affected_projects(event: PhaseEvolutionEvent, db_url: Optional[str] = None) -> list[str]:
-    """In-flight projects locked to `event.pipeline_version_old` that this touches."""
+    """In-flight projects locked to `event.pipeline_version_old` that this touches.
+
+    ``pipeline_version_old`` is bound via psql ``:'ver'`` interpolation —
+    safe against SQL injection regardless of caller-controlled source.
+    """
     if db_url: os.environ["SPINE_DB_URL"] = db_url
-    rows = _psql(
-        f"SELECT COALESCE(project_uuid::text, id::text) FROM spine_lifecycle.project "
-        f"WHERE pipeline_version = '{event.pipeline_version_old}' "
-        f"AND status IN ('active','paused');")
+    rows = _psql_bound(
+        "SELECT COALESCE(project_uuid::text, id::text) FROM spine_lifecycle.project "
+        "WHERE pipeline_version = :'ver' AND status IN ('active','paused');",
+        {"ver": event.pipeline_version_old},
+    )
     return [r for r in rows.splitlines() if r.strip()]
 
 
 def _current_phase_of(project_id: str) -> str:
-    raw = _psql(f"SELECT current_phase FROM spine_lifecycle.project "
-                f"WHERE project_uuid::text = '{project_id}' OR id::text = '{project_id}' LIMIT 1;")
+    """Look up a project's ``current_phase`` (parameter-bound query)."""
+    raw = _psql_bound(
+        "SELECT current_phase FROM spine_lifecycle.project "
+        "WHERE project_uuid::text = :'pid' OR id::text = :'pid' LIMIT 1;",
+        {"pid": project_id},
+    )
     return (raw or "").strip()
 
 
@@ -206,11 +297,16 @@ def execute_migration(plan: MigrationPlan, actor: str, rationale: str, *,
 
 
 def evolution_report(old: str, new: str, db_url: Optional[str] = None) -> dict[str, Any]:
-    """Human-readable summary for the UI. Reconstitutes manifests via locks."""
+    """Human-readable summary for the UI. Reconstitutes manifests via locks.
+
+    Both version strings are bound via ``:'ver'`` — no string interpolation
+    into SQL.
+    """
     if db_url: os.environ["SPINE_DB_URL"] = db_url
     q = ("SELECT COALESCE(project_uuid::text, id::text) FROM spine_lifecycle.project "
-         "WHERE pipeline_version = '{}' LIMIT 1;")
-    a, b = _psql(q.format(old)).strip(), _psql(q.format(new)).strip()
+         "WHERE pipeline_version = :'ver' LIMIT 1;")
+    a = _psql_bound(q, {"ver": old}).strip()
+    b = _psql_bound(q, {"ver": new}).strip()
     if not a or not b:
         return {"ok": False, "reason": "no projects locked to one of the provided versions"}
     events = detect_evolution_events(get_locked_pipeline(a), get_locked_pipeline(b))

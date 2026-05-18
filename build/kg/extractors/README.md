@@ -88,7 +88,7 @@ indexer's test-mapping pass emits `TESTS` / `COVERS` edges by overlapping
 | `python.yaml` | Primary | Daemons, indexer, MCP tools |
 | `typescript.yaml` | Primary | Dashboard, future UI (TS + JS) |
 | `bash.yaml` | Primary | All `lib/*.sh` daemons + tests |
-| `markdown.yaml` | Primary | PRD, BACKLOG, ADRs, role prompts, memory |
+| `markdown.yaml` | Deprecated (Wave 1) | `.md` files route through `build/kg/doc_parser/` instead — see header of `markdown.yaml` |
 | `go.yaml` / `rust.yaml` / `sql.yaml` | Backlog | `STORY-6.2.3` follow-on |
 
 ## Cross-references

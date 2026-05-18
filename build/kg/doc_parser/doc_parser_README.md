@@ -64,12 +64,13 @@ when the real target is later indexed.
 
 ## Integration with the indexer
 
-Today: the indexer's `parser_runtime.parse_file` handles every file via
-tree-sitter (markdown extractor at `build/kg/extractors/markdown.yaml`).
-The follow-up integration story routes `.md` files to this module
-instead — the output shapes (`NodeData` / `EdgeData`) already mirror
-`parser_runtime`'s `dict` payloads so the indexer's psql INSERT path is
-unchanged.
+Wave 1 (v3) — duplication resolved. ``build/kg/extractors/markdown.yaml``
+has been reduced to a documentation-only stub (empty extractors +
+``exclude_globs: ["**/*.md"]``) so the tree-sitter pipeline never
+fires for ``.md`` files. The indexer routes ``.md`` exclusively
+through this module. Output shapes (``NodeData`` / ``EdgeData``)
+already mirror ``parser_runtime``'s ``dict`` payloads so the indexer's
+psql INSERT path is unchanged.
 
 Until then, `cli.py` provides standalone access:
 
@@ -95,7 +96,7 @@ config / fatal).
 - `STORY-6.3.1` / `6.3.2` / `6.3.3` — this implementation.
 - `db/flyway/sql/V2__spine_kg_schema.sql` — node / edge schema.
 - `build/kg/indexer/parser_runtime.py` — parallel structure for code.
-- `build/kg/extractors/markdown.yaml` — the tree-sitter extractor this
-  replaces for `.md` files (kept for documentation; indexer routing
-  switch is a follow-up).
+- `build/kg/extractors/markdown.yaml` — superseded stub (Wave 1, v3);
+  no longer emits any nodes/edges; excluded from tree-sitter routing
+  via ``file_filters.exclude_globs``.
 - `docs/PRD.md` REQ-INIT-6 §6.5 FR-4 — the spec.

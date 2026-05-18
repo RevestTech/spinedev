@@ -11,13 +11,37 @@ independently verify it. Consensus = high confidence; disagreement =
 we degrade gracefully — skip the secondary call, cap effective confidence
 at 0.7. Cost (STORY-3.7.4): roughly 2x the LLM cost for the affected
 output; ``total_cost_usd`` surfaces that to the cost meter.
+
+Wave 1 (v3) changes — BREAKING for persisted ``ValidationRequest`` /
+``ProviderResult`` records:
+
+  * ``Provider`` Literal extends from the original 4 values
+    (``anthropic``, ``openai``, ``google``, ``local``) to the full 7-tuple
+    locked by V3 #2 (``anthropic``, ``openai``, ``bedrock``, ``vertex``,
+    ``ollama``, ``qwen``, ``vllm``). Note: ``google`` and ``local`` are
+    DROPPED — they map to ``vertex`` (Gemini on Vertex AI) and to one of
+    ``ollama`` / ``vllm`` respectively. Any persisted rows carrying the
+    old labels must be migrated by a one-time backfill (V21+ migration):
+
+        UPDATE spine_audit.audit_event
+        SET metadata = jsonb_set(metadata, '{providers}', ...)
+        WHERE metadata->>'providers' ~* '"(google|local)"';
+
+    The new value is determined by the row's ``primary_model`` field; if
+    ambiguous, default to ``vertex`` (for google) or ``ollama`` (for
+    local).
+  * All provider calls now dispatch through ``shared.llm.call_async`` so
+    every adapter, prompt-cache trait, retry policy, and credential
+    surface flows through a single entry point (per V3 #2). The legacy
+    inline SDK calls (``_call_anthropic`` / ``_call_openai``) have been
+    removed; ``_DISPATCH`` is gone.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
-import os
 import time
 from decimal import Decimal
 from typing import Any, Literal
@@ -31,18 +55,41 @@ from shared.validation.consensus import ConsensusResult, Verdict, compute_consen
 
 logger = logging.getLogger(__name__)
 
-Provider = Literal["anthropic", "openai", "google", "local"]
+# Provider catalog per V3 design decision #2 (LLM-agnostic):
+#   anthropic / openai / bedrock / vertex / ollama / qwen / vllm
+#
+# Migration note (BREAKING): the previous 4-value Literal (anthropic /
+# openai / google / local) is no longer accepted. Persisted rows carrying
+# those labels must be backfilled — see module docstring.
+Provider = Literal[
+    "anthropic", "openai", "bedrock", "vertex", "ollama", "qwen", "vllm"
+]
 ContentType = Literal["prd", "trd", "code_change", "audit_finding", "decomposition"]
 Severity = Literal["critical", "high", "medium", "low"]
 
 _SINGLE_KEY_CONFIDENCE_CAP: float = 0.7
 _MAX_INPUT_CHARS: int = 16_000  # ~4k tokens; trimmed to keep cost bounded
+
+# Default validator model per provider. The model string is also the
+# routing key for shared.llm — adapters resolve via prefix match.
 _DEFAULT_VALIDATOR_MODELS: dict[str, str] = {
     "anthropic": "claude-sonnet-4",
-    "openai": "gpt-4o",
+    "openai":    "gpt-4o",
+    "bedrock":   "bedrock:anthropic.claude-3-5-sonnet-20240620-v1:0",
+    "vertex":    "vertex:gemini-1.5-pro",
+    "ollama":    "ollama:llama3.1:8b",
+    "qwen":      "qwen:qwen2.5-72b-instruct",
+    "vllm":      "vllm:meta-llama/Meta-Llama-3.1-8B-Instruct",
 }
-# Approx per-call cost ≈ 500 in + 200 out tokens at sonnet / gpt-4o pricing.
-_APPROX_COST: dict[str, float] = {"anthropic": 0.0045, "openai": 0.00325}
+# Approx per-call cost ≈ 500 in + 200 out tokens at typical 2026 pricing.
+# Local providers (ollama / vllm) are zero; bedrock/vertex roughly match
+# the underlying model's marginal cost.
+_APPROX_COST: dict[str, float] = {
+    "anthropic": 0.0045, "openai": 0.00325,
+    "bedrock":   0.0045, "vertex":   0.0040,
+    "ollama":    0.0,    "vllm":     0.0,
+    "qwen":      0.0010,
+}
 
 
 class ValidationRequest(BaseModel):
@@ -90,19 +137,53 @@ class CrossLLMValidationResult(BaseModel):
 
 
 # ── Provider detection ────────────────────────────────────────────────
+#
+# Per V3 #9 (vault-only): we MUST NOT read provider API keys from
+# environment variables. Availability is therefore determined by the
+# provider adapter registry in ``shared.llm`` — the adapter declares
+# whether its credentials resolve (via shared.secrets) at call time.
+#
+# The legacy ``_KEY_ENV`` map (ANTHROPIC_API_KEY / OPENAI_API_KEY env
+# discovery) has been removed. Tests inject availability by patching
+# ``_available_providers``; production resolution is governed by which
+# secrets the operator has provisioned in the vault.
 
-_KEY_ENV = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY"}
+# Maps a model-string prefix to a logical Provider name. These mirror
+# the routing rules in ``shared.llm.providers.__init__`` so that a model
+# string flows identically through both the cross-LLM detector here and
+# the LLM dispatch in shared.llm.
 _MODEL_PREFIX_PROVIDER: tuple[tuple[tuple[str, ...], Provider], ...] = (
-    (("claude",), "anthropic"),
-    (("gpt", "o1", "o3"), "openai"),
-    (("gemini", "palm"), "google"),
+    (("claude",),                "anthropic"),
+    (("gpt", "o1", "o3"),        "openai"),
+    (("bedrock:",),              "bedrock"),
+    (("vertex:",),               "vertex"),
+    (("ollama:",),               "ollama"),
+    (("qwen:",),                 "qwen"),
+    (("vllm:",),                 "vllm"),
 )
 
 
 def _available_providers() -> dict[str, str]:
-    """Map ``provider -> default_validator_model`` for providers with keys set."""
-    return {p: _DEFAULT_VALIDATOR_MODELS[p] for p, env in _KEY_ENV.items()
-            if os.environ.get(env) and p in _DEFAULT_VALIDATOR_MODELS}
+    """Map ``provider -> default_validator_model`` for providers whose
+    adapter can be resolved through ``shared.llm``.
+
+    The shared.llm provider registry is the single source of truth for
+    "is this provider wired in?". If the adapter is registered, the
+    provider is considered available — credential resolution happens
+    inside the adapter (via ``shared.secrets``) at call time.
+    """
+    try:
+        from shared.llm.providers import get_provider
+    except Exception:  # noqa: BLE001 — defensive: shared.llm import failure
+        return {}
+    out: dict[str, str] = {}
+    for prov, model in _DEFAULT_VALIDATOR_MODELS.items():
+        try:
+            get_provider(model)
+        except Exception:  # noqa: BLE001 — provider not registered
+            continue
+        out[prov] = model
+    return out
 
 
 def _infer_primary_provider(model_id: str) -> Provider | None:
@@ -151,53 +232,54 @@ def _parse_validator_reply(raw: str) -> tuple[Verdict, float, str]:
     return (v, c, str(data.get("rationale", ""))[:512])  # type: ignore[return-value]
 
 
-# ── Per-provider calls (lazy SDK imports — SDKs are optional) ─────────
+# ── Provider dispatch via shared.llm (V3 #2) ──────────────────────────
+#
+# All provider calls now flow through ``shared.llm.call_async``. The
+# legacy per-provider helpers (lazy anthropic / openai imports) are
+# deleted — credentials, prompt-cache, retry, streaming, and adapter
+# selection are all the provider adapter's concern, not this module's.
 
 
-def _call_anthropic(model: str, system: str, user: str) -> tuple[str, float]:
-    """Lazy ``anthropic`` SDK call; raises ImportError if SDK absent."""
-    import anthropic  # noqa: F401
+async def _call_via_shared_llm(
+    provider: Provider, model: str, system: str, user: str,
+) -> tuple[str, float]:
+    """Dispatch one validator call through ``shared.llm``.
 
-    client = anthropic.Anthropic()  # type: ignore[attr-defined]
-    resp = client.messages.create(  # type: ignore[attr-defined]
-        model=model, system=system, max_tokens=500, temperature=0.1,
-        messages=[{"role": "user", "content": user}])
-    text = "".join(getattr(b, "text", "") for b in getattr(resp, "content", []))
-    return text, _APPROX_COST["anthropic"]
+    Returns ``(response_text, approx_cost_usd)``. Approx cost is a
+    lookup — the authoritative ledger is ``shared/cost/router.py``,
+    which reads ``Usage`` from the response.
+    """
+    from shared.llm import LLMRequest, Message, call_async  # noqa: PLC0415
 
-
-def _call_openai(model: str, system: str, user: str) -> tuple[str, float]:
-    """Lazy ``openai`` SDK call; raises ImportError if SDK absent."""
-    import openai  # noqa: F401
-
-    client = openai.OpenAI()  # type: ignore[attr-defined]
-    resp = client.chat.completions.create(  # type: ignore[attr-defined]
-        model=model, max_tokens=500, temperature=0.1,
-        response_format={"type": "json_object"},
-        messages=[{"role": "system", "content": system}, {"role": "user", "content": user}])
-    text = (resp.choices[0].message.content or "") if getattr(resp, "choices", None) else ""
-    return text, _APPROX_COST["openai"]
-
-
-_DISPATCH = {"anthropic": _call_anthropic, "openai": _call_openai}
+    request = LLMRequest(
+        model=model,
+        max_tokens=500,
+        temperature=0.1,
+        system=system,
+        messages=[Message(role="user", content=user)],
+    )
+    response = await call_async(request)
+    return response.content, _APPROX_COST.get(provider, 0.0)
 
 
 def _validate_with_provider(
     request: ValidationRequest, provider: Provider, model: str,
 ) -> ProviderResult:
-    """Call the secondary provider; degrade to verdict='error' on any failure."""
+    """Call the secondary provider via ``shared.llm``; degrade to
+    ``verdict='error'`` on any failure (the validator must never raise
+    into the caller — that would defeat the cross-LLM safety net)."""
     start = time.monotonic()
     _ms = lambda: int((time.monotonic() - start) * 1000)
     _err = lambda msg: ProviderResult(provider=provider, model=model,
         verdict="error", confidence=0.0, rationale=msg, duration_ms=_ms())
 
-    fn = _DISPATCH.get(provider)
-    if fn is None:
-        return _err(f"provider {provider!r} not implemented")
+    if provider not in _DEFAULT_VALIDATOR_MODELS:
+        return _err(f"provider {provider!r} not in v3 catalog")
+    system, user = _build_validator_prompt(request)
     try:
-        raw, cost = fn(model, *_build_validator_prompt(request))
+        raw, cost = _run_async(_call_via_shared_llm(provider, model, system, user))
     except ImportError as exc:
-        return _err(f"{provider} SDK not installed: {exc}")
+        return _err(f"{provider} adapter dependency missing: {exc}")
     except Exception as exc:  # noqa: BLE001 — never let validator faults raise
         logger.warning("cross_llm_provider_error",
             extra={"provider": provider, "err": str(exc)})
@@ -206,6 +288,27 @@ def _validate_with_provider(
     return ProviderResult(provider=provider, model=model, verdict=verdict,
         confidence=conf, rationale=rationale, cost_usd=Decimal(str(cost)),
         duration_ms=_ms())
+
+
+def _run_async(coro):
+    """Run an awaitable from sync code.
+
+    The cross-validator's public surface (``cross_validate``) is sync —
+    keep it that way to preserve binary compatibility with all current
+    callers. When invoked from inside a running event loop, this raises
+    so the caller knows to switch to an async cross-validator (planned
+    for v1.1).
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if loop is not None and loop.is_running():
+        raise RuntimeError(
+            "cross_validate called from inside a running event loop; "
+            "use the async variant once available"
+        )
+    return asyncio.run(coro)
 
 
 # ── Audit row ─────────────────────────────────────────────────────────
@@ -292,8 +395,10 @@ def cross_validate(
     # 3. Single-key deployment → graceful degradation (STORY-3.7.3)
     if not secondaries:
         return _skip_result(request,
-            "single-provider deployment: no secondary key available (checked "
-            "ANTHROPIC_API_KEY, OPENAI_API_KEY); capping effective confidence at 0.7",
+            "single-provider deployment: no secondary provider available "
+            "via shared.llm (configure additional providers in shared.llm "
+            "registry + provide credentials via shared.secrets); "
+            "capping effective confidence at 0.7",
             cap=_SINGLE_KEY_CONFIDENCE_CAP, start=start, band="untrusted")
 
     # 4. Call each secondary; reduce to consensus; audit

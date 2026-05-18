@@ -13,9 +13,13 @@ Integration:
 
 Rate limiting: per (event_type, project_id, recipient) → at most one
 notification per `rate_limit_window_seconds` (default 300 = 5 min).
-The window is in-memory only — the Notifier is meant to live for the
-life of a daemon process. A persistence layer (V22+) can replace
-`_rate_log` later without changing the public API.
+
+Wave 1 (v3) — persisted rate-limit ledger (per V3 #6):
+    Federation needs cross-process awareness of rate-limit state. The
+    Notifier now consults ``shared.notify.rate_limit`` (backed by
+    ``spine_license.quota_usage``) on every dispatch. The in-memory
+    ``_rate_log`` dict is retained as a hot-path fast-cache + as the
+    fallback when the DB ledger is unreachable.
 """
 from __future__ import annotations
 import logging
@@ -97,13 +101,43 @@ class Notifier:
         return (event.event_type, event.project_id, recipient)
 
     def _is_rate_limited(self, key: tuple[str, str, str]) -> bool:
+        """Two-layer rate-limit check: in-memory fast path + persistent
+        ledger (federation-aware). Either tier returning True suppresses
+        the dispatch."""
         last = self._rate_log.get(key)
-        if last is None:
+        if last is not None and (time.time() - last) < self.rate_limit_window_seconds:
+            return True
+        # Persisted layer — fail-open (returns False) on any DB error so
+        # notifications never block on the ledger being available.
+        try:
+            from shared.notify import rate_limit  # noqa: PLC0415 — lazy
+            event_type, _project_id, recipient = key
+            channel = recipient  # recipient is the channel name in default mode
+            return rate_limit.check(
+                channel=channel,
+                event_type=event_type,
+                key=":".join(key),
+                window_seconds=self.rate_limit_window_seconds,
+            )
+        except Exception:  # noqa: BLE001
             return False
-        return (time.time() - last) < self.rate_limit_window_seconds
 
     def _mark_sent(self, key: tuple[str, str, str]) -> None:
+        """Record in BOTH layers so a process restart inherits the
+        federation-visible state."""
         self._rate_log[key] = time.time()
+        try:
+            from shared.notify import rate_limit  # noqa: PLC0415 — lazy
+            event_type, _project_id, recipient = key
+            rate_limit.mark(
+                channel=recipient,
+                event_type=event_type,
+                key=":".join(key),
+                window_seconds=self.rate_limit_window_seconds,
+            )
+        except Exception:  # noqa: BLE001
+            # Persistent ledger best-effort — in-memory layer survives.
+            pass
 
     def notify(self, event: NotificationEvent, *,
                audience: list[str] | None = None) -> list[NotifyResult]:
@@ -165,8 +199,10 @@ def _build_channel(spec: dict[str, Any]) -> NotifyChannel | None:
     channels return None (skipped). Lazy-imports keep the dep surface
     small — channels.py modules import their transports only at send()."""
     from shared.notify.channels import (EmailChannel, FileChannel, NoOpChannel,
-                                        SlackChannel, StdoutChannel,
-                                        SystemChannel, WebhookChannel)
+                                        PagerDutyChannel, SlackChannel,
+                                        SMSChannel, StdoutChannel,
+                                        SystemChannel, TeamsChannel,
+                                        WebhookChannel, WhatsAppChannel)
     kind = (spec or {}).get("type", "").strip().lower()
     if not kind or not spec.get("enabled", True):
         return None
@@ -174,6 +210,9 @@ def _build_channel(spec: dict[str, Any]) -> NotifyChannel | None:
         "email": EmailChannel, "slack": SlackChannel, "system": SystemChannel,
         "webhook": WebhookChannel, "stdout": StdoutChannel,
         "file": FileChannel, "noop": NoOpChannel,
+        # Wave-1 scaffolds — config wired, send() raises NotImplementedError.
+        "sms": SMSChannel, "whatsapp": WhatsAppChannel,
+        "teams": TeamsChannel, "pagerduty": PagerDutyChannel,
     }.get(kind)  # type: ignore[assignment]
     if cls is None:
         _log.warning("unknown notify channel type: %s", kind)

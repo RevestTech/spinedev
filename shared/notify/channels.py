@@ -1,14 +1,50 @@
 """Notification channel implementations (STORY-1.4.7).
 
-Each channel exposes `name` + `send(event) -> NotifyResult`. Transports
-are lazy-imported inside `send()` so importing this module is cheap and
-optional deps (`requests`, `smtplib`, `notify-send`/`osascript`) are
+Each channel exposes ``name`` + ``send(event) -> NotifyResult``. Transports
+are lazy-imported inside ``send()`` so importing this module is cheap and
+optional deps (``requests``, ``smtplib``, ``notify-send``/``osascript``) are
 only required for channels actually used. Missing deps raise
-`ChannelError` with a remediation message — the Notifier turns that into
+``ChannelError`` with a remediation message — the Notifier turns that into
 a per-channel failure without breaking the fan-out.
+
+Wave 1 (v3) changes:
+
+  * **Vault-only credentials (per V3 #9).** Channel credentials no longer
+    come from ``~/.spine/notify-*.yaml`` files OR environment variables.
+    Every secret value is fetched via ``shared.secrets.get_secret`` from
+    the path scheme ``notify/<channel>/<field>`` — e.g.
+    ``notify/slack/webhook_url``, ``notify/smtp/password``,
+    ``notify/twilio/auth_token``. Non-secret config (host, port, sender,
+    recipients) continues to live in the channel constructor kwargs OR
+    in the org bundle's ``notification.channels`` block.
+
+  * **Persistent rate-limit ledger (per V3 #6).** The legacy in-memory
+    ``Notifier._rate_log`` dict only survived for the life of a daemon
+    process — federation needs cross-process awareness. The new module
+    ``rate_limit`` writes rate-limit checks/marks into
+    ``spine_license.quota_usage`` (no new schema, no V33 migration). Each
+    rate-limit key becomes a ``flag_name`` of the form
+    ``notify.<channel>.<event_type>``; the period is the rate-limit
+    window. Channels remain ignorant of this — the Notifier core handles
+    the bookkeeping.
+
+  * **New channel scaffolds (per V3 #6 — multi-medium fan-out).**
+    SMS (Twilio), WhatsApp (Twilio), Teams, and PagerDuty have been
+    added. The classes are wired (config + auth-via-vault + name +
+    construction) but ``send()`` raises ``NotImplementedError('v1.1+')``
+    for these four pending the production transport work. SMS/WhatsApp
+    map to the same Twilio account; Teams uses Microsoft webhook URLs;
+    PagerDuty uses the Events v2 API.
 """
 from __future__ import annotations
-import json, logging, os, platform, shlex, subprocess, sys
+import asyncio
+import json
+import logging
+import os
+import platform
+import shlex
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -20,7 +56,7 @@ _SEV = {"info": "[INFO]", "warning": "[WARN]", "critical": "[CRIT]"}
 
 class ChannelError(RuntimeError):
     """Raised by channels for transport/config issues; surfaced by Notifier
-    as `NotifyResult(sent=False, error=...)`."""
+    as ``NotifyResult(sent=False, error=...)``."""
 
 
 def _fmt(event: NotificationEvent) -> str:
@@ -33,14 +69,46 @@ def _fmt(event: NotificationEvent) -> str:
     return line
 
 
-def _load_yaml(filename: str) -> dict[str, Any]:
-    path = Path.home() / ".spine" / filename
-    if not path.is_file(): return {}
+def _fetch_secret(path: str) -> str | None:
+    """Synchronous wrapper around ``shared.secrets.get_secret``.
+
+    Channel constructors are sync (they may run inside an event loop in
+    some daemons OR at module-import time in CLI scripts). When a default
+    adapter is not configured, returns ``None`` rather than raising — the
+    channel decides whether the missing credential is fatal.
+    """
     try:
-        import yaml  # noqa: PLC0415 — lazy
-        return yaml.safe_load(path.read_text()) or {}
-    except Exception:  # noqa: BLE001
-        return {}
+        from shared.secrets import SecretBackendError, SecretNotFound, get_secret
+    except Exception as exc:  # noqa: BLE001
+        _log.debug("shared.secrets unavailable: %s", exc)
+        return None
+
+    async def _go() -> str | None:
+        try:
+            return await get_secret(path)
+        except SecretNotFound:
+            return None
+        except SecretBackendError as exc:
+            _log.debug("no secret adapter for %s: %s", path, exc)
+            return None
+        except Exception as exc:  # noqa: BLE001 — never crash channel ctor
+            _log.warning("vault read failed for %s: %s", path, exc)
+            return None
+
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            # Channel ctor invoked from inside a running loop — cannot
+            # nest asyncio.run; return None and surface a clearer error
+            # at send() time if the credential turns out to be required.
+            _log.debug(
+                "skipping vault fetch for %s — running event loop",
+                path,
+            )
+            return None
+    except RuntimeError:
+        pass
+    return asyncio.run(_go())
 
 
 class StdoutChannel:  # debug / CI
@@ -54,6 +122,8 @@ class StdoutChannel:  # debug / CI
 class FileChannel:  # append-only JSONL log
     name = "file"
     def __init__(self, *, path: str | None = None) -> None:
+        # File path is config, not a secret — non-vault path acceptable.
+        # Default location stays under SPINE_HOME for visibility.
         self.path = Path(path or os.environ.get(
             "SPINE_NOTIFY_LOG",
             str(Path.home() / ".spine" / "notifications.jsonl"))).expanduser()
@@ -67,16 +137,17 @@ class FileChannel:  # append-only JSONL log
         return NotifyResult(channel=self.name, sent=True)
 
 class SlackChannel:
-    """`webhook_url` arg → `SLACK_WEBHOOK_URL` env → `~/.spine/notify-slack.yaml`."""
+    """Webhook URL resolves from arg → vault path ``notify/slack/webhook_url``."""
     name = "slack"
     def __init__(self, *, webhook_url: str | None = None,
                  timeout_seconds: int = 5) -> None:
         self.timeout = int(timeout_seconds)
-        self.webhook_url = (webhook_url or os.environ.get("SLACK_WEBHOOK_URL")
-                            or _load_yaml("notify-slack.yaml").get("webhook_url"))
+        self.webhook_url = webhook_url or _fetch_secret("notify/slack/webhook_url")
     def send(self, event: NotificationEvent) -> NotifyResult:
         if not self.webhook_url:
-            raise ChannelError("slack: no webhook_url (arg/env/notify-slack.yaml)")
+            raise ChannelError(
+                "slack: no webhook_url (arg or vault path "
+                "notify/slack/webhook_url)")
         try: import requests  # noqa: PLC0415
         except ImportError as e:
             raise ChannelError("slack: `pip install requests` required") from e
@@ -96,28 +167,31 @@ class SlackChannel:
 
 
 class EmailChannel:
-    """Kwargs override `~/.spine/notify-smtp.yaml`; password also via
-    `SPINE_SMTP_PASSWORD` env."""
+    """SMTP creds come from vault paths under ``notify/smtp/*``.
+
+    Non-secret config (host, port, sender, recipients, use_tls) may be
+    passed as kwargs OR read from the org bundle's notification block.
+    Only ``password`` is treated as a vault-bound secret.
+    """
     name = "email"
     def __init__(self, *, host: str | None = None, port: int = 587,
                  username: str | None = None, password: str | None = None,
                  sender: str | None = None, recipients: list[str] | None = None,
                  use_tls: bool = True, timeout_seconds: int = 10) -> None:
-        cfg = _load_yaml("notify-smtp.yaml")
-        self.host = host or cfg.get("host")
-        self.port = int(port or cfg.get("port", 587))
-        self.username = username or cfg.get("username")
-        self.password = (password or cfg.get("password")
-                         or os.environ.get("SPINE_SMTP_PASSWORD"))
-        self.sender = sender or cfg.get("sender") or self.username
-        self.recipients = recipients or cfg.get("recipients") or []
-        self.use_tls = bool(use_tls if use_tls is not None
-                            else cfg.get("use_tls", True))
+        self.host = host
+        self.port = int(port)
+        self.username = username
+        self.password = password or _fetch_secret("notify/smtp/password")
+        self.sender = sender or self.username
+        self.recipients = list(recipients or [])
+        self.use_tls = bool(use_tls)
         self.timeout = int(timeout_seconds)
     def send(self, event: NotificationEvent) -> NotifyResult:
         if not (self.host and self.sender and self.recipients):
-            raise ChannelError("email: host/sender/recipients required "
-                               "(kwargs or ~/.spine/notify-smtp.yaml)")
+            raise ChannelError(
+                "email: host/sender/recipients required (constructor kwargs "
+                "or org-bundle notification.channels block); password via "
+                "vault path notify/smtp/password")
         import smtplib  # noqa: PLC0415
         from email.message import EmailMessage  # noqa: PLC0415
         msg = EmailMessage()
@@ -161,13 +235,23 @@ class SystemChannel:  # macOS osascript / Linux notify-send / stdout fallback
         return NotifyResult(channel=self.name, sent=True)
 
 
-class WebhookChannel:  # SIEM, PagerDuty, custom
+class WebhookChannel:  # SIEM, custom destinations
+    """Generic webhook with optional Bearer-token auth via vault.
+
+    Pass ``auth_secret_path=`` to source the bearer token from
+    ``shared.secrets`` (e.g. ``notify/webhook/<name>/token``).
+    """
     name = "webhook"
     def __init__(self, *, url: str, headers: dict[str, str] | None = None,
-                 method: str = "POST", timeout_seconds: int = 5) -> None:
+                 method: str = "POST", timeout_seconds: int = 5,
+                 auth_secret_path: str | None = None) -> None:
         if not url: raise ChannelError("webhook: `url` is required")
         self.url, self.headers = url, dict(headers or {})
         self.method, self.timeout = method.upper(), int(timeout_seconds)
+        if auth_secret_path:
+            token = _fetch_secret(auth_secret_path)
+            if token:
+                self.headers.setdefault("Authorization", f"Bearer {token}")
     def send(self, event: NotificationEvent) -> NotifyResult:
         try: import requests  # noqa: PLC0415
         except ImportError as e:
@@ -192,5 +276,129 @@ class NoOpChannel:  # testing
         return NotifyResult(channel=self.name, sent=True)
 
 
-__all__ = ["ChannelError", "EmailChannel", "FileChannel", "NoOpChannel",
-           "SlackChannel", "StdoutChannel", "SystemChannel", "WebhookChannel"]
+# ──────────────────────────────────────────────────────────────────────
+# Wave-1 channel scaffolds (per V3 #6 + #29) — config-only; send() is
+# deferred to v1.1+ pending the full provider transport implementation.
+# ──────────────────────────────────────────────────────────────────────
+
+
+class _ScaffoldChannel:
+    """Base class for v1.1+ channel scaffolds.
+
+    Subclasses fill ``name`` + provider-specific config / vault paths
+    in ``__init__`` so credentials are wired (provable in tests) and
+    surface a clear ``NotImplementedError`` from ``send()`` until the
+    transport ships.
+    """
+    name = "scaffold"
+    _impl_version = "v1.1+"
+
+    def send(self, event: NotificationEvent) -> NotifyResult:  # noqa: ARG002
+        raise NotImplementedError(
+            f"channel {self.name!r} is a Wave-1 scaffold; transport "
+            f"deferred to {self._impl_version}"
+        )
+
+
+class SMSChannel(_ScaffoldChannel):
+    """Twilio Programmable SMS scaffold (per V3 #29 — voice/phone Twilio stub).
+
+    Vault paths:
+        notify/twilio/account_sid
+        notify/twilio/auth_token
+        notify/twilio/from_number   (E.164, e.g. +14155551212)
+
+    ``recipients`` is a list of E.164 numbers passed at construction time
+    OR injected from the per-user comm-preferences resolver.
+    """
+    name = "sms"
+    def __init__(self, *, recipients: list[str] | None = None,
+                 from_number: str | None = None,
+                 timeout_seconds: int = 10) -> None:
+        self.recipients = list(recipients or [])
+        self.from_number = from_number or _fetch_secret("notify/twilio/from_number")
+        self.account_sid = _fetch_secret("notify/twilio/account_sid")
+        self.auth_token = _fetch_secret("notify/twilio/auth_token")
+        self.timeout = int(timeout_seconds)
+
+
+class WhatsAppChannel(_ScaffoldChannel):
+    """Twilio WhatsApp Business scaffold (per V3 #6).
+
+    Shares the Twilio account_sid / auth_token with SMSChannel; the
+    sender number must be a WhatsApp-enabled Twilio number formatted
+    as ``whatsapp:+E.164``.
+
+    Vault paths:
+        notify/twilio/account_sid
+        notify/twilio/auth_token
+        notify/twilio/whatsapp_from   (e.g. whatsapp:+14155238886)
+    """
+    name = "whatsapp"
+    def __init__(self, *, recipients: list[str] | None = None,
+                 from_number: str | None = None,
+                 timeout_seconds: int = 10) -> None:
+        self.recipients = list(recipients or [])
+        self.from_number = (
+            from_number or _fetch_secret("notify/twilio/whatsapp_from")
+        )
+        self.account_sid = _fetch_secret("notify/twilio/account_sid")
+        self.auth_token = _fetch_secret("notify/twilio/auth_token")
+        self.timeout = int(timeout_seconds)
+
+
+class TeamsChannel(_ScaffoldChannel):
+    """Microsoft Teams Incoming Webhook scaffold (per V3 #6).
+
+    Teams uses connector-card webhooks (one URL per channel). Treat the
+    URL itself as the credential — it embeds an unguessable token.
+
+    Vault path:
+        notify/teams/webhook_url
+    """
+    name = "teams"
+    def __init__(self, *, webhook_url: str | None = None,
+                 timeout_seconds: int = 5) -> None:
+        self.webhook_url = (
+            webhook_url or _fetch_secret("notify/teams/webhook_url")
+        )
+        self.timeout = int(timeout_seconds)
+
+
+class PagerDutyChannel(_ScaffoldChannel):
+    """PagerDuty Events API v2 scaffold for incident-class routing
+    (per V3 #6 + #11 — incident control plane).
+
+    Vault paths:
+        notify/pagerduty/routing_key   (32-char hex per service integration)
+
+    Routing logic (when implemented): events with severity=='critical'
+    OR event_type in {'verify_failed', 'project_blocked',
+    'incident_pageout'} → ``trigger`` action; everything else → either
+    no-op or ``acknowledge`` per bundle policy.
+    """
+    name = "pagerduty"
+    def __init__(self, *, routing_key: str | None = None,
+                 dedup_strategy: str = "event_then_project",
+                 timeout_seconds: int = 5) -> None:
+        self.routing_key = (
+            routing_key or _fetch_secret("notify/pagerduty/routing_key")
+        )
+        self.dedup_strategy = dedup_strategy
+        self.timeout = int(timeout_seconds)
+
+
+__all__ = [
+    "ChannelError",
+    "EmailChannel",
+    "FileChannel",
+    "NoOpChannel",
+    "PagerDutyChannel",
+    "SlackChannel",
+    "SMSChannel",
+    "StdoutChannel",
+    "SystemChannel",
+    "TeamsChannel",
+    "WebhookChannel",
+    "WhatsAppChannel",
+]

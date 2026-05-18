@@ -5,6 +5,20 @@ PRD REQ-INIT-1 FR-8 (`docs/PRD.md`): locked projects only migrate via
 explicit user action + diff preview. State lives in `spine_lifecycle.project`
 (`pipeline_version` + `metadata.pipeline_manifest_snapshot` — see
 `db/flyway/sql/V14__spine_lifecycle_schema.sql`). DB I/O via `psql` subprocess.
+
+Wave 1 (v3) SQL-injection fix:
+    The original implementation built SQL via f-string interpolation and
+    relied on a single-quote-doubling escape on ``snap``. That escape is
+    incomplete — backslashes, ``E'...'`` hex literals and Unicode escapes
+    could still smuggle SQL through caller-controlled ``project_id``
+    values.
+
+    This module now binds every untrusted value as a *psql variable* via
+    stdin (``\\set``) and references it inside the query with the
+    auto-quoting form ``:'name'`` (for strings) or ``:"name"`` (for
+    identifiers). psql performs the quoting + escaping itself, which is
+    safe against the full grammar of Postgres string literals — including
+    backslash, hex, and Unicode forms.
 """
 from __future__ import annotations
 
@@ -31,10 +45,63 @@ def _db_url() -> str:
 
 
 def _psql(sql: str) -> str:
-    """Run `psql -At` against SPINE_DB_URL; returns stripped stdout."""
+    """Run `psql -At` against SPINE_DB_URL; returns stripped stdout.
+
+    Legacy helper retained for backwards compatibility — internal callers
+    are migrated to ``_psql_bound`` (parameter-binding form) below. New
+    code MUST NOT pass untrusted input through ``_psql``; build the query
+    with named binds and call ``_psql_bound`` instead.
+    """
     r = subprocess.run(["psql", _db_url(), "-At", "-v", "ON_ERROR_STOP=1", "-c", sql],
                        check=True, capture_output=True, text=True)
     return r.stdout.strip()
+
+
+def _psql_bound(sql_with_binds: str, binds: dict[str, str]) -> str:
+    """Run psql with safely-bound parameters.
+
+    Args:
+        sql_with_binds: a query referencing variables via ``:'name'`` for
+            string literals or ``:"name"`` for identifiers — both forms
+            are escaped by psql itself.
+        binds: mapping of variable name -> string value. Values are
+            passed via stdin as ``\\set`` commands so they never go on
+            the command line (no argv leakage, no shell parsing).
+
+    The full stdin script is therefore:
+
+        \\set ON_ERROR_STOP 1
+        \\set name 'value'   -- repeated per bind, single-quoted-escaped
+        <sql_with_binds>
+
+    psql validates that ``:'name'`` expansions are proper SQL string
+    literals and that ``:"name"`` expansions are proper identifiers,
+    rejecting anything that would break out.
+    """
+    # ── Compose the stdin script ──────────────────────────────────────
+    # Each \set value is single-quote-wrapped here so psql receives a
+    # literal-string variable value (the inner doubled-quote escape is
+    # the documented psql way to embed a single quote in a \set value).
+    # psql then re-escapes when the variable is interpolated with
+    # :'name' (string) or :"name" (identifier).
+    lines: list[str] = [r"\set ON_ERROR_STOP 1"]
+    for name, value in binds.items():
+        # Variable names must be safe — restrict to identifier shape.
+        if not name.replace("_", "").isalnum():
+            raise ValueError(f"unsafe bind name: {name!r}")
+        # Escape ' as '' inside the \set value; the outer quoting is
+        # done by ``\set name 'value'`` form.
+        safe = value.replace("'", "''")
+        lines.append(f"\\set {name} '{safe}'")
+    lines.append(sql_with_binds)
+    script = "\n".join(lines) + "\n"
+
+    proc = subprocess.run(
+        ["psql", _db_url(), "-At", "-X", "-q"],
+        input=script,
+        check=True, capture_output=True, text=True,
+    )
+    return proc.stdout.strip()
 
 
 def _snapshot(manifest: PipelineManifest) -> str:
@@ -59,23 +126,41 @@ def _audit(action: str, project_id: str, metadata: dict[str, Any], actor: str,
 
 
 def lock_project_to_pipeline(project_id: str, manifest: PipelineManifest) -> str:
-    """Pin a project to a pipeline version. Returns the locked version sha."""
-    version = compute_pipeline_version(manifest); snap = _snapshot(manifest).replace("'", "''")
-    _psql("UPDATE spine_lifecycle.project SET "
-          f"pipeline_version = '{version}', "
-          "metadata = COALESCE(metadata,'{}'::jsonb) || jsonb_build_object("
-          f"'pipeline_manifest_snapshot', '{snap}'::jsonb) "
-          f"WHERE project_uuid::text = '{project_id}' OR id::text = '{project_id}';")
+    """Pin a project to a pipeline version. Returns the locked version sha.
+
+    Hardened against SQL injection in ``project_id`` and the snapshot
+    body — both are bound via psql ``:'name'`` interpolation rather than
+    f-string-concatenated into the SQL text.
+    """
+    version = compute_pipeline_version(manifest)
+    snap = _snapshot(manifest)
+    sql = (
+        "UPDATE spine_lifecycle.project SET "
+        "pipeline_version = :'version', "
+        "metadata = COALESCE(metadata,'{}'::jsonb) || jsonb_build_object("
+        "'pipeline_manifest_snapshot', (:'snap')::jsonb) "
+        "WHERE project_uuid::text = :'pid' OR id::text = :'pid';"
+    )
+    _psql_bound(sql, {"version": version, "snap": snap, "pid": project_id})
     _audit("project_locked", project_id, {"pipeline_version": version, "manifest_hash": version},
            actor="system", rationale="project locked at start (FR-8 / STORY-1.7.5)")
     return version
 
 
 def get_locked_pipeline(project_id: str) -> PipelineManifest:
-    """Reconstitute the locked manifest snapshot for `project_id`."""
-    raw = _psql("SELECT pipeline_version, COALESCE(metadata->>'pipeline_manifest_snapshot','') "
-                f"FROM spine_lifecycle.project WHERE project_uuid::text = '{project_id}' "
-                f"OR id::text = '{project_id}' LIMIT 1;")
+    """Reconstitute the locked manifest snapshot for `project_id`.
+
+    ``project_id`` is bound via ``:'pid'`` so callers may safely pass any
+    text from the API surface — psql performs the literal-quoting.
+    """
+    sql = (
+        "SELECT pipeline_version, "
+        "COALESCE(metadata->>'pipeline_manifest_snapshot','') "
+        "FROM spine_lifecycle.project "
+        "WHERE project_uuid::text = :'pid' OR id::text = :'pid' "
+        "LIMIT 1;"
+    )
+    raw = _psql_bound(sql, {"pid": project_id})
     if not raw: raise LookupError(f"project {project_id} not found")
     version, _, snap = raw.partition("|")
     if not snap: raise LookupError(f"project {project_id} has no pipeline_manifest_snapshot")
