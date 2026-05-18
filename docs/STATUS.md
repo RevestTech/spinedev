@@ -51,6 +51,20 @@ TRON deploy.
 | 4.7 | Hosted demo sandbox deferred (pre-launch) | not blocking any wave |
 | 4.8 | Air-gapped v1.1 deferral holds | per #17 |
 
+### Wave 4 — Federation + License + Evidence + Learning: COMPLETE 2026-05-18
+
+5 commits:
+
+| Commit | Squad | Scope |
+|---|---|---|
+| `118688d` | D learning | Smart Spine 3-tier loop (#27): scope resolver + 3-tier contribute gates + cross-org consent registry + k=5 anonymizer + vendor self-improvement Tier 3 hook + 4 MCP tools. +2795 lines / 61 tests |
+| `64db848` | A federation | Hub-to-Hub (#4/#10/#16): hub_registry (consumes hub/_state/hub_id.txt) + upstream_client (mTLS+bearer via vault) + downstream_router + update_cascade (signed bundle distribution + per-tier approval gate) + consent engine + 4 MCP tools. +3425 lines / 35 tests |
+| `f366a11` | C evidence | Evidence Store (#24): 5 collectors (audit_chain/role_decision/vault_access/deploy/approval) + 3 real exporters (Vanta/Drata/Secureframe) + 3 v1.1 stubs (Tugboat/StrikeGraph/Thoropass) + two-party SHA-256 attestation per V25 + 4 MCP tools. +2583 lines / 46 tests |
+| `c96f23a` | B license | Feature-flag licensing (#23): Ed25519 signed bundle verifier with TRUSTED_VENDOR_FINGERPRINT trust anchor + periodic re-verify + feature_flags evaluator + hash-chained quota ledger + tools/license-sign.sh (vendor-side per Part 4.3 Shamir 3-of-5) + 3 MCP tools. +2787 lines / 47 tests |
+| (next) | housekeeping | test_server_smoke EXPECTED_TOOL_COUNT 27→42 + WAVE-* story-id prefix accepted alongside STORY-* |
+
+**Total Wave 4:** +11590 net lines, 189 new tests passing, 15 new MCP tools (federation/license/evidence/learning × 4-4-4-3), smoke test 99 PASS / 0 FAIL maintained.
+
 ### Wave 3 part 1 — Hub product + runtime migration + charter REBUILDs + API expansion: COMPLETE 2026-05-18
 
 5 commits:

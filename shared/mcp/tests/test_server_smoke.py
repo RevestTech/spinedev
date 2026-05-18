@@ -32,7 +32,7 @@ import importlib
 import pytest
 from pydantic import BaseModel
 
-EXPECTED_TOOL_COUNT: int = 27
+EXPECTED_TOOL_COUNT: int = 42
 
 EXPECTED_TOOLS_BY_MODULE: dict[str, set[str]] = {
     "shared.mcp.tools.orchestrator": {
@@ -67,6 +67,30 @@ EXPECTED_TOOLS_BY_MODULE: dict[str, set[str]] = {
         "trace_dependency",
     },
     "shared.mcp.tools.standards": {"org_standards_get"},
+    # Wave 4 BUILD-NEW (2026-05-18):
+    "shared.mcp.tools.federation": {
+        "federation_register_child",
+        "federation_grant_consent",
+        "federation_push_update",
+        "federation_pull_updates",
+    },
+    "shared.mcp.tools.license": {
+        "license_get_status",
+        "license_get_usage",
+        "license_verify_bundle",
+    },
+    "shared.mcp.tools.evidence": {
+        "evidence_collect",
+        "evidence_export",
+        "evidence_status",
+        "evidence_attestation_verify",
+    },
+    "shared.mcp.tools.learning": {
+        "learning_contribute",
+        "learning_query",
+        "learning_grant_cross_org_consent",
+        "learning_revoke_cross_org_consent",
+    },
 }
 
 
@@ -145,10 +169,18 @@ def test_each_tool_function_is_callable(registry: dict) -> None:
 
 
 def test_each_tool_has_implementing_story(registry: dict) -> None:
-    """Every registered tool must declare an implementing story for traceability."""
+    """Every registered tool must declare an implementing story for traceability.
+
+    Wave 4 (2026-05-18) added subsystems that ship as ``WAVE-4.<squad>.N``
+    story IDs rather than the v2 ``STORY-X.Y.Z`` format. Both prefixes are
+    accepted; the assertion only enforces non-empty traceability.
+    """
     for name, spec in registry.items():
-        assert spec.story.startswith("STORY-"), (
-            f"{name}: story {spec.story!r} must look like 'STORY-X.Y.Z'"
+        assert spec.story and (
+            spec.story.startswith("STORY-") or spec.story.startswith("WAVE-")
+        ), (
+            f"{name}: story {spec.story!r} must look like 'STORY-X.Y.Z' "
+            f"or 'WAVE-N.<squad>.M' (Wave 4+ convention)"
         )
 
 
