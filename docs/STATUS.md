@@ -51,9 +51,24 @@ TRON deploy.
 | 4.7 | Hosted demo sandbox deferred (pre-launch) | not blocking any wave |
 | 4.8 | Air-gapped v1.1 deferral holds | per #17 |
 
+### Wave 1 — Substrate wiring: COMPLETE 2026-05-18
+
+4 commits:
+
+| Commit | Scope |
+|---|---|
+| `e6e54d2` | Drift correction — delete 3 `lib/*` files contradicting triage DELETE marking (Squad C audit caught) |
+| `7c55e37` | Squad C — relocate `verify/docker-compose.override.yml` → `tools/verify-overrides/` (TRON subtree-pull conflict prevention) |
+| `dc26c42` | Squad A — memory writer hooks (7 trigger points) + KG indexer (3 entry points) + calibration sink + Cite-or-Refuse middleware. +2682 lines, 51 new tests |
+| `dc5a99d` | Squad B — cross_llm Provider Literal → 7 providers + notify vault wiring + 4 stub channels + 4 quiet-bug fixes + `shared/runtime/hygiene.py` (#34) + delete `shared/cost/prompt_cache.py`. +2220 −447 lines, 57 new tests |
+
+**Total Wave 1:** +4902 net lines, 108 new tests passing, smoke test 99 PASS / 0 FAIL maintained.
+
+Drift audit (Squad C) ran post-Wave-0; caught 3 lib/* files Pass 2 rebuilt-in-place that triage said DELETE — corrected in commit `e6e54d2` before Wave 1 dispatched.
+
 ### Next waves (per `docs/V3_BUILD_SEQUENCE.md`)
 
-- **Wave 1** — substrate wiring (memory writer hooks + KG indexer + calibration sink + Cite-or-Refuse middleware + cross_llm/notify/memory refactors + 4 quiet-bug fixes)
+- **Wave 1** — substrate wiring (memory writer hooks + KG indexer + calibration sink + Cite-or-Refuse middleware + cross_llm/notify/memory refactors + 4 quiet-bug fixes) — **COMPLETE**
 - **Wave 2** — work-item types + 6 new role charters
 - **Wave 3** — Hub product (container + SPA + `lib/` retirement)
 - **Wave 4** — federation + license + evidence + learning (4 parallel squads)
