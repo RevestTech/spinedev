@@ -200,7 +200,9 @@ class DevOpsDispatcher:
                 pid_int = None
             AuditRecord(
                 role="devops",
-                subsystem="shared",  # TODO Wave 3: extend enum to 'devops'.
+                # Wave 3 (Squad A) — ALLOWED_SUBSYSTEMS now includes
+                # ``devops``; V35 extends the matching DB CHECK.
+                subsystem="devops",
                 action="cite_or_refuse_refused",
                 actor=self._actor,
                 project_id=pid_int,

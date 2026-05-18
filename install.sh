@@ -14,11 +14,20 @@ err() { printf '%s\n' "$*" >&2; }
 
 FORCE=false
 KNOWLEDGE_ONLY=false
+HUB_URL=""
 declare -a POSARGS=()
+expect_hub_value=false
 for arg in "$@"; do
+  if $expect_hub_value; then
+    HUB_URL="$arg"
+    expect_hub_value=false
+    continue
+  fi
   case "$arg" in
     --force) FORCE=true ;;
     --pull-knowledge-only|--knowledge-only) KNOWLEDGE_ONLY=true ;;
+    --hub) expect_hub_value=true ;;
+    --hub=*) HUB_URL="${arg#--hub=}" ;;
     *) POSARGS+=("$arg") ;;
   esac
 done
@@ -35,12 +44,18 @@ Options:
   --pull-knowledge-only   Update protocol, requirements, recipes, role prompts,
                           playbook seeds, practice docs, and ADR templates only.
                           Does NOT replace scripts/*.sh, dashboard HTML, Makefile,
-                          notification hook, or CLAUDE.md. Skips host preflight.
+                          lib/tests/, makefile selftest wiring, notification hook,
+                          or CLAUDE.md. Skips host preflight. (See PROTOCOL §10b.)
+  --hub <url>             Mark this install as a JOINING machine (Machine B).
+                          Writes the hub Postgres URL to
+                          .planning/orchestration/.hub-url so a later
+                          `bash scripts/spine-connect.sh` can pick it up.
 
 Examples:
   bash install.sh ~/projects/my-new-app
   bash install.sh . --force
   bash install.sh ~/projects/existing --pull-knowledge-only
+  bash install.sh ~/projects/joiner --hub "postgresql://spine:spine_dev_only@192.168.1.42:33000/spine"
 EOF
 }
 
@@ -239,7 +254,7 @@ seed_playbooks() {
 if [[ "$KNOWLEDGE_ONLY" == true ]]; then
   step "Knowledge-only refresh into $TARGET"
   echo "  source: $SOURCE"
-  dim "Skips: preflight, scripts/, dashboard, Makefile, notify hook, CLAUDE.md"
+  dim "Skips: preflight, scripts/, dashboard, Makefile, lib/tests/, selftest wiring, notify hook, CLAUDE.md"
   echo
 
   step "Creating team directory scaffolding (if needed)"
@@ -283,6 +298,7 @@ Orchestration layout:
 Daemons unchanged. To refresh scripts/dashboard from this package, run a full install (without --pull-knowledge-only), or copy files manually from:
 
   $SOURCE/lib/
+  (includes \`spine-migrate.py\` → \`scripts/spine-migrate.py\` on full install)
 EOF
   exit 0
 fi
@@ -321,10 +337,35 @@ echo
 
 step "Installing scripts"
 mkdir -p "$TARGET/scripts"
-for f in roles.sh team-agent-daemon.sh team.sh seer-tick.sh file-lock.sh team-clean.sh watchdog.sh executor.sh preflight.sh serve-dashboard.sh; do
-  cp "$SOURCE/lib/$f" "$TARGET/scripts/$f"
+# Wave 3 (Squad A): nine substrate scripts migrated lib/ → shared/runtime/.
+# Resolve each from shared/runtime/ first, then fall back to lib/ for
+# scripts that have not yet been migrated.
+RUNTIME_MIGRATED="vitals.sh heartbeat.sh watchdog.sh notify.sh executor.sh usage-parsers.sh file-lock.sh updater.sh db-outbox.sh"
+for f in roles.sh team-agent-daemon.sh team.sh seer-tick.sh file-lock.sh team-clean.sh watchdog.sh executor.sh costs-csv.sh preflight.sh serve-dashboard.sh heartbeat.sh db-outbox.sh engagement-hook.sh updater.sh vitals.sh share-pg.sh spine-connect.sh spine-disconnect.sh run-standalone-watcher.sh; do
+  src=""
+  if [[ " $RUNTIME_MIGRATED " == *" $f "* && -f "$SOURCE/shared/runtime/$f" ]]; then
+    src="$SOURCE/shared/runtime/$f"
+  elif [[ -f "$SOURCE/lib/$f" ]]; then
+    src="$SOURCE/lib/$f"
+  else
+    warn "  $f missing in both shared/runtime/ and lib/ — skipping"
+    continue
+  fi
+  cp "$src" "$TARGET/scripts/$f"
   chmod +x "$TARGET/scripts/$f"
   ok "  $TARGET/scripts/$f"
+done
+if [[ -f "$SOURCE/lib/spine-migrate.py" ]]; then
+  cp "$SOURCE/lib/spine-migrate.py" "$TARGET/scripts/spine-migrate.py"
+  chmod +x "$TARGET/scripts/spine-migrate.py"
+  ok "  $TARGET/scripts/spine-migrate.py (v1→v2 SQLite + dashboard snapshot)"
+fi
+mkdir -p "$TARGET/lib/tests"
+for tf in "$SOURCE/lib/tests/test-"*.sh; do
+  [[ -f "$tf" ]] || continue
+  cp "$tf" "$TARGET/lib/tests/$(basename "$tf")"
+  chmod +x "$TARGET/lib/tests/$(basename "$tf")"
+  ok "  $TARGET/lib/tests/$(basename "$tf")"
 done
 echo
 
@@ -338,10 +379,14 @@ seed_playbooks
 
 step "Installing notification hook"
 NOTIFY_DST="$HOME/.spine-development/notify.sh"
+# Wave 3 (Squad A): notify.sh migrated lib/ → shared/runtime/. lib/ copy
+# removed; this caller now sources from the v3 canonical location.
+NOTIFY_SRC="$SOURCE/shared/runtime/notify.sh"
+[[ -f "$NOTIFY_SRC" ]] || NOTIFY_SRC="$SOURCE/lib/notify.sh"   # legacy fallback
 if [[ -f "$NOTIFY_DST" && "$FORCE" == false ]]; then
   warn "  $NOTIFY_DST exists — keeping (pass --force to overwrite)"
 else
-  cp "$SOURCE/lib/notify.sh" "$NOTIFY_DST"
+  cp "$NOTIFY_SRC" "$NOTIFY_DST"
   chmod +x "$NOTIFY_DST"
   ok "  $NOTIFY_DST"
   dim "  Customize freely. Set SLACK_WEBHOOK / DISCORD_WEBHOOK / NOTIFY_EMAIL_TO env vars to enable channels."
@@ -367,7 +412,9 @@ MAKEFILE="$TARGET/Makefile"
 MAKE_SNIPPET=$(cat <<'EOF'
 
 # ── Agent team (added by SpineDevelopment installer) ────────────────
-.PHONY: team-up team-down team-status team-restart team-budget team-clean team-footprint team-doctor team-rollback team-preflight dashboard
+TESTS := $(wildcard lib/tests/test-*.sh)
+
+.PHONY: team-up team-down team-status team-restart team-budget team-clean team-footprint team-doctor team-rollback team-preflight dashboard selftest db-migrate db-shell db-reset db-watch dashboard-sync
 
 team-up: ## Start agent team (all roles in scripts/roles.sh + watchdog)
 	bash scripts/team.sh up
@@ -401,6 +448,32 @@ team-preflight: ## Verify host has the tools the team needs (run before first 't
 
 dashboard: ## Serve Control Center (python http.server on .planning/orchestration)
 	bash scripts/serve-dashboard.sh
+
+dashboard-sync: ## Copy lib/dashboard.html → .planning/orchestration/dashboard/index.html (no install needed)
+	cp lib/dashboard.html .planning/orchestration/dashboard/index.html
+	@printf '%s\n' "synced → .planning/orchestration/dashboard/index.html ($$(wc -l < lib/dashboard.html | tr -d ' ') lines)"
+
+selftest: ## Run all lib/tests/test-*.sh (Spine sanity checks)
+	@if [ -z "$(TESTS)" ]; then printf '%s\n' 'no matching lib/tests/test-*.sh' >&2; exit 1; fi
+	@for t in $(TESTS); do printf '▸ %s\n' "$$t"; bash "$$t" || exit 1; done
+	@printf '%s\n' '✓ all selftests passed'
+
+# ── v2 SQLite (see ADR-001 + .planning/orchestration/docs/V2_BACKLOG.md) ──
+
+SPINE_DB := .planning/orchestration/state/spine.db
+
+db-migrate: ## Build / refresh the v2 SQLite DB and dashboard snapshot from the live v1 layout
+	python3 scripts/spine-migrate.py --snapshot
+
+db-reset: ## Drop the v2 DB and re-build from scratch (destructive); also refreshes snapshot
+	python3 scripts/spine-migrate.py --reset --snapshot
+
+db-shell: ## Open an interactive sqlite3 shell against the v2 DB
+	@if [ ! -f "$(SPINE_DB)" ]; then printf '%s\n' "DB not built yet — run 'make db-migrate' first." >&2; exit 1; fi
+	sqlite3 "$(SPINE_DB)"
+
+db-watch: ## Keep the v2 DB + dashboard snapshot fresh (re-migrate every 30s; Ctrl-C to stop)
+	python3 scripts/spine-migrate.py --watch 30
 EOF
 )
 
@@ -424,7 +497,7 @@ echo
 
 step "Adding agent-team note to CLAUDE.md (if present)"
 CLAUDE_MD="$TARGET/CLAUDE.md"
-if [[ -f "$CLAUDE_MD" ]] && ! grep -q "agent-team-template\|AGENT_TEAM_PROTOCOL" "$CLAUDE_MD" 2>/dev/null; then
+if [[ -f "$CLAUDE_MD" ]] && ! grep -q "SpineDevelopment\|AGENT_TEAM_PROTOCOL" "$CLAUDE_MD" 2>/dev/null; then
   cat >> "$CLAUDE_MD" <<'EOF'
 
 ## Agent team (parallelizable work)
@@ -440,9 +513,7 @@ To assign work: replace a role's `directive.md` with `# Directive — ...`. Daem
 | Technical architecture | `teams/architect/directive.md` |
 | Approved-build coordination | `teams/conductor/directive.md` |
 | Read-only investigation | `teams/researcher/directive.md` |
-| Full-stack edits (small teams) | `teams/engineer/directive.md` |
-| Backend squad | `teams/engineering-backend/directive.md` |
-| Frontend squad | `teams/engineering-frontend/directive.md` |
+| Full-stack edits (small teams) | `teams/engineer/directive.md` (discipline = fullstack/backend/frontend/ml/devops) |
 | UX / design-system artefacts | `teams/ux/directive.md` |
 | QA narratives + verification | `teams/qa/directive.md` |
 | Docker / deploy / env | `teams/operator/directive.md` |
@@ -453,7 +524,7 @@ To assign work: replace a role's `directive.md` with `# Directive — ...`. Daem
 
 Docs: `.planning/orchestration/AGENT_TEAM_PROTOCOL.md`, `docs/SPINE_PRACTICES.md`, `docs/PROGRAM_DELIVERY.md`  
 Bring up / status / stop: `make team-up`, `make team-status`, `make team-down`.  
-Control Center: `make dashboard` → http://127.0.0.1:60005/dashboard/ (not your app API’s `/dashboard` route).
+Control Center: `make dashboard` → http://127.0.0.1:61105/dashboard/ (not your app API’s `/dashboard` route; default port avoids many Docker `*:60005` publishes — use `SPINE_DASH_PORT` if needed).
 EOF
   ok "  Appended team section to $CLAUDE_MD"
 else
@@ -465,8 +536,34 @@ else
 fi
 echo
 
+# Pass N: --hub mode marks this checkout as a JOINING machine. Persist
+# the hub URL so a later `bash scripts/spine-connect.sh` (no arg) can
+# pick it up. When --hub is not passed, the file is not written and
+# install behaves exactly as before — the multi-machine layer is opt-in.
+if [[ -n "$HUB_URL" ]]; then
+  HUB_URL_DST="$TARGET/.planning/orchestration/.hub-url"
+  mkdir -p "$(dirname "$HUB_URL_DST")"
+  printf '%s\n' "$HUB_URL" > "$HUB_URL_DST"
+  ok "  Wrote hub URL to $HUB_URL_DST"
+fi
+
 ok "Install complete."
-cat <<EOF
+if [[ -n "$HUB_URL" ]]; then
+  cat <<EOF
+
+This install is configured as a JOINING machine.
+
+Next step:
+
+  cd $TARGET
+  bash scripts/spine-connect.sh    # connect to the hub and start daemons
+
+When you want to stop:
+
+  bash scripts/spine-disconnect.sh
+EOF
+else
+  cat <<EOF
 
 Next steps:
 
@@ -488,3 +585,4 @@ Refresh knowledge later without touching daemons:
 
   bash $SOURCE/install.sh $TARGET --pull-knowledge-only
 EOF
+fi

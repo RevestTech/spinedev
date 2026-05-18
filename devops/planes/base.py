@@ -15,17 +15,16 @@ Every ``invoke()`` call writes:
 
   1. one row to ``spine_devops.action_log`` (via :func:`_log_action`), and
   2. an audit event via :class:`shared.audit.audit_record.AuditRecord`
-     with ``subsystem='shared'`` + ``role='devops'`` — see ``subsystem``
-     workaround note below.
+     with ``subsystem='devops'`` + ``role='devops'``.
 
 It also updates ``spine_devops.control_plane.last_invoked_at`` /
 ``status`` (best-effort; failures never break the action path).
 
-**Subsystem workaround (Wave 3 follow-up).** ``ALLOWED_SUBSYSTEMS`` in
-``shared.audit.audit_record`` does not yet include ``'devops'``. We use
-``subsystem='shared'`` + ``role='devops'`` for now and flag this for
-Wave 3 Squad 4 to extend the audit enum (and add a Flyway migration to
-update the matching DB CHECK constraint).
+**Subsystem (Wave 3 resolution, Squad A).** ``ALLOWED_SUBSYSTEMS`` in
+``shared.audit.audit_record`` now includes ``'devops'`` (V35 Flyway
+migration extends the matching DB CHECK to the 9-value catalog).
+Wave 2's ``subsystem='shared'`` workaround has been replaced with
+the proper ``subsystem='devops'`` value.
 
 **DB I/O.** Per Wave 2 the project keeps the existing subprocess-``psql``
 pattern; no ``asyncpg``. The ``async`` signatures wrap blocking calls in
@@ -225,10 +224,10 @@ def _write_audit_record(
 ) -> str | None:
     """Build + best-effort persist a shared.audit row; return content_hash.
 
-    ``subsystem='shared'`` with ``role='devops'`` is the Wave 2 work-
-    around (see module docstring). When :class:`AuditRecord` isn't
-    importable (stripped-down test env), returns ``None`` — the action
-    still completes; the absent anchor is observable downstream.
+    Uses ``subsystem='devops'`` (Wave 3, Squad A — V35 extends the DB
+    CHECK and ALLOWED_SUBSYSTEMS to include it). When :class:`AuditRecord`
+    isn't importable (stripped-down test env), returns ``None`` — the
+    action still completes; the absent anchor is observable downstream.
     """
     try:
         from shared.audit.audit_record import AuditRecord, chain_to_previous
@@ -242,7 +241,9 @@ def _write_audit_record(
             pid_int = None
         record = AuditRecord(
             role="devops",
-            subsystem="shared",  # TODO Wave 3: extend enum to include 'devops'.
+            # Wave 3 (Squad A) — ALLOWED_SUBSYSTEMS now includes
+            # ``devops``; V35 extends the matching DB CHECK.
+            subsystem="devops",
             action=f"devops.{plane_name}.{action}",
             actor=actor,
             project_id=pid_int,

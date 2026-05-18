@@ -54,18 +54,41 @@ if [[ -n "${PUSHOVER_TOKEN:-}" && -n "${PUSHOVER_USER:-}" ]] && command -v curl 
     https://api.pushover.net/1/messages.json >/dev/null 2>&1 || true
 fi
 
+# Build a safe JSON payload using python's json.dumps. Title/body may
+# contain quotes, backslashes, newlines, or non-ASCII; printf+sed mangled
+# them and produced invalid JSON that webhook receivers silently dropped.
+# Only used if curl is available AND python3 is available; otherwise the
+# Slack/Discord paths are skipped silently (the local log file remains
+# the source of truth).
+build_chat_payload() {
+  # $1: schema ('slack' or 'discord'); $2: title; $3: body
+  command -v python3 >/dev/null 2>&1 || return 1
+  TITLE_IN="$2" BODY_IN="$3" SCHEMA="$1" python3 - <<'PY'
+import json, os, sys
+title = os.environ.get('TITLE_IN', '')
+body  = os.environ.get('BODY_IN', '')
+schema = os.environ.get('SCHEMA', 'slack')
+if schema == 'discord':
+    sys.stdout.write(json.dumps({'content': f"**{title}**\n{body}"}))
+else:
+    sys.stdout.write(json.dumps({'text': f"*{title}*\n{body}"}))
+PY
+}
+
 # Slack webhook (set SLACK_WEBHOOK in your shell env)
 if [[ -n "${SLACK_WEBHOOK:-}" ]] && command -v curl >/dev/null 2>&1; then
-  payload=$(printf '{"text":"*%s*\n%s"}' "$TITLE" "$BODY" | sed 's/\\n/\\\\n/g')
-  curl -s -X POST -H 'Content-Type: application/json' \
-    -d "$payload" "$SLACK_WEBHOOK" >/dev/null 2>&1 || true
+  if payload=$(build_chat_payload slack "$TITLE" "$BODY"); then
+    curl -s -X POST -H 'Content-Type: application/json' \
+      -d "$payload" "$SLACK_WEBHOOK" >/dev/null 2>&1 || true
+  fi
 fi
 
 # Discord webhook (set DISCORD_WEBHOOK in your shell env)
 if [[ -n "${DISCORD_WEBHOOK:-}" ]] && command -v curl >/dev/null 2>&1; then
-  payload=$(printf '{"content":"**%s**\n%s"}' "$TITLE" "$BODY")
-  curl -s -X POST -H 'Content-Type: application/json' \
-    -d "$payload" "$DISCORD_WEBHOOK" >/dev/null 2>&1 || true
+  if payload=$(build_chat_payload discord "$TITLE" "$BODY"); then
+    curl -s -X POST -H 'Content-Type: application/json' \
+      -d "$payload" "$DISCORD_WEBHOOK" >/dev/null 2>&1 || true
+  fi
 fi
 
 # Email (set NOTIFY_EMAIL_TO; uses macOS `mail` if available)

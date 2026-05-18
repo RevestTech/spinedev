@@ -2,7 +2,10 @@
 
 Wave 1 (v3) extension: the ``subsystem`` enum now accepts ``hub``,
 ``federation``, and ``integration`` alongside the original five
-(``plan/build/verify/orchestrator/shared``). See ``ALLOWED_SUBSYSTEMS``
+(``plan/build/verify/orchestrator/shared``).
+
+Wave 3 (v3) extension (Squad A, 2026-05): adds ``devops`` for the
+Operate-subsystem 6th-corner role (#11). See ``ALLOWED_SUBSYSTEMS``
 below for the rationale per value.
 """
 from __future__ import annotations
@@ -17,7 +20,10 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 #:
 #: Wave 1 (v3 rebuild, 2026-05) added ``hub``, ``federation``, ``integration``
 #: in addition to the original five (``plan``, ``build``, ``verify``,
-#: ``orchestrator``, ``shared``):
+#: ``orchestrator``, ``shared``).
+#:
+#: Wave 3 (v3 rebuild, 2026-05) added ``devops`` for the Operate
+#: subsystem 6th-corner role (#11):
 #:
 #:   * ``hub``         — Hub-as-product surfaces (#3): dashboard, master roles,
 #:                       registry, audit, vault config, integrations panel,
@@ -26,14 +32,19 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 #:                       upstream/downstream registry, update cascade.
 #:   * ``integration`` — external connectors (GitHub/Linear/Jira/Slack/
 #:                       PagerDuty/Twilio/Teams/Vanta/Drata/cloud providers).
+#:   * ``devops``      — Operate subsystem (#11): customer-facing devops role
+#:                       + 8 control planes (provisioning, deploy, observability,
+#:                       incident, capacity, cost, security-posture, compliance).
+#:                       Distinct from the Spine-internal ``operator`` role.
 #:
 #: NOTE: when this set changes, the matching CHECK constraint on
 #: ``spine_audit.audit_event.subsystem`` must be updated in a follow-up
 #: Flyway migration (V21+). The Pydantic validator below is the in-process
-#: gate; the DB CHECK is the durability gate.
+#: gate; the DB CHECK is the durability gate. Current durability gate:
+#: V33 (8 values) + V35 (adds ``devops``).
 ALLOWED_SUBSYSTEMS = {
     "plan", "build", "verify", "orchestrator", "shared",
-    "hub", "federation", "integration",
+    "hub", "federation", "integration", "devops",
 }
 
 def _sha256(text: str) -> str:
