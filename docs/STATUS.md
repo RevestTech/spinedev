@@ -91,7 +91,26 @@ TRON deploy.
 ### 2 high-severity drift findings still need dedicated work
 
 - **Finding 1 (HIGH):** TRON LLM bypasses `shared/llm/` — Part 1.4 #6 commitment never fulfilled across 40 commits. `verify/tron/infra/llm/client.py` defines own Provider enum
-- **Finding 2 (HIGH):** `shared/integrations/` package never created (layout violation). Twilio in `voice/`, GitHub/Linear inline in `migration/onboarding.py`, no central package
+- **Finding 2 (HIGH):** `shared/integrations/` package never created (layout violation). Twilio in `voice/`, GitHub/Linear inline in `migration/onboarding.py`, no central package — **CLOSED by Wave 3.5 FIX2** (see below).
+
+### Wave 3.5 FIX2 — shared/integrations/ extraction: COMPLETE 2026-05-18
+
+Closed HIGH-severity Finding 2 above. Created the canonical `shared/integrations/` package per V3 Part 1.1 (LOCKED top-level layout):
+
+- `shared/integrations/__init__.py` + `base.py` (IntegrationAdapter / IntegrationKind / TestConnectionResult / fetch_secret / registry helpers) + `README.md` (vault-path conventions per adapter)
+- `shared/integrations/twilio.py` — canonical home for Twilio auth + signature validation; voice adapter relocated here
+- `shared/integrations/teams.py` + `pagerduty.py` — vault-path + adapter scaffolds
+- `shared/integrations/github.py` + `linear.py` — GitHubConnector / LinearConnector relocated from `migration/onboarding.py`
+- 5 test files (`test_base`, `test_twilio`, `test_github`, `test_linear`, `test_compat_shims`) — 59 tests, all green
+
+Re-export shims keep ZERO public API breakage:
+- `voice/twilio_adapter.py` → re-exports from `shared.integrations.twilio`
+- `migration/onboarding.py` → re-exports `GitHubConnector` / `LinearConnector`
+- `shared/notify/channels.py` → imports `VAULT_PATH_*` constants from canonical modules
+- `evidence/exporters/_base.py` → `_fetch_secret` delegates to `shared.integrations.fetch_secret`
+- `shared/mcp/tools/integrations.py` → updated to dispatch via canonical adapters and accept both `TestConnectionResult` and legacy tuple shapes
+
+**Validation:** 198 tests passing across `shared/integrations/` + `voice/tests/` + `shared/notify/tests/` + `migration/tests/` + `evidence/tests/` + `shared/mcp/tests/test_integrations_tools.py`. Smoke test 99 PASS / 0 FAIL maintained.
 
 ---
 

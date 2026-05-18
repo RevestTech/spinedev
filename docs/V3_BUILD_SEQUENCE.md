@@ -70,6 +70,13 @@ shared/identity/     NEW   — OIDC client library (#25)
 shared/runtime/      NEW   — substrate moved from lib/ (vitals/heartbeat/watchdog/notify/executor/usage-parsers/file-lock/updater/db-outbox)
 shared/charters/     NEW   — industry-anchored role charters (replaces lib/role-prompts/) (#7)
 shared/integrations/ NEW   — external connectors (GitHub/Linear/Jira/Slack/PagerDuty/Twilio/Teams/AWS/Azure/GCP/Railway/Fly/DO/Vanta/Drata/Secureframe)
+                            Per Wave 3.5 FIX2 extraction note: this package holds per-vendor
+                            *connection + auth* plumbing only. The per-domain *use* of an
+                            integration (voice routing in voice/, SMS dispatch in
+                            shared/notify/, GitHub repo import in migration/, Vanta evidence
+                            push in evidence/) stays in the owning subsystem and imports the
+                            plumbing from here. See shared/integrations/README.md for the
+                            per-vendor vault-path conventions + extension recipe.
 shared/{mcp,audit,standards,calibration,cost,eval,memory,notify,reproducibility,validation,schemas,skills,api,ui}
                      KEEP+REFACTOR — existing substrate
 

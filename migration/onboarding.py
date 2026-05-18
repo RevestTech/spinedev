@@ -23,6 +23,26 @@ Production wires :mod:`httpx` clients with auth headers fetched from
 The :class:`OnboardingDispatcher` walks a connector matrix and writes
 every produced work-item into the destination via a writer protocol that
 mirrors :class:`migration.import_.DestWriter` (subset).
+
+Wave 3.5 FIX2 — extraction note
+================================
+
+Per V3 Part 1.1 (LOCKED top-level layout) the per-vendor connector
+plumbing (``GitHubConnector``, ``LinearConnector``, the ``HttpClient``
+protocol) now lives at :mod:`shared.integrations.github` and
+:mod:`shared.integrations.linear`. This module re-exports those classes
+so every downstream caller (Hub wizard, ``migration/tests/test_onboarding``,
+``migration/_mcp_tools/migration``) keeps working unchanged.
+
+The pieces that stay in this module are Spine-internal contracts that
+are NOT integration plumbing:
+
+* :class:`WorkItemMapping` — the Spine work-item shape (Spine domain).
+* :class:`WorkItemSink` — the destination writer protocol (Spine domain).
+* :class:`Connector` — the Spine-side connector contract.
+* :class:`OnboardingDispatcher` — the wizard's driver loop.
+* :class:`ConnectorRunReport` / :class:`OnboardingDispatchReport` —
+  outcome reporting.
 """
 
 from __future__ import annotations
@@ -30,7 +50,15 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Awaitable, Callable, Literal, Optional, Protocol
+from typing import Any, Literal, Optional, Protocol
+
+# Per-vendor connector plumbing now lives in shared/integrations/.
+# Re-export so downstream callers don't need to change import paths.
+from shared.integrations.github import (  # noqa: F401  (re-export)
+    GitHubConnector,
+    HttpClient,
+)
+from shared.integrations.linear import LinearConnector  # noqa: F401  (re-export)
 
 logger = logging.getLogger("spine.migration.onboarding")
 
@@ -77,37 +105,16 @@ class ConnectorRunReport:
 
 
 # ---------------------------------------------------------------------------
-# HTTP client protocol — injectable for tests
-# ---------------------------------------------------------------------------
-
-
-class HttpClient(Protocol):
-    """Tiny façade over an HTTP client — only what the connectors use.
-
-    Implementations must:
-
-    * Authenticate via headers (the connector hands them in per call).
-    * Return ``{"status_code": int, "body": Any}`` where ``body`` is the
-      parsed JSON dict / list.
-    * Raise nothing for non-2xx — the connector decides how to react.
-    """
-
-    def get_json(self, url: str, *, headers: dict[str, str]) -> dict[str, Any]:
-        ...
-
-
-# ---------------------------------------------------------------------------
-# Connector base
+# Connector base — kept here as the Spine-side contract (not vendor plumbing)
 # ---------------------------------------------------------------------------
 
 
 class Connector(Protocol):
     """The contract every onboarding connector implements.
 
-    Concrete connectors (``GitHubConnector``, ``LinearConnector``) take
-    an ``http`` client + a secret loader at construction so tests can
-    inject mocks. Production wiring uses :func:`shared.secrets.get_secret`
-    + an :mod:`httpx` ``AsyncClient`` driven through a sync facade.
+    Concrete connectors (``GitHubConnector``, ``LinearConnector``) live
+    in :mod:`shared.integrations` and are re-exported here for
+    backward compatibility.
     """
 
     name: str
@@ -128,375 +135,7 @@ class Connector(Protocol):
 
 
 # ---------------------------------------------------------------------------
-# GitHubConnector
-# ---------------------------------------------------------------------------
-
-
-class GitHubConnector:
-    """Read GitHub repos + issues + comments and map to Spine work-items.
-
-    Auth: PAT or GitHub App token fetched from vault path
-    ``integration/github/<org>/token`` (per #9). The token MUST scope
-    only ``repo:read`` + ``issues:read`` + ``contents:read``.
-
-    Issue → work-item type heuristic (cheap; conductor refines later):
-
-    * label ``bug`` → ``bug``
-    * label ``incident`` / ``outage`` → ``incident``
-    * label ``support`` / ``question`` → ``support``
-    * label ``refactor`` / ``tech-debt`` → ``refactor``
-    * label ``infra`` / ``ops`` → ``infra``
-    * label ``compliance`` / ``security`` → ``compliance``
-    * otherwise → ``feature``
-    """
-
-    name = "github"
-
-    def __init__(
-        self,
-        *,
-        http: HttpClient,
-        org: str,
-        repo_filter: Optional[tuple[str, ...]] = None,
-        token_loader: Optional[Callable[[str], Awaitable[str]]] = None,
-        api_base: str = "https://api.github.com",
-    ) -> None:
-        self._http = http
-        self._org = org
-        self._repo_filter = repo_filter
-        self._token_loader = token_loader
-        self._api_base = api_base.rstrip("/")
-        self._token_cache: Optional[str] = None
-
-    # ---- auth helpers ----
-    def _load_token(self) -> str:
-        if self._token_cache is not None:
-            return self._token_cache
-        import asyncio
-
-        loader = self._token_loader
-        path = f"integration/github/{self._org}/token"
-        if loader is None:
-            from shared.secrets import get_secret as _get
-
-            loader = _get  # type: ignore[assignment]
-        coro = loader(path)
-        try:
-            tok = asyncio.run(coro)
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            try:
-                tok = loop.run_until_complete(coro)
-            finally:
-                loop.close()
-        self._token_cache = tok
-        return tok
-
-    def _headers(self) -> dict[str, str]:
-        return {
-            "Authorization": f"Bearer {self._load_token()}",
-            "Accept": "application/vnd.github+json",
-            "X-GitHub-Api-Version": "2022-11-28",
-        }
-
-    # ---- public API ----
-    def import_repos(self) -> list[dict[str, Any]]:
-        resp = self._http.get_json(
-            f"{self._api_base}/orgs/{self._org}/repos?per_page=100",
-            headers=self._headers(),
-        )
-        body = resp.get("body", []) or []
-        if self._repo_filter:
-            body = [r for r in body if r.get("name") in self._repo_filter]
-        return list(body)
-
-    def import_issues(self) -> list[dict[str, Any]]:
-        all_issues: list[dict[str, Any]] = []
-        for repo in self.import_repos():
-            owner = repo.get("owner", {}).get("login", self._org)
-            name = repo.get("name", "")
-            if not name:
-                continue
-            resp = self._http.get_json(
-                f"{self._api_base}/repos/{owner}/{name}/issues"
-                f"?state=all&per_page=100",
-                headers=self._headers(),
-            )
-            for it in resp.get("body", []) or []:
-                # Filter out pull-request entries (GitHub returns PRs here too).
-                if "pull_request" in it:
-                    continue
-                it["_spine_repo_full_name"] = f"{owner}/{name}"
-                all_issues.append(it)
-        return all_issues
-
-    def import_comments(self, *, issue_source_id: str) -> list[dict[str, Any]]:
-        # issue_source_id is "<owner>/<repo>#<number>"
-        try:
-            repo_part, num = issue_source_id.split("#", 1)
-            owner, name = repo_part.split("/", 1)
-        except ValueError:
-            return []
-        resp = self._http.get_json(
-            f"{self._api_base}/repos/{owner}/{name}/issues/{num}/comments?per_page=100",
-            headers=self._headers(),
-        )
-        return list(resp.get("body", []) or [])
-
-    @staticmethod
-    def _classify(labels: tuple[str, ...]) -> WorkItemType:
-        lowered = {lbl.lower() for lbl in labels}
-        if "incident" in lowered or "outage" in lowered:
-            return "incident"
-        if "bug" in lowered:
-            return "bug"
-        if "support" in lowered or "question" in lowered:
-            return "support"
-        if "refactor" in lowered or "tech-debt" in lowered:
-            return "refactor"
-        if "infra" in lowered or "ops" in lowered:
-            return "infra"
-        if "compliance" in lowered or "security" in lowered:
-            return "compliance"
-        return "feature"
-
-    def map_to_spine_workitems(
-        self, *, issues: list[dict[str, Any]],
-    ) -> list[WorkItemMapping]:
-        mapped: list[WorkItemMapping] = []
-        for it in issues:
-            labels = tuple(
-                (lbl.get("name") or "").strip()
-                for lbl in (it.get("labels") or [])
-                if (lbl.get("name") or "").strip()
-            )
-            repo = it.get("_spine_repo_full_name", "")
-            number = it.get("number")
-            source_id = f"{repo}#{number}" if repo and number else str(it.get("id", ""))
-            mapped.append(WorkItemMapping(
-                work_item_type=self._classify(labels),
-                title=str(it.get("title", "")),
-                body_md=str(it.get("body") or ""),
-                source_id=source_id,
-                source_url=str(it.get("html_url", "")),
-                connector=self.name,
-                labels=labels,
-                external_state=str(it.get("state") or ""),
-                external_created_at=str(it.get("created_at") or ""),
-                external_updated_at=str(it.get("updated_at") or ""),
-                external_assignee=(
-                    (it.get("assignee") or {}).get("login") if it.get("assignee") else None
-                ),
-                raw=it,
-            ))
-        return mapped
-
-
-# ---------------------------------------------------------------------------
-# LinearConnector
-# ---------------------------------------------------------------------------
-
-
-_LINEAR_ISSUES_QUERY = """
-query Issues($cursor: String) {
-  issues(first: 100, after: $cursor) {
-    pageInfo { hasNextPage endCursor }
-    nodes {
-      id identifier title description state { name type }
-      url createdAt updatedAt
-      labels { nodes { name } }
-      assignee { name email }
-      team { key name }
-    }
-  }
-}
-""".strip()
-
-
-class LinearConnector:
-    """Read Linear issues + comments and map to Spine work-items.
-
-    Auth: API key fetched from vault path
-    ``integration/linear/<workspace>/api_key`` (per #9). The Linear API
-    is GraphQL-only; this connector uses :meth:`HttpClient.get_json`
-    against a single POST endpoint (the HttpClient interface accepts
-    arbitrary URLs + headers; tests stub it).
-
-    Rationale for picking Linear over Jira in v1.0 (per ADR-F-003):
-
-    * Modern GraphQL API with a single endpoint surface (Jira has v2,
-      v3, "agile", "service-desk" — four APIs).
-    * Webhook payloads + REST + GraphQL semantics align; Spine's MCP
-      tool surface mirrors that shape.
-    * Linear's ``state.type`` enum maps 1-to-1 onto Spine work-item
-      lifecycle stages without translation tables.
-    * Linear targets the same segment as Spine (modern software teams);
-      Jira will return as a v1.1 connector for the enterprise segment.
-    """
-
-    name = "linear"
-
-    def __init__(
-        self,
-        *,
-        http: HttpClient,
-        workspace: str,
-        team_keys: Optional[tuple[str, ...]] = None,
-        token_loader: Optional[Callable[[str], Awaitable[str]]] = None,
-        api_url: str = "https://api.linear.app/graphql",
-    ) -> None:
-        self._http = http
-        self._workspace = workspace
-        self._team_keys = team_keys
-        self._token_loader = token_loader
-        self._api_url = api_url
-        self._token_cache: Optional[str] = None
-
-    def _load_token(self) -> str:
-        if self._token_cache is not None:
-            return self._token_cache
-        import asyncio
-
-        loader = self._token_loader
-        path = f"integration/linear/{self._workspace}/api_key"
-        if loader is None:
-            from shared.secrets import get_secret as _get
-
-            loader = _get  # type: ignore[assignment]
-        coro = loader(path)
-        try:
-            tok = asyncio.run(coro)
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            try:
-                tok = loop.run_until_complete(coro)
-            finally:
-                loop.close()
-        self._token_cache = tok
-        return tok
-
-    def _headers(self) -> dict[str, str]:
-        # Linear accepts API keys directly in Authorization header
-        # (no "Bearer" prefix, per their docs).
-        return {
-            "Authorization": self._load_token(),
-            "Content-Type": "application/json",
-        }
-
-    def import_repos(self) -> list[dict[str, Any]]:
-        """Linear has no concept of repos; return an empty list.
-
-        The connector contract requires the method; conductors must not
-        infer repo presence from non-empty returns.
-        """
-        return []
-
-    def import_issues(self) -> list[dict[str, Any]]:
-        # GraphQL pagination loop.
-        issues: list[dict[str, Any]] = []
-        cursor: Optional[str] = None
-        for _ in range(64):  # hard cap: 64 pages * 100 = 6400 issues per onboarding
-            resp = self._http.get_json(
-                self._api_url, headers={
-                    **self._headers(),
-                    "_spine_method": "POST",
-                    "_spine_body": _serialize_gql(_LINEAR_ISSUES_QUERY, cursor),
-                },
-            )
-            body = resp.get("body", {}) or {}
-            data = (body.get("data") or {}).get("issues") or {}
-            for node in data.get("nodes", []) or []:
-                if self._team_keys:
-                    if (node.get("team") or {}).get("key") not in self._team_keys:
-                        continue
-                issues.append(node)
-            page = data.get("pageInfo") or {}
-            if not page.get("hasNextPage"):
-                break
-            cursor = page.get("endCursor")
-        return issues
-
-    def import_comments(self, *, issue_source_id: str) -> list[dict[str, Any]]:
-        query = (
-            "query Comments($id: String!) { issue(id: $id) "
-            "{ comments { nodes { id body createdAt user { name } } } } }"
-        )
-        resp = self._http.get_json(
-            self._api_url, headers={
-                **self._headers(),
-                "_spine_method": "POST",
-                "_spine_body": _serialize_gql(query, issue_source_id),
-            },
-        )
-        body = resp.get("body", {}) or {}
-        return list(
-            ((body.get("data") or {}).get("issue") or {})
-            .get("comments", {})
-            .get("nodes", []) or [],
-        )
-
-    @staticmethod
-    def _classify(labels: tuple[str, ...], state_type: str) -> WorkItemType:
-        # Linear's state.type vocabulary is {backlog, unstarted, started,
-        # completed, canceled, triage}; that's pure lifecycle. Use labels
-        # for type classification, fall back to feature.
-        lowered = {lbl.lower() for lbl in labels}
-        if "incident" in lowered or "outage" in lowered:
-            return "incident"
-        if "bug" in lowered:
-            return "bug"
-        if "support" in lowered:
-            return "support"
-        if "refactor" in lowered or "debt" in lowered:
-            return "refactor"
-        if "infra" in lowered or "ops" in lowered:
-            return "infra"
-        if "compliance" in lowered or "security" in lowered:
-            return "compliance"
-        return "feature"
-
-    def map_to_spine_workitems(
-        self, *, issues: list[dict[str, Any]],
-    ) -> list[WorkItemMapping]:
-        mapped: list[WorkItemMapping] = []
-        for it in issues:
-            label_nodes = (it.get("labels") or {}).get("nodes") or []
-            labels = tuple(
-                (n.get("name") or "").strip() for n in label_nodes
-                if (n.get("name") or "").strip()
-            )
-            state = it.get("state") or {}
-            mapped.append(WorkItemMapping(
-                work_item_type=self._classify(labels, str(state.get("type") or "")),
-                title=str(it.get("title", "")),
-                body_md=str(it.get("description") or ""),
-                source_id=str(it.get("identifier") or it.get("id") or ""),
-                source_url=str(it.get("url") or ""),
-                connector=self.name,
-                labels=labels,
-                external_state=str(state.get("name") or ""),
-                external_created_at=str(it.get("createdAt") or ""),
-                external_updated_at=str(it.get("updatedAt") or ""),
-                external_assignee=(
-                    (it.get("assignee") or {}).get("name") if it.get("assignee") else None
-                ),
-                raw=it,
-            ))
-        return mapped
-
-
-def _serialize_gql(query: str, variable_value: Optional[str]) -> str:
-    """Build a JSON GraphQL request body — kept as a helper so the
-    ``HttpClient`` mock can re-parse it in tests without depending on
-    a real GraphQL serializer."""
-    import json as _json
-
-    return _json.dumps({"query": query, "variables": {"cursor": variable_value}
-                        if variable_value is not None else {}}, sort_keys=True)
-
-
-# ---------------------------------------------------------------------------
-# Dispatcher
+# Dispatcher — stays here; it's the wizard driver, not connector plumbing
 # ---------------------------------------------------------------------------
 
 

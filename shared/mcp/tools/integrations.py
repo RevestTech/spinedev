@@ -228,6 +228,42 @@ async def _secret_present(vault_path: Optional[str]) -> tuple[bool, str]:
         return (False, f"vault read failed at {vault_path!r}: {exc!s}")
 
 
+def _canonical_probe_envelope(
+    name: str, meta: dict[str, Any],
+) -> dict[str, Any]:
+    """Wave 3.5 FIX2 — uniform probe routed through canonical adapters.
+
+    For stub-mode integrations we still want the SPA + MCP tool to see
+    the same envelope shape regardless of whether the adapter has been
+    promoted to a real HTTP probe yet. We try the canonical
+    ``shared.integrations.<name>.test_connection()`` first; if that's
+    missing (or the module hasn't been shipped) we fall back to the
+    historical inline ``_secret_present`` vault check.
+
+    Returns a dict ``{'healthy': bool, 'detail': str}``.
+    """
+    try:
+        import importlib  # noqa: PLC0415
+
+        mod = importlib.import_module(f"shared.integrations.{name}")
+        probe = getattr(mod, "test_connection", None)
+        if probe is not None and asyncio.iscoroutinefunction(probe):
+            result = _run_async(probe())
+            if result is not None and hasattr(result, "healthy"):
+                return {
+                    "healthy": bool(result.healthy),
+                    "detail": str(result.detail or ""),
+                }
+    except Exception:  # noqa: BLE001 — degrade to legacy path
+        pass
+
+    # Legacy fallback: inline vault check (matches pre-FIX2 behaviour).
+    present, detail = (
+        _run_async(_secret_present(meta.get("vault_path"))) or (False, "")
+    )
+    return {"healthy": bool(present), "detail": detail}
+
+
 def _run_async(coro: Any) -> Any:
     """Run an async coroutine from a sync MCP tool body.
 
@@ -395,17 +431,18 @@ def integrations_test_connection(
     probe_mode = meta.get("probe", "stub")
 
     if probe_mode == "stub":
-        # Adapter is a v1.1 stub; report deterministic stub envelope.
-        present, detail = (
-            _run_async(_secret_present(meta.get("vault_path"))) or (False, "")
-        )
+        # Adapter is a v1.1 stub; dispatch to the canonical
+        # ``shared.integrations.<name>.test_connection`` coroutine which
+        # returns a uniform vault-presence envelope. Wave 3.5 FIX2: this
+        # used to inline ``_secret_present``; we now go through the
+        # canonical adapter so every integration is probed identically.
+        canonical = _canonical_probe_envelope(payload.name, meta)
         body = _TestConnectionResponse(
             name=payload.name,
-            healthy=present,
+            healthy=canonical["healthy"],
             probe_mode="stub",
             detail=(
-                f"v1.1+ adapter stub; vault check: {detail}; "
-                "real probe not implemented yet"
+                f"v1.1+ adapter stub; {canonical['detail']}"
             ),
             feature_flag=flag,
         )
@@ -415,7 +452,7 @@ def integrations_test_connection(
             actor=payload.actor,
             integration_name=payload.name,
             metadata={"ok": True, "probe_mode": "stub",
-                      "vault_present": present},
+                      "vault_present": canonical["healthy"]},
         )
         return ToolResponse(
             status="stub_implementation",
@@ -426,6 +463,15 @@ def integrations_test_connection(
     # Real probe — attempt to import the adapter; surface a stub envelope
     # if the module is absent (v1.0 substrate not yet on disk for this
     # name) rather than a hard error.
+    #
+    # Wave 3.5 FIX2 — Per V3 Part 1.1 the canonical home for adapters is
+    # ``shared/integrations/<name>.py``. Every adapter shipped in v1.0
+    # (github, linear, twilio, teams, pagerduty) exposes a
+    # module-level ``test_connection()`` coroutine that returns a
+    # :class:`shared.integrations.TestConnectionResult`. The dispatcher
+    # below accepts BOTH return shapes (TestConnectionResult OR the
+    # legacy ``(bool, str)`` tuple) so callers don't need a coordinated
+    # upgrade.
     adapter_mod = f"shared.integrations.{payload.name}"
     healthy = False
     detail = ""
@@ -448,11 +494,20 @@ def integrations_test_connection(
         else:
             result = _run_async(probe()) if asyncio.iscoroutinefunction(probe) \
                 else probe()
-            if isinstance(result, tuple) and len(result) == 2:
+            # New canonical shape: TestConnectionResult dataclass.
+            if hasattr(result, "healthy") and hasattr(result, "detail"):
+                healthy = bool(result.healthy)
+                detail = str(result.detail)
+                if getattr(result, "probe_mode", "real") == "stub":
+                    used_stub = True
+            elif isinstance(result, tuple) and len(result) == 2:
                 healthy, detail = bool(result[0]), str(result[1])
             else:
                 healthy = bool(result)
-                detail = "probe returned truthy" if healthy else "probe returned falsy"
+                detail = (
+                    "probe returned truthy" if healthy
+                    else "probe returned falsy"
+                )
     except ModuleNotFoundError:
         used_stub = True
         present, vdetail = (

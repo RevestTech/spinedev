@@ -61,9 +61,18 @@ def _fetch_secret(path: str) -> str:
     Per #9 the returned string lives only as long as the caller's HTTP
     request. ``shared.secrets`` is the ONLY module in Spine that may
     read secret values from any backend.
+
+    Wave 3.5 FIX2 unified path: delegates to
+    :func:`shared.integrations.fetch_secret` (async) wrapped with
+    :func:`_run_sync` so every integration adapter — including the
+    evidence exporters here — uses one canonical secret-fetch helper.
+    Returns ``""`` (not ``None``) when the vault entry is missing,
+    matching the prior contract that downstream exporters relied on.
     """
-    from shared.secrets import get_secret  # local import keeps module light
-    return _run_sync(get_secret(path))
+    from shared.integrations import fetch_secret as _async_fetch  # noqa: PLC0415
+
+    value = _run_sync(_async_fetch(path))
+    return value or ""
 
 
 def _log_export(result: ExportResult, db_url: Optional[str] = None) -> None:

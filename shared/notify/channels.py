@@ -35,6 +35,13 @@ Wave 1 (v3) changes:
     for these four pending the production transport work. SMS/WhatsApp
     map to the same Twilio account; Teams uses Microsoft webhook URLs;
     PagerDuty uses the Events v2 API.
+
+Wave 3.5 FIX2 — per-vendor vault paths + auth primitives now live at
+:mod:`shared.integrations.{twilio,teams,pagerduty}`. The channel classes
+below import those constants (rather than re-hardcoding them) so a
+single grep across the repo shows every consumer of a given Twilio /
+Teams / PagerDuty secret. The ``send()`` orchestration stays in this
+module because it's notification-domain logic, not integration plumbing.
 """
 from __future__ import annotations
 import asyncio
@@ -300,6 +307,19 @@ class _ScaffoldChannel:
         )
 
 
+# Vault-path constants imported from the canonical integration modules
+# so a single grep across the repo shows every consumer (per V3 Part 1.1).
+from shared.integrations.pagerduty import VAULT_PATH_ROUTING_KEY as _PD_ROUTING_KEY
+from shared.integrations.teams import VAULT_PATH_WEBHOOK_URL as _TEAMS_WEBHOOK_URL
+from shared.integrations.twilio import (
+    VAULT_PATH_ACCOUNT_SID as _TW_ACCOUNT_SID,
+    VAULT_PATH_AUTH_TOKEN as _TW_AUTH_TOKEN,
+    VAULT_PATH_FROM_NUMBER as _TW_FROM_NUMBER,
+)
+
+_TW_WHATSAPP_FROM = "notify/twilio/whatsapp_from"
+
+
 class SMSChannel(_ScaffoldChannel):
     """Twilio Programmable SMS scaffold (per V3 #29 — voice/phone Twilio stub).
 
@@ -310,15 +330,19 @@ class SMSChannel(_ScaffoldChannel):
 
     ``recipients`` is a list of E.164 numbers passed at construction time
     OR injected from the per-user comm-preferences resolver.
+
+    Vault-path constants are sourced from ``shared.integrations.twilio``
+    so a single grep across the codebase shows every consumer of these
+    Twilio secrets.
     """
     name = "sms"
     def __init__(self, *, recipients: list[str] | None = None,
                  from_number: str | None = None,
                  timeout_seconds: int = 10) -> None:
         self.recipients = list(recipients or [])
-        self.from_number = from_number or _fetch_secret("notify/twilio/from_number")
-        self.account_sid = _fetch_secret("notify/twilio/account_sid")
-        self.auth_token = _fetch_secret("notify/twilio/auth_token")
+        self.from_number = from_number or _fetch_secret(_TW_FROM_NUMBER)
+        self.account_sid = _fetch_secret(_TW_ACCOUNT_SID)
+        self.auth_token = _fetch_secret(_TW_AUTH_TOKEN)
         self.timeout = int(timeout_seconds)
 
 
@@ -340,10 +364,10 @@ class WhatsAppChannel(_ScaffoldChannel):
                  timeout_seconds: int = 10) -> None:
         self.recipients = list(recipients or [])
         self.from_number = (
-            from_number or _fetch_secret("notify/twilio/whatsapp_from")
+            from_number or _fetch_secret(_TW_WHATSAPP_FROM)
         )
-        self.account_sid = _fetch_secret("notify/twilio/account_sid")
-        self.auth_token = _fetch_secret("notify/twilio/auth_token")
+        self.account_sid = _fetch_secret(_TW_ACCOUNT_SID)
+        self.auth_token = _fetch_secret(_TW_AUTH_TOKEN)
         self.timeout = int(timeout_seconds)
 
 
@@ -354,13 +378,13 @@ class TeamsChannel(_ScaffoldChannel):
     URL itself as the credential — it embeds an unguessable token.
 
     Vault path:
-        notify/teams/webhook_url
+        notify/teams/webhook_url  (sourced from shared.integrations.teams)
     """
     name = "teams"
     def __init__(self, *, webhook_url: str | None = None,
                  timeout_seconds: int = 5) -> None:
         self.webhook_url = (
-            webhook_url or _fetch_secret("notify/teams/webhook_url")
+            webhook_url or _fetch_secret(_TEAMS_WEBHOOK_URL)
         )
         self.timeout = int(timeout_seconds)
 
@@ -382,7 +406,7 @@ class PagerDutyChannel(_ScaffoldChannel):
                  dedup_strategy: str = "event_then_project",
                  timeout_seconds: int = 5) -> None:
         self.routing_key = (
-            routing_key or _fetch_secret("notify/pagerduty/routing_key")
+            routing_key or _fetch_secret(_PD_ROUTING_KEY)
         )
         self.dedup_strategy = dedup_strategy
         self.timeout = int(timeout_seconds)
