@@ -1,0 +1,122 @@
+{
+  "_comment_top": "Spine v3 — 'spine-hub' OIDC client config. Confidential client, authorization-code flow + PKCE (S256). Client secret NEVER in repo: init-bootstrap.sh generates it and stores in vault via shared/secrets/. Hub fetches at runtime by reference. Placeholders: {{HUB_BASE_URL}} substituted at bootstrap time; multi-redirect arrays let one client serve laptop / BYOC / customer-cloud / on-prem URL shapes.",
+  "clientId": "spine-hub",
+  "name": "Spine Hub",
+  "description": "Spine Hub web SPA and API (Wave 3 deliverable; OIDC client per #25)",
+  "rootUrl": "{{HUB_BASE_URL}}",
+  "adminUrl": "{{HUB_BASE_URL}}",
+  "baseUrl": "{{HUB_BASE_URL}}/",
+  "surrogateAuthRequired": false,
+  "enabled": true,
+  "alwaysDisplayInConsole": false,
+  "clientAuthenticatorType": "client-secret",
+  "redirectUris": [
+    "{{HUB_BASE_URL}}/*",
+    "{{HUB_BASE_URL}}/auth/callback",
+    "{{HUB_BASE_URL}}/auth/silent-callback",
+    "{{ADDITIONAL_REDIRECT_URI_1}}",
+    "{{ADDITIONAL_REDIRECT_URI_2}}"
+  ],
+  "webOrigins": [
+    "{{HUB_BASE_URL}}",
+    "{{ADDITIONAL_WEB_ORIGIN_1}}",
+    "{{ADDITIONAL_WEB_ORIGIN_2}}"
+  ],
+  "notBefore": 0,
+  "bearerOnly": false,
+  "consentRequired": false,
+  "standardFlowEnabled": true,
+  "implicitFlowEnabled": false,
+  "directAccessGrantsEnabled": false,
+  "serviceAccountsEnabled": true,
+  "authorizationServicesEnabled": false,
+  "publicClient": false,
+  "frontchannelLogout": true,
+  "protocol": "openid-connect",
+  "attributes": {
+    "_comment_pkce": "PKCE S256 mandatory — the Hub SPA is a public-confidential hybrid (BFF pattern for v3). PKCE blocks code-injection attacks even if the secret leaks.",
+    "pkce.code.challenge.method": "S256",
+    "oauth2.device.authorization.grant.enabled": "false",
+    "oidc.ciba.grant.enabled": "false",
+    "backchannel.logout.session.required": "true",
+    "backchannel.logout.revoke.offline.tokens": "false",
+    "exclude.session.state.from.auth.response": "false",
+    "saml.assertion.signature": "false",
+    "saml.force.post.binding": "false",
+    "saml.multivalued.roles": "false",
+    "saml.encrypt": "false",
+    "saml.server.signature": "false",
+    "saml.server.signature.keyinfo.ext": "false",
+    "saml.authnstatement": "false",
+    "saml.onetimeuse.condition": "false",
+    "display.on.consent.screen": "false",
+    "use.refresh.tokens": "true",
+    "client_credentials.use_refresh_token": "false",
+    "tls-client-certificate-bound-access-tokens": "false",
+    "require.pushed.authorization.requests": "false",
+    "access.token.lifespan": "900",
+    "client.session.idle.timeout": "1800",
+    "client.session.max.lifespan": "36000",
+    "post.logout.redirect.uris": "{{HUB_BASE_URL}}/*"
+  },
+  "authenticationFlowBindingOverrides": {},
+  "fullScopeAllowed": false,
+  "nodeReRegistrationTimeout": -1,
+  "defaultClientScopes": [
+    "web-origins",
+    "acr",
+    "profile",
+    "roles",
+    "email",
+    "spine-hub-scope"
+  ],
+  "optionalClientScopes": [
+    "address",
+    "phone",
+    "offline_access",
+    "microprofile-jwt"
+  ],
+  "protocolMappers": [
+    {
+      "name": "groups-mapper",
+      "protocol": "openid-connect",
+      "protocolMapper": "oidc-group-membership-mapper",
+      "consentRequired": false,
+      "config": {
+        "full.path": "false",
+        "id.token.claim": "true",
+        "access.token.claim": "true",
+        "claim.name": "groups",
+        "userinfo.token.claim": "true"
+      }
+    },
+    {
+      "name": "realm-roles-mapper",
+      "protocol": "openid-connect",
+      "protocolMapper": "oidc-usermodel-realm-role-mapper",
+      "consentRequired": false,
+      "config": {
+        "multivalued": "true",
+        "userinfo.token.claim": "true",
+        "id.token.claim": "true",
+        "access.token.claim": "true",
+        "claim.name": "realm_access.roles",
+        "jsonType.label": "String"
+      }
+    },
+    {
+      "name": "hub-id-mapper",
+      "protocol": "openid-connect",
+      "protocolMapper": "oidc-usermodel-attribute-mapper",
+      "consentRequired": false,
+      "config": {
+        "userinfo.token.claim": "true",
+        "user.attribute": "hub_id",
+        "id.token.claim": "true",
+        "access.token.claim": "true",
+        "claim.name": "hub_id",
+        "jsonType.label": "String"
+      }
+    }
+  ]
+}

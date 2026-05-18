@@ -1,0 +1,22 @@
+# Spine v3 — keycloak/ gitignore
+#
+# NEVER commit secrets, generated credentials, or local env overrides.
+
+.env
+.env.*
+!.env.example
+
+# Day-0 bootstrap output (random admin password lands here when --output is used).
+bootstrap-credentials.txt
+bootstrap-credentials-*.txt
+*.credentials
+
+# Local realm exports (may contain user data).
+realm-export-*.json
+realm-backup-*.json
+
+# Volumes & runtime artifacts.
+data/
+volumes/
+logs/
+*.log

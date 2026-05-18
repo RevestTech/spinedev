@@ -1,0 +1,30 @@
+{
+  "_comment_top": "Spine v3 — Google Workspace IdP brokering preset. Day-0 wizard substitutes placeholders. {{HOSTED_DOMAIN}} restricts brokering to a single Workspace domain (e.g. 'acme.com'); leave blank for any-Google-account (Founder tier only — discouraged Enterprise).",
+  "_comment_placeholders": {
+    "{{HOSTED_DOMAIN}}": "Workspace domain to restrict to (e.g. 'acme.com') OR empty",
+    "{{CLIENT_ID}}": "OAuth 2.0 Client ID from GCP console (apps.googleusercontent.com)",
+    "{{CLIENT_SECRET_PATH_IN_VAULT}}": "Vault path, e.g. 'secret/spine/idp/google-workspace/client-secret'"
+  },
+  "alias": "google-workspace",
+  "displayName": "Google Workspace",
+  "providerId": "google",
+  "enabled": true,
+  "updateProfileFirstLoginMode": "on",
+  "trustEmail": true,
+  "storeToken": false,
+  "addReadTokenRoleOnCreate": false,
+  "authenticateByDefault": false,
+  "linkOnly": false,
+  "firstBrokerLoginFlowAlias": "first broker login",
+  "config": {
+    "clientId": "{{CLIENT_ID}}",
+    "clientSecret": "${vault.{{CLIENT_SECRET_PATH_IN_VAULT}}}",
+    "hostedDomain": "{{HOSTED_DOMAIN}}",
+    "userIp": "false",
+    "useJwksUrl": "true",
+    "defaultScope": "openid profile email",
+    "syncMode": "FORCE",
+    "prompt": "select_account",
+    "offlineAccess": "false"
+  }
+}
