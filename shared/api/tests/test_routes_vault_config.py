@@ -39,6 +39,24 @@ def test_rotate_requires_hub_admin_role(client, oidc_user) -> None:
     assert r.status_code == 403
 
 
+def test_rotations_requires_hub_admin_role(client, oidc_user) -> None:
+    """Plain user cannot read rotation history -> 403."""
+    r = client.get("/api/v2/vault/rotations", headers={"Authorization": "Bearer t"})
+    assert r.status_code == 403
+
+
+def test_rotations_returns_empty_envelope_when_db_empty(
+    client, oidc_hub_admin, mock_db_pool,
+) -> None:
+    """With no scripted rows the endpoint returns the well-formed envelope."""
+    mock_db_pool.script([])
+    r = client.get("/api/v2/vault/rotations", headers={"Authorization": "Bearer t"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert body["items"] == []
+
+
 def test_status_returns_adapter_kind_when_admin(client, oidc_hub_admin, monkeypatch) -> None:
     """A hub-admin sees adapter kind + healthy flag."""
     class _Adapter:

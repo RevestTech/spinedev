@@ -66,6 +66,23 @@ def test_test_connection_smoke_ok_for_admin(client, oidc_hub_admin) -> None:
     assert body["audit_event_uuid"]
 
 
+def test_disabled_status_when_feature_flag_off(client, oidc_user, monkeypatch) -> None:
+    """FIX3: integrations with a disabled feature flag report status='disabled'."""
+    import shared.api.routes.integrations as mod
+
+    def _fake_enabled(flag: str) -> bool:
+        # Disable github specifically; leave others ON.
+        return flag != "integration_github"
+
+    monkeypatch.setattr(mod, "is_feature_enabled", _fake_enabled, raising=True)
+    r = client.get("/api/v2/integrations", headers={"Authorization": "Bearer t"})
+    assert r.status_code == 200
+    items = {item["name"]: item for item in r.json()["items"]}
+    assert items["github"]["status"] == "disabled"
+    # The other integrations remain in their existing buckets (configured / unconfigured)
+    assert items["linear"]["status"] != "disabled"
+
+
 def test_test_connection_unknown_integration_404(client, oidc_hub_admin) -> None:
     r = client.post(
         "/api/v2/integrations/zzz/test-connection",

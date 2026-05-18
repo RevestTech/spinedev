@@ -48,3 +48,17 @@ def test_integrations_lists_known_connectors(client, oidc_user) -> None:
     assert r.status_code == 200
     names = {item["name"] for item in r.json()["items"]}
     assert {"github", "slack", "vanta"}.issubset(names)
+
+
+def test_role_entries_carry_runtime_trio_fields(client, oidc_user) -> None:
+    """FIX3: every RoleEntry exposes the runtime trio (status / pushed_at /
+    current_responsibility). When the DB is unreachable they fall back to
+    ``null`` rather than vanishing — the SPA contract is "field exists,
+    value may be null"."""
+    r = client.get("/api/v2/registry/roles", headers={"Authorization": "Bearer t"})
+    assert r.status_code == 200
+    for item in r.json()["items"]:
+        # The keys MUST be present so the SPA never sees KeyError.
+        assert "status" in item
+        assert "last_decision_card_pushed_at" in item
+        assert "current_responsibility" in item

@@ -45,17 +45,47 @@ def _esc(s: str) -> str:
     return s.replace("'", "''")
 
 
-def _query(*, project_id: str | None, correlation_id: str | None, limit: int) -> str:
-    """Build the ``SELECT`` for audit endpoints — JSON per row, ts asc."""
+def _query(
+    *,
+    project_id: str | None,
+    correlation_id: str | None,
+    subsystem: str | None = None,
+    role: str | None = None,
+    action: str | None = None,
+    from_ts: datetime | None = None,
+    to_ts: datetime | None = None,
+    after_event_id: int | None = None,
+    limit: int,
+) -> str:
+    """Build the ``SELECT`` for audit endpoints — JSON per row, ts asc.
+
+    Wave 3.5 FIX3: now also accepts ``subsystem`` / ``role`` / ``action``
+    text filters, ``from_ts`` / ``to_ts`` window bounds, and an
+    ``after_event_id`` cursor. ``event_id`` is BIGSERIAL append-only
+    (V15) so it is a stable monotonic cursor; the WHERE clause uses
+    ``event_id > <cursor>`` to walk strictly forward.
+    """
     where = ["1=1"]
     if project_id:
         where.append(f"project_id::text = '{_esc(project_id)}'")
     if correlation_id:
         where.append(f"correlation_id::text = '{_esc(correlation_id)}'")
+    if subsystem:
+        where.append(f"subsystem = '{_esc(subsystem)}'")
+    if role:
+        where.append(f"role = '{_esc(role)}'")
+    if action:
+        where.append(f"action = '{_esc(action)}'")
+    if from_ts is not None:
+        where.append(f"ts >= '{_esc(from_ts.isoformat())}'::timestamptz")
+    if to_ts is not None:
+        where.append(f"ts <= '{_esc(to_ts.isoformat())}'::timestamptz")
+    if after_event_id is not None:
+        where.append(f"event_id > {int(after_event_id)}")
     cols = ", ".join(f"'{c}', {c}" for c in _COLS)
     return (
         f"SELECT json_build_object({cols})::text FROM spine_audit.audit_event "
-        f"WHERE {' AND '.join(where)} ORDER BY ts ASC, event_id ASC LIMIT {limit};"
+        f"WHERE {' AND '.join(where)} ORDER BY event_id ASC LIMIT {limit};"
     )
 
 
@@ -64,18 +94,66 @@ async def list_audit(
     db: Annotated[DbHandle, Depends(get_db_pool)],
     project_id: Optional[str] = Query(default=None),
     correlation_id: Optional[str] = Query(default=None),
+    subsystem: Optional[str] = Query(default=None),
+    role: Optional[str] = Query(default=None),
+    action: Optional[str] = Query(default=None),
+    from_ts: Optional[datetime] = Query(default=None, alias="from_ts"),
+    to_ts: Optional[datetime] = Query(default=None, alias="to_ts"),
+    after_event_id: Optional[int] = Query(default=None, ge=0),
     limit: int = Query(default=500, ge=1, le=5000),
 ) -> dict[str, Any]:
-    """Chronological audit trail filtered by project or correlation."""
+    """Chronological audit trail with multi-axis filters + cursor pagination.
+
+    Wave 3.5 FIX3:
+
+    * Either ``project_id`` OR ``correlation_id`` is still required so a
+      caller cannot accidentally page the entire fleet (filter-or-refuse).
+    * Optional ``subsystem`` / ``role`` / ``action`` / ``from_ts`` /
+      ``to_ts`` may co-occur in any combination.
+    * ``after_event_id`` is a BIGINT cursor (event_id is append-only
+      monotonic per V15) — pass back the ``next_cursor`` returned in the
+      previous response. ``next_cursor`` is ``null`` when the page is
+      shorter than ``limit`` (caller has caught up).
+    """
     if not project_id and not correlation_id:
         raise _err(400, "invalid_input", "project_id or correlation_id required")
+    sql = _query(
+        project_id=project_id,
+        correlation_id=correlation_id,
+        subsystem=subsystem,
+        role=role,
+        action=action,
+        from_ts=from_ts,
+        to_ts=to_ts,
+        after_event_id=after_event_id,
+        limit=limit,
+    )
     try:
-        rows = await db.fetch(_query(project_id=project_id, correlation_id=correlation_id, limit=limit))
+        rows = await db.fetch(sql)
     except RuntimeError as exc:
         raise _err(502, "db_error", str(exc)) from exc
+    items = [r["_row"] for r in rows]
+    # Compute next_cursor from the last row's event_id (parsed cheaply
+    # from the JSON text we already shipped). When we returned a full
+    # page we assume there *may* be more; if shorter than ``limit`` the
+    # caller has caught up and we signal end-of-stream with ``None``.
+    next_cursor: Optional[int] = None
+    if len(items) >= limit and items:
+        try:
+            last = _json.loads(items[-1])
+            ev = last.get("event_id")
+            next_cursor = int(ev) if ev is not None else None
+        except (_json.JSONDecodeError, TypeError, ValueError):
+            next_cursor = None
     return {
-        "ok": True, "items": [r["_row"] for r in rows],
-        "project_id": project_id, "correlation_id": correlation_id, "limit": limit,
+        "ok": True, "items": items,
+        "project_id": project_id, "correlation_id": correlation_id,
+        "subsystem": subsystem, "role": role, "action": action,
+        "from_ts": from_ts.isoformat() if from_ts else None,
+        "to_ts": to_ts.isoformat() if to_ts else None,
+        "after_event_id": after_event_id,
+        "limit": limit,
+        "next_cursor": next_cursor,
     }
 
 
@@ -88,7 +166,9 @@ async def export_audit(
 ) -> Response:
     """Export per-project audit trail as JSON or CSV (attachment download)."""
     try:
-        rows = await db.fetch(_query(project_id=project_id, correlation_id=None, limit=limit))
+        rows = await db.fetch(_query(
+            project_id=project_id, correlation_id=None, limit=limit,
+        ))
     except RuntimeError as exc:
         raise _err(502, "db_error", str(exc)) from exc
     raw = [r["_row"] for r in rows]

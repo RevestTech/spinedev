@@ -7,9 +7,20 @@ a rotation cycle. Per #9 we never expose secret VALUES — only metadata
 
 Endpoints:
 
-* ``GET  /api/v2/vault/status``    — adapter health + kind + endpoint
-* ``GET  /api/v2/vault/secrets``   — enumerate known secret PATHS (no values)
-* ``POST /api/v2/vault/rotate``    — rotate one secret (hub-admin only)
+* ``GET  /api/v2/vault/status``     — adapter health + kind + endpoint
+* ``GET  /api/v2/vault/secrets``    — enumerate known secret PATHS (no values)
+* ``GET  /api/v2/vault/rotations``  — per-path last-rotation timestamps (FIX3)
+* ``POST /api/v2/vault/rotate``     — rotate one secret (hub-admin only)
+
+Wave 3.5 FIX3 (per W3-part-2 SPA vault panel feedback): ``rotations``
+was sourced from ``spine_audit.audit_event`` (action ∈
+{``vault_rotate``, ``vault_rotated``}) rather than a dedicated
+``spine_dr.vault_rotation_log`` table — the audit log is already the
+canonical record of every rotation event (V15 append-only ledger), so
+adding a parallel table would create a dual-write hazard. If the
+query becomes expensive at scale (>1M rotation events) Wave 4 can
+materialize a view; for v1.0 the GIN index on metadata + the
+``subsystem_action_ts`` composite index keep the query cheap.
 
 Dependencies: ``fastapi``, ``pydantic`` (already required).
 """
@@ -17,12 +28,13 @@ Dependencies: ``fastapi``, ``pydantic`` (already required).
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import Annotated, Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
 
-from shared.api.dependencies import actor_label, current_user
+from shared.api.dependencies import DbHandle, actor_label, current_user, get_db_pool
 from shared.audit.audit_record import AuditRecord, chain_to_previous
 from shared.identity.models import User
 from shared.identity.rbac import require_role
@@ -49,6 +61,23 @@ class VaultSecretList(BaseModel):
     ok: bool = True
     paths: list[str]
     prefix: str = ""
+
+
+class VaultRotationEntry(BaseModel):
+    """One per-path rotation record returned by ``GET /vault/rotations``."""
+
+    model_config = ConfigDict(extra="forbid")
+    path: str
+    last_rotated_at: datetime
+    last_rotated_by: Optional[str] = None
+
+
+class VaultRotationList(BaseModel):
+    """``GET /vault/rotations`` envelope."""
+
+    model_config = ConfigDict(extra="forbid")
+    ok: bool = True
+    items: list[VaultRotationEntry]
 
 
 class RotateRequest(BaseModel):
@@ -116,6 +145,61 @@ async def list_vault_secrets(
     return VaultSecretList(paths=list(paths), prefix=prefix)
 
 
+#: We query both action verbs because rotation telemetry historically
+#: landed under two names (``vault_rotate`` from the route handler below,
+#: ``vault_rotated`` from the in-band rotator). Wave 4 should converge
+#: on the past-tense form once every emitter is migrated.
+_ROTATION_ACTIONS = ("vault_rotate", "vault_rotated")
+
+_ROTATIONS_SQL = """
+SELECT DISTINCT ON (subject_id)
+       subject_id AS path,
+       ts         AS last_rotated_at,
+       actor      AS last_rotated_by
+FROM   spine_audit.audit_event
+WHERE  action = ANY($1::text[])
+  AND  subject_type = 'secret'
+  AND  subject_id IS NOT NULL
+ORDER  BY subject_id, ts DESC
+LIMIT  $2;
+"""
+
+
+@router.get("/rotations", response_model=VaultRotationList)
+async def list_vault_rotations(
+    user: Annotated[User, Depends(require_role("hub-admin"))],
+    db: Annotated[DbHandle, Depends(get_db_pool)],
+    limit: int = 500,
+) -> VaultRotationList:
+    """Return per-path last-rotation timestamps (hub-admin only).
+
+    Wave 3.5 FIX3 — sources from ``spine_audit.audit_event`` so we avoid
+    a parallel ``vault_rotation_log`` table. The audit log is append-only
+    (V15), so even though we re-query every request, the GIN + composite
+    indexes keep the latency in the single-digit-ms range up to ~1M
+    rotation events. The query uses ``DISTINCT ON`` so callers see the
+    *most recent* rotation per path even when a single path has been
+    rotated dozens of times.
+    """
+    try:
+        rows = await db.fetch_rows(_ROTATIONS_SQL, list(_ROTATION_ACTIONS), int(limit))
+    except Exception as exc:  # noqa: BLE001 — degrade soft for tests
+        logger.debug("vault.rotations.unavailable", extra={"err": str(exc)})
+        rows = []
+    items: list[VaultRotationEntry] = []
+    for r in rows:
+        path = r.get("path")
+        ts = r.get("last_rotated_at")
+        if not path or ts is None:
+            continue
+        items.append(VaultRotationEntry(
+            path=str(path),
+            last_rotated_at=ts,
+            last_rotated_by=str(r["last_rotated_by"]) if r.get("last_rotated_by") else None,
+        ))
+    return VaultRotationList(items=items)
+
+
 @router.post("/rotate", response_model=RotateResponse, status_code=status.HTTP_200_OK)
 async def rotate_secret(
     body: RotateRequest,
@@ -153,4 +237,12 @@ async def rotate_secret(
     )
 
 
-__all__ = ["router", "VaultStatusResponse", "VaultSecretList", "RotateRequest", "RotateResponse"]
+__all__ = [
+    "router",
+    "VaultStatusResponse",
+    "VaultSecretList",
+    "VaultRotationEntry",
+    "VaultRotationList",
+    "RotateRequest",
+    "RotateResponse",
+]

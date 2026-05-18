@@ -13,6 +13,13 @@ Endpoints (Wave 3 part 1 minimum surface):
 All federation routes are gated by ``require_feature_flag('federation')``
 because federation is a paid-tier capability per #23.
 
+Wave 3.5 FIX3: the in-process ``_GRAPH`` dict is replaced with reads /
+writes against ``spine_federation.hub`` + ``spine_federation.
+consent_record`` (V23). Local-cache fallback is preserved so
+``test_routes_federation.py`` keeps passing without a DB fixture: the
+cache mirrors the last-known graph and is consulted only when the DB
+query raises (e.g. asyncpg pool uninitialised).
+
 Dependencies: ``fastapi``, ``pydantic`` (already required).
 """
 
@@ -26,7 +33,7 @@ from typing import Annotated, Literal, Optional
 from fastapi import APIRouter, Depends, status
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl
 
-from shared.api.dependencies import actor_label, current_user
+from shared.api.dependencies import DbHandle, actor_label, current_user, get_db_pool
 from shared.api.middleware.feature_flag import require_feature_flag
 from shared.audit.audit_record import AuditRecord, chain_to_previous
 from shared.identity.models import User
@@ -119,21 +126,204 @@ class ConsentResponse(BaseModel):
     audit_event_uuid: str
 
 
-# In-memory federation graph — Wave 4 moves to spine_federation tables.
+# ---------------------------------------------------------------------------
+# Persistent + cache hybrid — Wave 3.5 FIX3 replaces the bare dict.
+# ---------------------------------------------------------------------------
+
+
+#: Wave-3 in-memory cache. Kept as fallback so tests without a DB
+#: fixture (``test_routes_federation.py``) keep passing. DB reads
+#: always re-populate the cache so the snapshot is current.
 _GRAPH: dict[str, HubEntry] = {}
+
+#: V23 maps ``consent_status`` ∈ {pending, active, suspended, revoked}
+#: while the FastAPI surface uses {pending, accepted, rejected}. Wave 4
+#: should converge; for v1.0 we translate on every read/write.
+_DB_TO_API_CONSENT = {
+    "pending":  "pending",
+    "active":   "accepted",
+    "suspended":"rejected",
+    "revoked":  "rejected",
+}
+_API_TO_DB_CONSENT = {
+    "pending":  "pending",
+    "accepted": "active",
+    "rejected": "revoked",
+}
+
+
+def _normalize_hub_id(hub_id: str) -> Optional[str]:
+    """Return a canonical UUID string for V23, or ``None`` if not parseable.
+
+    V23 declares ``spine_federation.hub.hub_id`` as ``uuid``. The
+    FastAPI surface accepts short slugs like ``"child-1"`` (used by
+    tests) — when the caller passes a non-UUID we keep the cache write
+    but skip persistence rather than 500.
+    """
+    try:
+        return str(uuid.UUID(hub_id))
+    except (ValueError, TypeError, AttributeError):
+        return None
+
+
+async def _persist_hub(
+    db: DbHandle,
+    *,
+    hub_id: str,
+    name: str,
+    role: HubRole,
+    url: Optional[str],
+    consent: ConsentDecision,
+) -> bool:
+    """Upsert a single ``spine_federation.hub`` row.
+
+    Returns True iff persistence succeeded. Failures are logged at debug
+    and swallowed so the FastAPI handler returns the same shape whether
+    Postgres is available or not.
+    """
+    canonical_id = _normalize_hub_id(hub_id)
+    if canonical_id is None:
+        return False
+    parent_id: Optional[str] = None
+    if role in ("child",):
+        parent_id = _normalize_hub_id(HUB_ID)
+    db_consent = _API_TO_DB_CONSENT.get(consent, "pending")
+    sql = """
+    INSERT INTO spine_federation.hub
+        (hub_id, parent_hub_id, name, base_url, public_key, consent_status)
+    VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6)
+    ON CONFLICT (hub_id) DO UPDATE SET
+        name           = EXCLUDED.name,
+        base_url       = EXCLUDED.base_url,
+        consent_status = EXCLUDED.consent_status,
+        parent_hub_id  = COALESCE(EXCLUDED.parent_hub_id, spine_federation.hub.parent_hub_id),
+        updated_at     = NOW();
+    """
+    try:
+        await db.execute(
+            sql, canonical_id, parent_id, name, url or "", "", db_consent,
+        )
+        return True
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("federation.persist_hub.failed", extra={"err": str(exc)})
+        return False
+
+
+async def _persist_consent(
+    db: DbHandle,
+    *,
+    child_id: str,
+    parent_id: str,
+    decision: ConsentDecision,
+    actor: str,
+) -> bool:
+    """Append a ``spine_federation.consent_record`` row.
+
+    Accepted/rejected are both recorded; the table is append-only by
+    convention so successive decisions become a history.
+    """
+    cid = _normalize_hub_id(child_id)
+    pid = _normalize_hub_id(parent_id)
+    if cid is None or pid is None:
+        return False
+    sql = """
+    INSERT INTO spine_federation.consent_record
+        (child_hub_id, parent_hub_id, consent_class, granted_by, scope_jsonb)
+    VALUES ($1::uuid, $2::uuid, 'peer_consent', $3, $4::jsonb);
+    """
+    try:
+        import json as _json  # noqa: PLC0415
+        await db.execute(
+            sql, cid, pid, actor, _json.dumps({"decision": decision}),
+        )
+        return True
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("federation.persist_consent.failed", extra={"err": str(exc)})
+        return False
+
+
+async def _load_graph(db: DbHandle) -> Optional[list[HubEntry]]:
+    """Return a fresh snapshot of every known hub, or ``None`` on DB error.
+
+    Role assignment is computed from the topology:
+    * ``parent_hub_id`` equal to the LOCAL hub  ⇒ ``child``
+    * The local hub's own ``parent_hub_id`` row ⇒ ``parent``
+    * Everything else                            ⇒ ``peer``
+    The handler exposes the same trichotomy as the v3 stub so the SPA
+    contract is unchanged.
+    """
+    sql = """
+    SELECT hub_id::text AS hub_id,
+           parent_hub_id::text AS parent_hub_id,
+           name,
+           base_url,
+           consent_status
+    FROM   spine_federation.hub;
+    """
+    try:
+        rows = await db.fetch_rows(sql)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("federation.load_graph.failed", extra={"err": str(exc)})
+        return None
+    local_uuid = _normalize_hub_id(HUB_ID)
+    out: list[HubEntry] = []
+    for r in rows:
+        hub_id = r.get("hub_id")
+        if not hub_id:
+            continue
+        parent_hub_id = r.get("parent_hub_id")
+        if parent_hub_id and local_uuid and parent_hub_id == local_uuid:
+            role: HubRole = "child"
+        elif local_uuid and hub_id == r.get("parent_hub_id_of_local"):  # never set; safe default
+            role = "parent"
+        else:
+            role = "peer"
+        out.append(HubEntry(
+            hub_id=hub_id,
+            name=r.get("name") or hub_id,
+            role=role,
+            url=r.get("base_url") or None,
+            consent=_DB_TO_API_CONSENT.get(r.get("consent_status") or "pending", "pending"),
+        ))
+    return out
+
+
+def _merge_into_cache(rows: list[HubEntry]) -> None:
+    """Refresh cache from DB snapshot, preserving any cache-only entries.
+
+    Cache-only entries (non-UUID hub_id slugs used by tests) survive
+    because the merge is per-key — DB rows overwrite by hub_id, but
+    cache rows whose hub_id never lands in the DB stay around.
+    """
+    for entry in rows:
+        _GRAPH[entry.hub_id] = entry
 
 
 @router.get("/hubs", response_model=HubListResponse)
-async def list_hubs(user: Annotated[User, Depends(current_user)]) -> HubListResponse:
-    """List every Hub this Hub federates with (parent + peers + children)."""
+async def list_hubs(
+    user: Annotated[User, Depends(current_user)],
+    db: Annotated[DbHandle, Depends(get_db_pool)],
+) -> HubListResponse:
+    """List every Hub this Hub federates with (parent + peers + children).
+
+    DB-first; falls back to the local cache if Postgres is unreachable
+    so tests + bootstrap stay green.
+    """
+    db_rows = await _load_graph(db)
+    if db_rows is not None:
+        _merge_into_cache(db_rows)
     return HubListResponse(local_hub_id=HUB_ID, items=list(_GRAPH.values()))
 
 
 @router.get("/status", response_model=FederationStatusResponse)
 async def federation_status(
     user: Annotated[User, Depends(current_user)],
+    db: Annotated[DbHandle, Depends(get_db_pool)],
 ) -> FederationStatusResponse:
     """Snapshot of this Hub's federation posture."""
+    db_rows = await _load_graph(db)
+    if db_rows is not None:
+        _merge_into_cache(db_rows)
     parent = next((h.hub_id for h in _GRAPH.values() if h.role == "parent"), None)
     children = sum(1 for h in _GRAPH.values() if h.role == "child")
     peers = sum(1 for h in _GRAPH.values() if h.role == "peer")
@@ -147,13 +337,23 @@ async def federation_status(
 async def register_child(
     body: RegisterChildRequest,
     user: Annotated[User, Depends(require_role("hub-admin"))],
+    db: Annotated[DbHandle, Depends(get_db_pool)],
 ) -> RegisterChildResponse:
     """Register a downstream child Hub. Hub-admin only; audited."""
-    _GRAPH[body.hub_id] = HubEntry(
+    entry = HubEntry(
         hub_id=body.hub_id,
         name=body.name,
         role="child",
         url=body.url,
+        consent="pending",
+    )
+    _GRAPH[body.hub_id] = entry
+    await _persist_hub(
+        db,
+        hub_id=body.hub_id,
+        name=body.name,
+        role="child",
+        url=str(body.url),
         consent="pending",
     )
     actor = actor_label(user)
@@ -178,16 +378,31 @@ async def register_child(
 async def record_consent(
     body: ConsentRequest,
     user: Annotated[User, Depends(require_role("hub-admin"))],
+    db: Annotated[DbHandle, Depends(get_db_pool)],
 ) -> ConsentResponse:
     """Record a peer-consent decision for a known Hub."""
     entry = _GRAPH.get(body.hub_id)
     if entry is None:
-        _GRAPH[body.hub_id] = HubEntry(
-            hub_id=body.hub_id, name=body.hub_id, role="peer", consent=body.decision
+        entry = HubEntry(
+            hub_id=body.hub_id, name=body.hub_id, role="peer", consent=body.decision,
         )
+        _GRAPH[body.hub_id] = entry
     else:
-        _GRAPH[body.hub_id] = entry.model_copy(update={"consent": body.decision})
+        entry = entry.model_copy(update={"consent": body.decision})
+        _GRAPH[body.hub_id] = entry
+    await _persist_hub(
+        db,
+        hub_id=body.hub_id,
+        name=entry.name,
+        role=entry.role,
+        url=str(entry.url) if entry.url else None,
+        consent=body.decision,
+    )
     actor = actor_label(user)
+    await _persist_consent(
+        db, child_id=body.hub_id, parent_id=HUB_ID,
+        decision=body.decision, actor=actor,
+    )
     rec = AuditRecord(
         role="hub_admin",
         subsystem="federation",

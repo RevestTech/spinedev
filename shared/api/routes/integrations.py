@@ -32,7 +32,15 @@ from shared.identity.rbac import require_role
 logger = logging.getLogger("spine.api.integrations")
 router = APIRouter(prefix="/api/v2/integrations", tags=["integrations"])
 
-IntegrationStatus = Literal["configured", "unconfigured", "error"]
+#: Wave 3.5 FIX3 added ``disabled`` so the SPA can render the
+#: "upgrade to unlock" UI without inferring it from a 402 on the test
+#: endpoint. The semantic split is intentional:
+#:
+#:   * ``configured``   — feature flag ON  + vault secret present + readable
+#:   * ``unconfigured`` — feature flag ON  + vault secret missing
+#:   * ``disabled``     — feature flag OFF (regardless of vault state)
+#:   * ``error``        — feature flag ON  + vault read failed unexpectedly
+IntegrationStatus = Literal["configured", "unconfigured", "disabled", "error"]
 
 
 class IntegrationDetail(BaseModel):
@@ -101,11 +109,32 @@ async def _is_configured(meta: dict[str, Any]) -> bool:
         return False
 
 
+def _resolve_status(meta: dict[str, Any], configured: bool) -> IntegrationStatus:
+    """Map flag + vault state to the 4-value status enum.
+
+    Wave 3.5 FIX3: when the integration's feature flag is OFF we return
+    ``"disabled"`` so the SPA can short-circuit straight to the upgrade
+    prompt without first probing /test-connection and parsing a 402.
+    Unknown flag values fail OPEN (treated as enabled) to match the
+    bootstrap behaviour of ``is_feature_enabled`` itself.
+    """
+    flag = meta.get("feature_flag")
+    if flag:
+        try:
+            if not is_feature_enabled(flag):
+                return "disabled"
+        except KeyError:
+            # Unknown flag — surface as ``error`` rather than 500; the
+            # SPA will treat it like a misconfigured Hub bundle.
+            return "error"
+    return "configured" if configured else "unconfigured"
+
+
 def _detail(name: str, meta: dict[str, Any], configured: bool) -> IntegrationDetail:
     return IntegrationDetail(
         name=name,
         kind=meta["kind"],
-        status="configured" if configured else "unconfigured",
+        status=_resolve_status(meta, configured),
         feature_flag=meta.get("feature_flag"),
         vault_path=meta.get("vault_path"),
     )
