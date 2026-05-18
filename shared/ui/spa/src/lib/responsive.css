@@ -1,0 +1,72 @@
+/*
+ * Spine Hub SPA — minimal responsive overrides.
+ *
+ * Tailwind handles ~95% of the responsive surface; this file only houses
+ * the handful of platform-specific tweaks Tailwind utilities don't cover:
+ *
+ *   - safe-area-inset for iOS Safari notches (per #28 mobile-responsive)
+ *   - compact custom scrollbars on >= md viewports (desktop polish)
+ *   - touch-friendly tap targets on coarse pointers (WCAG 2.5.5)
+ *
+ * Verified viewports (per shared/ui/spa/README.md test matrix):
+ *   - iPhone Safari      390 x 844  (iOS 17)
+ *   - Android Chrome     393 x 851  (Pixel 8)
+ *   - iPad portrait      768 x 1024
+ *   - Desktop            >= 1024
+ */
+
+/* --- iOS notch / safe-area handling -------------------------------------- */
+@supports (padding: max(0px)) {
+  body {
+    padding-left: max(0px, env(safe-area-inset-left));
+    padding-right: max(0px, env(safe-area-inset-right));
+  }
+  header.sticky {
+    padding-top: max(0px, env(safe-area-inset-top));
+  }
+}
+
+/* --- Compact scrollbar on desktop (NOT on touch devices) ----------------- */
+@media (pointer: fine) and (min-width: 1024px) {
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  *::-webkit-scrollbar-thumb {
+    background: rgba(99, 102, 241, 0.45); /* accent-muted */
+    border-radius: 4px;
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+/* --- Touch-friendly tap targets ----------------------------------------- */
+@media (pointer: coarse) {
+  .btn,
+  button,
+  a.btn-ghost,
+  a.btn-primary {
+    min-height: 44px; /* iOS HIG */
+    min-width: 44px;
+  }
+}
+
+/* --- Prevent iOS auto-zoom on form input focus -------------------------- */
+@supports (-webkit-touch-callout: none) {
+  input,
+  textarea,
+  select {
+    font-size: 16px; /* iOS only auto-zooms when font-size < 16px */
+  }
+}
+
+/* --- Reduce motion respects user pref ----------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}

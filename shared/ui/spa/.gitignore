@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.svelte-kit/
+*.log
+.env
+.env.*
+!.env.example
+coverage/
+.vite/

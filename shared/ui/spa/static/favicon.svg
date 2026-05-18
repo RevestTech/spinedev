@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Spine">
+  <rect width="64" height="64" rx="12" fill="#6366f1"/>
+  <path d="M16 16h32v8H24v6h24v8H24v6h24v8H16z" fill="#fff" opacity="0.95"/>
+</svg>

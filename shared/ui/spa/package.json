@@ -1,0 +1,39 @@
+{
+  "name": "@spine/hub-spa",
+  "version": "0.3.0",
+  "private": true,
+  "description": "Spine Hub web SPA (V3 Wave 3 part 2 — Squad SPA1 scaffold). SvelteKit + Vite + TS + Tailwind, builds to static assets that hub/ FastAPI serves under /static/spa/. Per design decision #3 (Hub-as-product, 9 surfaces), #25 (Keycloak OIDC), #28 (responsive Day 1), #18 (closed-source, MIT/Apache JS only).",
+  "type": "module",
+  "scripts": {
+    "dev": "vite dev --port 5173",
+    "build": "vite build",
+    "preview": "vite preview --port 5174",
+    "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@sveltejs/adapter-static": "3.0.5",
+    "@sveltejs/kit": "2.5.27",
+    "@sveltejs/vite-plugin-svelte": "3.1.2",
+    "@testing-library/svelte": "5.2.4",
+    "@testing-library/jest-dom": "6.5.0",
+    "@types/node": "20.16.10",
+    "autoprefixer": "10.4.20",
+    "jsdom": "25.0.1",
+    "postcss": "8.4.47",
+    "svelte": "4.2.19",
+    "svelte-check": "4.0.4",
+    "tailwindcss": "3.4.13",
+    "tslib": "2.7.0",
+    "typescript": "5.5.4",
+    "vite": "5.4.8",
+    "vitest": "2.1.2"
+  },
+  "comments": {
+    "framework": "Svelte 4 (not Svelte 5 runes) — stable LTS; SvelteKit 2 wraps it with file-based routing, auth-guarded layouts, and adapter-static for SPA build output.",
+    "licensing": "All deps are MIT or Apache 2.0 per design decision #18 (closed-source v1.0, no GPL/AGPL JS).",
+    "no-install": "Squad SPA1 scope: declare deps only; do NOT run npm install (no network). Hub Docker build runs `npm ci && npm run build` per shared/ui/spa/README.md."
+  }
+}

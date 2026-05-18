@@ -67,6 +67,33 @@ RUN pip wheel --wheel-dir /wheels \
         "PyJWT[crypto]==2.9.0" \
         "cryptography==43.0.1"
 
+# --- Stage 1b: SPA builder (V3 Wave 3 part 2, Squad SPA1) -------------------
+# Builds the SvelteKit Hub SPA → dist/ which the runtime stage copies into
+# /app/static/spa/. shared/api/app.py:_mount_spa() serves that directory
+# via FastAPI StaticFiles + a /spa/{path:path} catch-all. Node only lives
+# in THIS stage so the runtime image stays a Python-only attack surface.
+#
+# Pin both Node + npm (corepack-managed) so the build is reproducible in
+# CI / customer infra without surprises from rolling node:lts.
+FROM --platform=${BUILDPLATFORM:-linux/amd64} node:20.18.0-slim AS spa-builder
+
+ENV NODE_ENV=production \
+    NPM_CONFIG_PROGRESS=false \
+    NPM_CONFIG_FUND=false \
+    NPM_CONFIG_AUDIT=false
+
+WORKDIR /spa
+
+# Copy manifest first so dep-install layer caches across source edits.
+COPY shared/ui/spa/package.json shared/ui/spa/package-lock.json* ./
+# package-lock.json is committed by Squad SPA1 once npm install is run
+# locally; until then `npm install` falls back to the package.json pins.
+RUN if [ -f package-lock.json ]; then npm ci; else npm install --no-audit --no-fund; fi
+
+# Copy the rest of the SPA source + build.
+COPY shared/ui/spa/ ./
+RUN npm run build && ls -la dist/
+
 # --- Stage 2: runtime --------------------------------------------------------
 FROM --platform=${TARGETPLATFORM:-linux/amd64} python:${PYTHON_VERSION}-slim AS runtime
 
@@ -130,6 +157,10 @@ COPY --chown=spine:spine devops/       /app/devops/
 # Finally copy hub/ (this subsystem). Done last so most rebuilds during Hub
 # development only invalidate this layer.
 COPY --chown=spine:spine hub/          /app/hub/
+
+# Hub SPA — copied from the dedicated spa-builder stage. shared/api/app.py
+# resolves /app/static/spa by default (SPINE_SPA_DIST env override possible).
+COPY --from=spa-builder --chown=spine:spine /spa/dist /app/static/spa
 
 # Ensure the per-subsystem __init__.py marker is recognized by Python.
 RUN find /app -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true

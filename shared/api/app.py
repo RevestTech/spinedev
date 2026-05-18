@@ -31,14 +31,23 @@ import os
 import sys
 import uuid
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any, AsyncIterator, Optional
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from shared.api.dependencies import close_db_pool, get_db_pool, init_db_pool
+from shared.api.dependencies import (
+    close_db_pool,
+    get_db_pool,
+    get_mcp_transport,
+    init_db_pool,
+    set_mcp_transport,
+    set_remote_mcp_client,
+)
 from shared.api.middleware.oidc import (
     OidcCookieMiddleware,
     OidcSessionConfig,
@@ -192,9 +201,56 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     else:
         logger.info("oidc_session_disabled_no_vault_config")
 
+    # 4. Federation remote-MCP wiring (#4 control plane / #10 fractal Hub).
+    # If the bundle (or, until Wave 4 ships the bundle loader, the
+    # ``SPINE_FEDERATION_PARENT_MCP_URL`` env metadata override) declares
+    # an upstream parent Hub, open one long-lived RemoteMcpClient at
+    # startup. Vault IO happens once here, not per-request.
+    remote_mcp_client = None
+    parent_url = os.environ.get("SPINE_FEDERATION_PARENT_MCP_URL")
+    if parent_url:
+        role = os.environ.get("SPINE_FEDERATION_ROLE", "child")
+        actor = os.environ.get("SPINE_FEDERATION_ACTOR", "federation_child")
+        try:
+            from shared.mcp.server_remote import (  # noqa: PLC0415
+                RemoteMcpClient,
+                RemoteMcpClientConfig,
+            )
+
+            set_mcp_transport("remote", url=parent_url, role=role, actor=actor)
+            remote_cfg = RemoteMcpClientConfig(
+                base_url=parent_url, role=role, actor=actor,
+            )
+            remote_mcp_client = await RemoteMcpClient.open(remote_cfg)
+            set_remote_mcp_client(remote_mcp_client)
+            logger.info(
+                "remote_mcp_client_ready",
+                extra={"parent_url": parent_url, "role": role},
+            )
+        except Exception as exc:  # noqa: BLE001 — federation parent down
+            logger.warning(
+                "remote_mcp_client_init_failed",
+                extra={"parent_url": parent_url, "error": str(exc)},
+            )
+            # Fall back to in-process so the Hub stays up; federation
+            # autonomy per #10 + DR layer 6 (#32) — a dead parent must
+            # not take the child down with it.
+            set_mcp_transport("in_process")
+            set_remote_mcp_client(None)
+    else:
+        # Confirm in-process (default; idempotent).
+        if get_mcp_transport().kind != "in_process":
+            set_mcp_transport("in_process")
+
     try:
         yield
     finally:
+        if remote_mcp_client is not None:
+            try:
+                await remote_mcp_client.aclose()
+            except Exception:  # noqa: BLE001
+                logger.warning("remote_mcp_client_close_failed")
+            set_remote_mcp_client(None)
         await close_db_pool()
         logger.info("lifespan_stop")
 
@@ -218,6 +274,91 @@ def _cors_origins() -> list[str]:
             )
         return [o.strip() for o in raw.split(",") if o.strip()]
     return [o.strip() for o in (raw or "http://localhost:8080").split(",") if o.strip()]
+
+
+# ---------------------------------------------------------------------------
+# Hub SPA mount (V3 Wave 3 part 2, Squad SPA1)
+# ---------------------------------------------------------------------------
+
+#: Default location of the built SPA inside the Hub container, matching the
+#: COPY directive in hub/Dockerfile. Overrideable via env var so dev runs
+#: outside the container can point at ``shared/ui/spa/dist`` directly.
+DEFAULT_SPA_DIST = Path(
+    os.environ.get("SPINE_SPA_DIST", "/app/static/spa")
+).resolve()
+
+
+def _mount_spa(app: FastAPI, *, dist_dir: Path = DEFAULT_SPA_DIST) -> None:
+    """Mount the built Hub SPA at ``/static/spa/`` + catch-all at ``/spa/``.
+
+    The SPA is built by ``shared/ui/spa/`` (SvelteKit + adapter-static)
+    and produces a ``dist/`` directory whose layout is:
+
+        dist/
+          index.html
+          favicon.svg
+          _app/immutable/...   ← hashed JS/CSS bundles
+
+    Two mounts give us:
+
+    * ``/static/spa/*`` — direct static serving of the hashed bundle
+      assets so the browser can fetch JS/CSS without invoking the SPA
+      fallback. This is what ``<script src="/static/spa/_app/...">``
+      tags resolve against.
+    * ``/spa/{path:path}`` — SPA routing catch-all. Any path under
+      ``/spa/`` that doesn't match an API route returns ``index.html`` so
+      client-side routing (SvelteKit's history-mode) can handle deep
+      links like ``/spa/panels/decision-queue`` after a hard refresh.
+
+    If the dist directory isn't present at boot (e.g. the SPA hasn't been
+    built yet in a freshly-cloned dev environment), the mount is skipped
+    with a warning rather than failing — the API continues to serve and
+    operators can still reach the OpenAPI docs at ``/api/v2/docs``.
+    """
+    if not dist_dir.exists():
+        logger.warning(
+            "spa_dist_missing",
+            extra={"dist_dir": str(dist_dir), "hint": "run `npm run build` in shared/ui/spa/"},
+        )
+        return
+
+    # Static assets — hashed bundle, served verbatim. ``html=False`` because
+    # bundle paths are always concrete; SPA fallback is handled by the
+    # catch-all route below.
+    app.mount("/static/spa", StaticFiles(directory=dist_dir, html=False), name="spa-static")
+
+    index_file = dist_dir / "index.html"
+
+    @app.get("/spa", include_in_schema=False)
+    async def _spa_root() -> FileResponse:
+        """Root of the SPA — serves index.html."""
+        if not index_file.exists():
+            raise HTTPException(status_code=500, detail="spa index.html missing")
+        return FileResponse(index_file, media_type="text/html")
+
+    @app.get("/spa/{path:path}", include_in_schema=False)
+    async def _spa_catchall(path: str) -> FileResponse:
+        """SPA history-mode fallback.
+
+        Resolves an asset under ``dist/`` first (so e.g.
+        ``/spa/_app/immutable/foo.js`` still works), and falls back to
+        ``index.html`` so the SvelteKit router can claim the URL.
+        ``..`` segments are rejected to block path-traversal.
+        """
+        if ".." in path.split("/"):
+            raise HTTPException(status_code=400, detail="invalid path")
+        candidate = (dist_dir / path).resolve()
+        try:
+            candidate.relative_to(dist_dir)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="path escapes spa dist") from None
+        if candidate.is_file():
+            return FileResponse(candidate)
+        if not index_file.exists():
+            raise HTTPException(status_code=500, detail="spa index.html missing")
+        return FileResponse(index_file, media_type="text/html")
+
+    logger.info("spa_mounted", extra={"dist_dir": str(dist_dir)})
 
 
 def create_app() -> FastAPI:
@@ -291,6 +432,11 @@ def create_app() -> FastAPI:
             status_code=200 if ok else 503,
         )
 
+    # Mount the Hub SPA (V3 Wave 3 part 2). Done AFTER all API routes so
+    # FastAPI's path-matching prefers the typed API routes; the SPA
+    # catch-all only fires for /spa/* URLs.
+    _mount_spa(app)
+
     @app.exception_handler(Exception)
     async def _unhandled(_request: Request, exc: Exception) -> JSONResponse:
         """Last-resort handler — log + return structured error envelope."""
@@ -303,4 +449,4 @@ def create_app() -> FastAPI:
     return app
 
 
-__all__: list[str] = ["create_app", "lifespan", "HUB_ID"]
+__all__: list[str] = ["create_app", "lifespan", "HUB_ID", "_mount_spa", "DEFAULT_SPA_DIST"]
