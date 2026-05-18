@@ -106,17 +106,30 @@ Wave 2 (this commit): six NEW charters that have no v2 equivalent.
 | `tech_writer.md` | Technical writer / docs owner |
 | `release_manager.md` | Release manager |
 
-Wave 3 (housekeeping): the 13 existing role-prompts under
+Wave 3 (housekeeping): 11 of the 13 existing role-prompts under
 `lib/role-prompts/` (architect, conductor, datawright, engineer, operator,
-planner, product, qa, ux, auditor, researcher, memory, seer) are REBUILT
-in this directory per #7, one charter at a time. Until rewritten, the v2
-prompt files remain in `lib/role-prompts/` with the deprecation marker
-present. The runtime loader prefers `shared/charters/<role>.md` when both
-exist; if only the v2 prompt exists, it falls back with a deprecation
-warning.
+planner, product, qa, ux, auditor, researcher) are REBUILT in this
+directory per #7, one charter at a time. Until rewritten, the v2 prompt
+files remain in `lib/role-prompts/` with the deprecation marker present.
+The runtime loader prefers `shared/charters/<role>.md` when both exist;
+if only the v2 prompt exists, it falls back with a deprecation warning.
 
 This incremental approach lets us land Wave 2 work without blocking on
 rewriting the entire v2 prompt set.
+
+### Wave 3 DELETE recommendations (per Squad 1 + Squad D)
+
+Two v2 role prompts do NOT become v3 charters and have no target file in
+`shared/charters/`:
+
+| v2 prompt | Recommendation | Rationale |
+|---|---|---|
+| `lib/role-prompts/memory.md` | DELETE — becomes a Hub feature, not a role | Per #3 (Hub-as-product) + #27 (Smart Spine 3-tier learning), memory is an architectural primitive of the Hub (memory writer hooks at 7 trigger points, memory retrieval at every role action, lesson promotion ladder), not a role's responsibility. Every role appends lessons to its own memory; the Hub aggregates and distributes via the federation tree. There is no "memory role" because memory is everyone's contract. |
+| `lib/role-prompts/seer.md` | DELETE — becomes a Hub feature, not a role | Per #3 + #27, forecasting / observability / drift-detection are Hub-level surfaces (the dashboard observability panes, the calibration outcomes loop, the cross-LLM-disagreement-as-signal pipeline). These are platform features the Hub runs across all roles, not a single role's scope. The "seer" framing collapsed multiple architectural primitives into one nominal role; Spine v3 distributes them across the Hub's observability surface, `compliance_officer`'s evidence pipeline, and `auditor`'s cite-or-refuse loop. |
+
+Wave 6 will `git rm` the two v2 files; Wave 3 leaves them in place under
+the deprecation marker so the runtime loader's fallback continues to work
+through the transition.
 
 ---
 
