@@ -89,6 +89,21 @@ class ToolRequest(BaseModel):
     The orchestrator (or any caller) MUST set ``project_id`` and ``actor`` so
     the audit log can attribute the call. ``params`` is the tool-specific input
     model serialized to a ``dict``.
+
+    Wave 6 Stream J (#30 heavier API + MCP) extensions:
+
+    * ``feature_flag_required`` — when set the unified MCP server consults
+      ``shared.api.middleware.feature_flag.is_feature_enabled`` BEFORE
+      dispatching the tool; a disabled flag yields a fail-closed error
+      envelope (``error_code='feature_disabled'``) without ever invoking
+      the tool. This lets remote-MCP federation Hubs respect customer
+      licence boundaries even when the calling client forgot to pre-check.
+    * ``actor_token_claims`` — the Keycloak ``TokenClaims`` from the
+      bearer/cookie session that produced this call, passed through so a
+      tool implementation can make downstream authorisation decisions
+      (e.g. "this user has `compliance-officer` role; allow evidence
+      export") without re-validating the JWT itself. Spine never persists
+      these claims — they are request-scoped only.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -110,6 +125,26 @@ class ToolRequest(BaseModel):
     params: dict[str, Any] = Field(
         default_factory=dict,
         description="Tool-specific input payload (validated by the tool's own input model).",
+    )
+    feature_flag_required: str | None = Field(
+        default=None,
+        min_length=1,
+        description=(
+            "Optional licence-flag gate (V3 #23). When set, the MCP "
+            "server rejects the call with a fail-closed error envelope "
+            "before invocation if the customer's active licence bundle "
+            "does not enable this flag. Must be a member of "
+            "shared.api.middleware.feature_flag.KNOWN_FEATURE_FLAGS."
+        ),
+    )
+    actor_token_claims: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Request-scoped Keycloak TokenClaims (V3 #25). Pass-through "
+            "auth context for downstream authorisation decisions inside "
+            "the tool implementation; never persisted, never logged in "
+            "the clear. Equivalent to ``TokenClaims.model_dump()``."
+        ),
     )
 
 

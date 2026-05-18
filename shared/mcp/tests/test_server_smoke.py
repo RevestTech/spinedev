@@ -32,7 +32,7 @@ import importlib
 import pytest
 from pydantic import BaseModel
 
-EXPECTED_TOOL_COUNT: int = 42
+EXPECTED_TOOL_COUNT: int = 54
 
 EXPECTED_TOOLS_BY_MODULE: dict[str, set[str]] = {
     "shared.mcp.tools.orchestrator": {
@@ -90,6 +90,26 @@ EXPECTED_TOOLS_BY_MODULE: dict[str, set[str]] = {
         "learning_query",
         "learning_grant_cross_org_consent",
         "learning_revoke_cross_org_consent",
+    },
+    # Wave 5 BUILD-NEW (2026-05-18):
+    "shared.mcp.tools.recovery": {
+        "recovery_snapshot",
+        "recovery_restore",
+        "recovery_test",
+        "recovery_health",
+        "recovery_runbook_export",
+    },
+    "shared.mcp.tools.migration": {
+        "migration_export",
+        "migration_import",
+        "migration_onboarding_dispatch",
+        "migration_version_upgrade",
+    },
+    # Wave 6 BUILD-NEW (2026-05-18):
+    "shared.mcp.tools.integrations": {
+        "integrations_list",
+        "integrations_test_connection",
+        "integrations_configure",
     },
 }
 
