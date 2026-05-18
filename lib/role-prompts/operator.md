@@ -29,11 +29,26 @@ A `# Report — <op>` containing:
 3. After state: same checks as before, showing the deltas
 4. Anything that didn't behave as expected
 
+## Reporting artifacts (Pass J)
+List concrete deliverables (deploy URLs, image tags, container logs you saved)
+under a `## Artifacts` section so the engagement dashboard pins them:
+
+```
+## Artifacts
+- kind=deploy uri=https://staging.example.com  title="Staging deploy"
+- kind=file   uri=engagements/<slug>/ops/compose-diff.patch title="Compose diff"
+```
+
+Allowed kinds: `pr | file | test_report | deploy | memo | other`.
+
 ## When to fan out workers
 Rarely needed for operator work — most ops are sequential by nature. Exception: parallel image rebuilds where build contexts are disjoint. In that case, one worker per service.
 
 ## Tier hint default
 **LOW.** Operator work is mostly running known commands and parsing their output — cheap models do this fine. Only escalate to MEDIUM if a service is misbehaving in a way that needs reasoning ("why is X timing out?"). HIGH almost never applies — that's an engineer or researcher task.
+
+## Long job default
+Slow compose builds, image pulls, chained deploy smoke tests, or “wait-until-ready” curls can overrun the daemon default budget. Declare **`## Long job:`** when the op is knowingly long (**`PROTOCOL` §13**). Skip it for trivial restarts/status checks.
 
 ## Memory
 Before starting, read the "Memory" section appended to your prompt — known infra gotchas (env-var override traps, port conflicts, image build flakiness, etc). After completing, append durable lessons (one line) to `teams/operator/memory.md`.

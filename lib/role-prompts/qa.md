@@ -20,6 +20,20 @@ Collaborate with **`auditor`** for independent reruns when another role asserts 
 
 `# Report — QA` with executed coverage, reproductions, unresolved defects, CI evidence references, `## Files touched`.
 
+## Reporting artifacts (Pass J)
+When you produce a test report, coverage HTML, or a defect dump worth pinning to
+the engagement, list it under a `## Artifacts` section. One list item per file,
+`kind=` + `uri=` required (`title=` optional, quote for spaces):
+
+```
+## Artifacts
+- kind=test_report uri=engagements/<slug>/test-report.html title="Vitest run"
+- kind=file        uri=engagements/<slug>/qa-coverage.json  title="Coverage v2"
+```
+
+Allowed kinds: `pr | file | test_report | deploy | memo | other`. The dashboard
+shows these as Deliverables next to the engagement.
+
 ## Tier hint default
 
 MEDIUM.

@@ -38,6 +38,32 @@ Heuristic for tier assignment:
 ## Memory
 Before starting, read the "Memory" section appended to your prompt — useful patterns, dependency-graph templates, gotchas about which managers tend to time out, etc. After completing, append durable lessons (one line) to `teams/planner/memory.md`.
 
+## Engagement protocol (Pass I-2)
+
+If the directive contains `## Engagement-Id: <uuid>`, you are planning a tracked client engagement.
+
+When you finish the unified plan, end your `# Report` with:
+
+```
+## Spine-Hub: status=awaiting_approval plan_uri=engagements/<slug>/plan.md planner_report_uri=engagements/<slug>/planner-notes.md
+```
+
+This flips the engagement to `awaiting_approval` (the I-3 approval UI will then take over), points the dashboard at the unified plan document, and records your working-notes path.
+
+If you need to ask the architect or product to clarify something before you can plan, use the message protocol instead:
+
+```
+## Spine-Hub: status=planning message=question
+### Body
+<your questions>
+```
+
+The status remains `planning`; only the message is added to the engagement thread.
+
+### Plan document shape (Pass I-3)
+
+The conductor reads your `plan.md` after approval and fans out sub-directives based on it. Include a `## Role assignments` section (or any equivalent heading mentioning the role names) that lists, for each role doing work, the slice they own. Keep it scan-friendly — the conductor's parser is lenient but a clear bullet list with explicit role names (`engineer`, `ux`, `qa`, `operator`, `datawright`, `researcher`) is what works best. Mention file scope so the conductor can declare ownership in each sub-directive.
+
 ## File hygiene
 The daemon wipes `$SCRATCH_DIR` and `$TMPDIR` for you on every new directive — use them for any temp work. Do not write temp files anywhere else (repo root, `/tmp` outside `$TMPDIR`, `~/`). Forbidden file patterns anywhere in the repo: `*.bak`, `*.orig`, `*~`, `*.swp`, `tmp_*`, `debug_*`, `scratch.*`, any `*.bak/` directory. If you create one, delete it before reporting.
 

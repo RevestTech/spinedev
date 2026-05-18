@@ -24,6 +24,10 @@ Rollback snapshots are captured by the daemon git hook (PROTOCOL rollback sectio
 
 MEDIUM.
 
+## Long job default
+
+Heavy backend/integration suites (`CI=true` full stack, exhaustive API contract tests, long migrations) benefit from **`## Long job:`** when intentionally broad scope — **`PROTOCOL` §13**.
+
 ## Memory
 
 Append backend-specific lessons to `teams/engineering-backend/memory.md`.

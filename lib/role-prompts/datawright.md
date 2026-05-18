@@ -35,5 +35,8 @@ This role often gains from parallelism when slices are disjoint: chunked files, 
 ## Tier hint default
 **LOW** for mechanical batch dispatch; **HIGH** only for prompt/schema design or novel eval methodology. Prefer cheap models for transforms; use capable models where mistakes are expensive.
 
+## Long job default
+Long batch inference, training runs, or ETL shards often legitimately exceed the daemon’s stock wall-clock. When the directive is predictably lengthy, declare **`## Long job:`** (minutes or `xh`/`xd` syntax — **`PROTOCOL` §13**). Omit when a normal invocation window suffices — this reminds you wall-clock matters; it does not force a hint on quick jobs.
+
 ## Memory
 Before starting, read appended per-role memory. After completing, append durable lessons (one line each) to `teams/datawright/memory.md`.

@@ -18,14 +18,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$REPO_ROOT" || exit 1
 
-# roles.sh + run-standalone-watcher.sh stay in lib/ for the v2/v3
-# transition (triage: roles.sh is REBUILD, run-standalone-watcher.sh
-# stays put until federation rebuild). Prefer the co-located copy if
-# someone vendors them into shared/runtime/ later, fall back to lib/.
+# Wave 6 Stream K: lib/ retired. roles.sh is now resolved from a
+# co-located copy (if vendored) or from the installer-produced scripts/
+# directory. The lib/ fallback was removed when lib/roles.sh was deleted.
+# Future Wave 4 federation rebuild will replace run-standalone-watcher.sh
+# with a federation client (see WATCHER_LAUNCHER below for the surviving
+# transitional fallback).
 if [[ -f "$SCRIPT_DIR/roles.sh" ]]; then
   ROLES_SH="$SCRIPT_DIR/roles.sh"
-elif [[ -f "$REPO_ROOT/lib/roles.sh" ]]; then
-  ROLES_SH="$REPO_ROOT/lib/roles.sh"
 elif [[ -f "$REPO_ROOT/scripts/roles.sh" ]]; then
   ROLES_SH="$REPO_ROOT/scripts/roles.sh"
 else
@@ -194,15 +194,16 @@ while true; do
   # Auxiliary supervised processes: heartbeat loop and standalone watcher.
   # Both follow the "pid file present + process dead = restart" contract.
   # Wave 3 (Squad A): heartbeat.sh co-located in shared/runtime/ (this
-  # dir). run-standalone-watcher.sh stays in lib/ until Wave 4
-  # federation rebuild; resolve via REPO_ROOT/lib/.
+  # dir). Wave 6 Stream K: lib/ retired — run-standalone-watcher.sh is
+  # now resolved from the installer-produced scripts/ directory until the
+  # Wave 4 federation rebuild replaces it with a federation client.
   supervise_aux "heartbeat" \
     "$SPINE_HEARTBEAT_PID_FILE" \
     "$SCRIPT_DIR/heartbeat.sh"
   if [[ -f "$SCRIPT_DIR/run-standalone-watcher.sh" ]]; then
     WATCHER_LAUNCHER="$SCRIPT_DIR/run-standalone-watcher.sh"
   else
-    WATCHER_LAUNCHER="$REPO_ROOT/lib/run-standalone-watcher.sh"
+    WATCHER_LAUNCHER="$REPO_ROOT/scripts/run-standalone-watcher.sh"
   fi
   supervise_aux "watcher" \
     "$SPINE_WATCHER_PID_FILE" \

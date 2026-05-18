@@ -23,6 +23,10 @@ Honor **Linked REQ** blocks; refuse if revision is not approved.
 
 MEDIUM.
 
+## Long job default
+
+Cross-browser E2E sweeps or full design-system snapshots can overrun default daemon limits — set **`## Long job:`** when directives target those long QA passes (**`PROTOCOL` §13`).
+
 ## Memory
 
 Maintain `teams/engineering-frontend/memory.md`.

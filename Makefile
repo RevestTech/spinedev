@@ -37,9 +37,11 @@ nuke: ## DESTROY .venv + both pg volumes (asks first); pair with `make bootstrap
 	fi
 
 # ── Agent team (added by SpineDevelopment installer) ────────────────
-TESTS := $(wildcard lib/tests/test-*.sh)
+# Wave 6 Stream K: lib/ retired. Tests, dashboard-sync, verify, and lib/-targeted
+# lint-shell removed. Substrate now lives in shared/runtime/; charters in
+# shared/charters/; Hub SPA replaces the v1 dashboard.html.
 
-.PHONY: team-up team-down team-status team-restart team-budget team-clean team-footprint team-doctor team-rollback team-preflight dashboard selftest db-migrate db-shell db-reset db-watch dashboard-sync verify lint lint-shell lint-py lint-html lint-sql lint-md lint-fix smoke
+.PHONY: team-up team-down team-status team-restart team-budget team-clean team-footprint team-doctor team-rollback team-preflight dashboard db-migrate db-shell db-reset db-watch lint lint-py lint-html lint-sql lint-md lint-fix smoke
 
 team-up: ## Start agent team (all roles in scripts/roles.sh + watchdog)
 	bash scripts/team.sh up
@@ -74,20 +76,8 @@ team-preflight: ## Verify host has the tools the team needs (run before first 't
 dashboard: ## Serve Control Center (python http.server on .planning/orchestration)
 	bash scripts/serve-dashboard.sh
 
-dashboard-sync: ## Copy lib/dashboard.html → .planning/orchestration/dashboard/index.html (no install needed)
-	cp lib/dashboard.html .planning/orchestration/dashboard/index.html
-	@printf '%s\n' "synced → .planning/orchestration/dashboard/index.html ($$(wc -l < lib/dashboard.html | tr -d ' ') lines)"
-
-selftest: ## Run all lib/tests/test-*.sh (Spine sanity checks)
-	@if [ -z "$(TESTS)" ]; then printf '%s\n' 'no matching lib/tests/test-*.sh' >&2; exit 1; fi
-	@for t in $(TESTS); do printf '▸ %s\n' "$$t"; bash "$$t" || exit 1; done
-	@printf '%s\n' '✓ all selftests passed'
-
 smoke: ## Run tools/smoke-test.sh (the Spine v2 integration smoke harness)
 	@bash tools/smoke-test.sh
-
-verify: ## Run every syntax + selftest check (bash -n, py_compile, pglast, selftests)
-	@bash lib/verify.sh
 
 # ── v2 SQLite (see ADR-001 + .planning/orchestration/docs/V2_BACKLOG.md) ──
 
@@ -111,16 +101,12 @@ db-watch: ## Keep the v2 DB + dashboard snapshot fresh (re-migrate every 30s; Ct
 # markdownlint runs via `npx -y markdownlint-cli`).
 # Config files: .markdownlint.json, .tidyconfig, db/flyway/sql/.sqlfluff.
 
-PY_LINT_FILES := lib/spine-migrate.py scripts/spine-migrate.py db/watcher/spine_watcher.py db/dashboard/build-snapshot.py db/dashboard/serve.py db/dashboard/tests/test_approval.py
-HTML_LINT_FILES := lib/dashboard.html db/dashboard/index.html db/dashboard/about.html db/dashboard/versions.html db/dashboard/tech.html db/dashboard/engagement.html db/dashboard/machines.html
+PY_LINT_FILES := scripts/spine-migrate.py db/watcher/spine_watcher.py db/dashboard/build-snapshot.py db/dashboard/serve.py db/dashboard/tests/test_approval.py
+HTML_LINT_FILES := db/dashboard/index.html db/dashboard/about.html db/dashboard/versions.html db/dashboard/tech.html db/dashboard/engagement.html db/dashboard/machines.html
 MD_LINT_FILES := CHANGELOG.md INSTALL.md PROTOCOL.md README.md REQUIREMENTS.md docs/EXTENSIONS.md docs/IMPROVEMENT_CHECKLIST.md docs/PROGRAM_DELIVERY.md docs/SPINE_PRACTICES.md
 
-lint: lint-shell lint-py lint-html lint-sql lint-md ## Run all linters (shell, python, html, sql, markdown)
+lint: lint-py lint-html lint-sql lint-md ## Run all linters (python, html, sql, markdown)
 	@printf '%s\n' '✓ all linters passed'
-
-lint-shell: ## shellcheck on lib/*.sh
-	@command -v shellcheck >/dev/null || { printf '%s\n' "shellcheck not installed (brew install shellcheck)" >&2; exit 1; }
-	shellcheck -x -s bash lib/*.sh
 
 lint-py: ## ruff (default ruleset) on the project's Python files
 	@command -v ruff >/dev/null || { printf '%s\n' "ruff not installed (brew install ruff)" >&2; exit 1; }
