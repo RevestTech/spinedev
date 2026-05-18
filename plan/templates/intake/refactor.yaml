@@ -1,0 +1,54 @@
+# Spine v3 intake template — REFACTOR work-item type.
+# Non-functional code/structure improvement. Routed to architect + engineer + qa.
+
+type_id: refactor
+description: Non-functional code or structure improvement. Must justify cost vs. risk explicitly.
+
+default_pipeline: default_refactor_pipeline
+default_role_set: [architect, engineer, qa]
+
+required_fields:
+  - id: title
+    prompt: One-line summary of the refactor (target subsystem + verb).
+    why_asked: Anchors the audit trail; "Refactor X to Y" should be readable in PR titles.
+    required: true
+  - id: rationale
+    prompt: Why does this refactor pay for itself? (debt reduction, perf gain, security, etc.)
+    why_asked: The architect role refuses to approve un-justified refactors per Cite-or-Refuse (#12).
+    required: true
+  - id: scope_summary
+    prompt: What is being changed? (subsystem boundary, pattern swap, dep upgrade)
+    why_asked: Locks the blast radius up-front so QA can scope regression tests.
+    required: true
+  - id: performance_baseline
+    prompt: Current measured metric the refactor targets (latency p95, allocations, build time). Optional but expected.
+    why_asked: Without a baseline you can't prove improvement; refactor becomes faith-based.
+    required: false
+  - id: expected_improvement
+    prompt: Predicted post-refactor delta on the baseline metric. Optional but recommended.
+    why_asked: Sets the verification target QA will check against.
+    required: false
+  - id: backout_plan
+    prompt: How will we revert if this refactor regresses?
+    why_asked: Refactors regress more often than features; the revert plan is non-negotiable.
+    required: true
+
+validation_rules:
+  - rule: rationale_min_length
+    description: rationale must be at least 20 characters (no "cleanup" one-liners).
+  - rule: scope_summary_min_length
+    description: scope_summary must name at least one concrete file / module / package.
+  - rule: backout_plan_required
+    description: backout_plan field must be non-empty even for trivial refactors.
+
+example_completed_intake:
+  title: "Refactor shared/notify/ to provider-trait abstraction"
+  rationale: |
+    Current notify code couples Slack/PagerDuty/email logic into one 800-line
+    module. Adding Teams support is blocked because every change risks
+    regressions in the other paths. Provider-trait abstraction unblocks #6
+    flexible per-user channels.
+  scope_summary: "shared/notify/{slack,pagerduty,email}.py — split into providers/{name}.py + dispatch.py"
+  performance_baseline: "Cold-start import time: 180ms"
+  expected_improvement: "Cold-start import time: <50ms (only loaded providers imported)"
+  backout_plan: "Revert PR; module is import-compatible at the public API level."

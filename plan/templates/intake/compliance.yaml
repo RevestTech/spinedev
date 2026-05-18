@@ -1,0 +1,59 @@
+# Spine v3 intake template — COMPLIANCE work-item type.
+# Control / evidence / audit obligation. Routed to compliance_officer + security_engineer + tech_writer.
+
+type_id: compliance
+description: A compliance control / evidence collection / audit obligation. Cite-or-Refuse applies.
+
+default_pipeline: default_compliance_pipeline
+default_role_set: [compliance_officer, security_engineer, tech_writer]
+
+required_fields:
+  - id: title
+    prompt: One-line summary of the obligation (control + framework).
+    why_asked: Used as the work-item title; references the framework in audit log.
+    required: true
+  - id: framework
+    prompt: Which compliance framework? (SOC2, ISO27001, HIPAA, PCI-DSS, GDPR, NIST 800-53, …)
+    why_asked: Drives which control library + auditor + Vanta/Drata mapping applies (#24).
+    required: true
+  - id: control_id
+    prompt: Framework-specific control identifier (e.g. SOC2 CC6.1, ISO A.9.2.3).
+    why_asked: Anchors evidence to a single auditable control; required for two-party attestation.
+    required: true
+  - id: evidence_required
+    prompt: Which evidence artefacts must be collected / attached? (one per line)
+    why_asked: Pre-declares the evidence so compliance_officer knows what "done" looks like.
+    type: multi
+    required: true
+  - id: audit_deadline
+    prompt: Hard date by which the control must show compliant (YYYY-MM-DD). Optional.
+    why_asked: Backstops scheduling; drives reminders.
+    type: date
+    required: false
+  - id: current_state
+    prompt: What is the current state of this control? (non-existent / partial / implemented / verified)
+    why_asked: Sets the gap analysis baseline for the compliance_officer.
+    type: single_choice
+    options: [non_existent, partial, implemented, verified]
+    required: true
+
+validation_rules:
+  - rule: framework_in_known_set
+    description: framework should be one of SOC2, ISO27001, HIPAA, PCI-DSS, GDPR, NIST-800-53, or extended via bundle.
+  - rule: control_id_non_empty
+    description: control_id must be present and non-blank.
+  - rule: evidence_required_non_empty
+    description: at least one evidence artefact must be declared.
+  - rule: audit_deadline_iso_date
+    description: when present, audit_deadline must be a valid ISO date (YYYY-MM-DD).
+
+example_completed_intake:
+  title: "SOC2 CC6.1 — quarterly access review evidence for Q2"
+  framework: "SOC2"
+  control_id: "CC6.1"
+  evidence_required:
+    - "Exported list of active users with role + last-login (CSV)"
+    - "Reviewer attestation per user (Vanta workflow output)"
+    - "Tickets opened for any access revocations performed"
+  audit_deadline: "2026-06-30"
+  current_state: "partial"

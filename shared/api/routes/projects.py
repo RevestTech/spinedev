@@ -16,7 +16,11 @@ from shared.api.dependencies import DbHandle, McpClient, current_user, get_db_po
 
 router = APIRouter(prefix="/api/v2/projects", tags=["projects"])
 
-ProjectType = Literal["greenfield", "evolve", "audit_only", "operate"]
+# Wave-2 (Design Decision #19): 7 canonical work-item types Day 1.
+# Order matches V28 ENUM seed in ``db/flyway/sql/V28__work_item_types.sql``.
+ProjectType = Literal[
+    "feature", "bug", "incident", "support", "refactor", "infra", "compliance",
+]
 ProjectStatus = Literal["active", "paused", "terminated", "completed"]
 
 

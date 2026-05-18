@@ -1,0 +1,55 @@
+# Spine v3 intake template — INCIDENT work-item type.
+# Production outage / impairment. ITIL-aligned. Routed to operator + devops + engineer + conductor.
+
+type_id: incident
+description: Production outage or impairment. Triggers paging, blast-radius assessment, RCA.
+
+default_pipeline: default_incident_pipeline
+default_role_set: [operator, devops, engineer, conductor]
+
+required_fields:
+  - id: title
+    prompt: One-line summary of the incident (what is broken and who notices).
+    why_asked: Used for paging channels + status pages + audit trail.
+    required: true
+  - id: severity
+    prompt: Severity tier (sev1=full outage / sev2=major impairment / sev3=partial / sev4=internal-only).
+    why_asked: Drives paging rotation, exec notification, SLA clock.
+    type: single_choice
+    options: [sev1, sev2, sev3, sev4]
+    required: true
+  - id: blast_radius
+    prompt: What is the scope of impact? (users / regions / surfaces / dependent systems)
+    why_asked: Determines comm cadence + scaling of response + whether to declare a major incident.
+    required: true
+  - id: time_to_acknowledge
+    prompt: Seconds from first detection to first human ack (auto-populated by paging integration; leave blank if not paging).
+    why_asked: MTTA is a foundational SRE metric; feeds incident-response KPIs.
+    type: numeric
+    required: false
+  - id: root_cause_status
+    prompt: Where does root-cause analysis currently stand?
+    why_asked: Tracks the post-mortem state machine; gates close.
+    type: single_choice
+    options: [unknown, suspected, confirmed, ruled_out]
+    required: true
+  - id: detection_source
+    prompt: How was this detected? (alert id, customer report, dashboard, etc.)
+    why_asked: Drives "did our monitoring catch it?" review.
+    required: true
+
+validation_rules:
+  - rule: severity_in_enum
+    description: severity must be one of sev1, sev2, sev3, sev4.
+  - rule: root_cause_status_in_enum
+    description: root_cause_status must be one of unknown, suspected, confirmed, ruled_out.
+  - rule: blast_radius_min_length
+    description: blast_radius description must be at least 5 characters (not a single token).
+
+example_completed_intake:
+  title: "Checkout 5xx spike — eu-west-1 payment gateway"
+  severity: sev1
+  blast_radius: "All checkout requests in eu-west-1 (~40% of paid traffic). No card data exposed."
+  time_to_acknowledge: 92
+  root_cause_status: suspected
+  detection_source: "PagerDuty alert PD-INC-99812 (checkout_error_rate > 5%)"

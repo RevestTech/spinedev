@@ -1,0 +1,54 @@
+# Spine v3 intake template — BUG work-item type.
+# Seeded by db/flyway/sql/V28__work_item_types.sql; consumed by plan/runtime/intake_runner.py
+# and routed by build/runtime/build_dispatcher.py.
+
+type_id: bug
+description: A defect in shipped behaviour. Reproducible, prioritized, owned by engineer + qa.
+
+default_pipeline: default_bug_pipeline
+default_role_set: [engineer, qa]
+
+required_fields:
+  - id: title
+    prompt: One-line summary of the bug.
+    why_asked: Becomes the work-item title; used in the audit trail and triage queues.
+    required: true
+  - id: severity
+    prompt: How severe is this bug? (sev1=outage / sev2=major / sev3=minor / sev4=cosmetic)
+    why_asked: Drives prioritization, paging, and SLA tier; maps to BugWorkItem.severity.
+    type: single_choice
+    options: [sev1, sev2, sev3, sev4]
+    required: true
+  - id: reproduction_steps
+    prompt: Numbered steps to reproduce. Include expected vs. actual at the end.
+    why_asked: Without repro the engineer cannot fix; QA needs steps to verify the fix.
+    required: true
+  - id: affected_versions
+    prompt: Which versions / builds / environments reproduce this? (comma-separated)
+    why_asked: Drives backport scope; helps detect regression.
+    type: multi
+    required: true
+  - id: regression_of
+    prompt: If this is a regression, which prior issue / PR / commit introduced it? (optional)
+    why_asked: Speeds up root-cause + protects against re-introduction.
+    required: false
+
+validation_rules:
+  - rule: reproduction_steps_min_length
+    description: reproduction_steps must be at least 10 characters and contain at least one digit (the step number).
+  - rule: severity_in_enum
+    description: severity must be one of sev1, sev2, sev3, sev4 (BugWorkItem.Severity).
+  - rule: affected_versions_non_empty
+    description: at least one entry must be present in affected_versions.
+
+example_completed_intake:
+  title: "Login button silently fails on Safari 17 after MFA"
+  severity: sev2
+  reproduction_steps: |
+    1. Open the app on macOS Safari 17.
+    2. Log in with MFA-enabled account.
+    3. Click "Sign in".
+    Expected: redirected to /dashboard.
+    Actual: spinner stops, no redirect, no console error.
+  affected_versions: ["1.4.2", "1.4.3"]
+  regression_of: "PR-2189 (cookies SameSite=Lax change)"

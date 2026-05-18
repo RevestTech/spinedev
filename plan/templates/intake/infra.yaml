@@ -1,0 +1,55 @@
+# Spine v3 intake template — INFRA work-item type.
+# Infrastructure change (provisioning, capacity, networking, IAM).
+# Routed to devops + architect + security_engineer.
+
+type_id: infra
+description: An infrastructure change. Cost-aware, blast-radius-aware, security-reviewed.
+
+default_pipeline: default_infra_pipeline
+default_role_set: [devops, architect, security_engineer]
+
+required_fields:
+  - id: title
+    prompt: One-line summary of the infra change (verb + target).
+    why_asked: Will appear in Terraform PR titles + audit log.
+    required: true
+  - id: cloud_target
+    prompt: Cloud + region + cluster target (e.g. "aws/us-east-1/prod-eks").
+    why_asked: Routes to the right devops squad + frames blast radius scope.
+    required: true
+  - id: cost_estimate
+    prompt: Monthly cost delta this change is expected to introduce (USD). Sign matters (+/-).
+    why_asked: Required so devops + finance can approve against budget; populates FinOps dashboard.
+    required: true
+  - id: blast_radius
+    prompt: What customer-visible surfaces could this affect if it goes wrong?
+    why_asked: Drives the change-window, the staged rollout, and the rollback rehearsal.
+    required: true
+  - id: change_type
+    prompt: Is this provisioning new resources, scaling existing, networking change, or IAM change?
+    why_asked: Determines which security_engineer review checklist applies.
+    type: single_choice
+    options: [provisioning, scaling, networking, iam, decommission, other]
+    required: true
+  - id: rollback_plan
+    prompt: How will this be rolled back if it fails post-deploy?
+    why_asked: Required by #11 Operate / change-management control plane.
+    required: true
+
+validation_rules:
+  - rule: cloud_target_format
+    description: cloud_target should look like provider/region or provider/region/cluster.
+  - rule: cost_estimate_present
+    description: cost_estimate must be present even if 0; "unknown" is not acceptable.
+  - rule: rollback_plan_required
+    description: rollback_plan must be non-empty.
+  - rule: change_type_in_enum
+    description: change_type must be one of provisioning, scaling, networking, iam, decommission, other.
+
+example_completed_intake:
+  title: "Provision second eks node group for staging burst capacity"
+  cloud_target: "aws/us-east-1/staging-eks"
+  cost_estimate: "+$320/month (3 x m6i.large spot, auto-scale 0-3)"
+  blast_radius: "Staging only. No prod impact. Affects nightly load-test job latency."
+  change_type: provisioning
+  rollback_plan: "terraform destroy module.staging_burst_nodes; existing on-demand pool absorbs load."

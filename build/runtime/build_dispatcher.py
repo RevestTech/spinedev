@@ -31,11 +31,14 @@ import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, Optional
 from uuid import UUID
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from plan.artifacts.prd_v1 import PRDv1
 from shared.schemas.build.build_artifact import BuildArtifact
+from shared.schemas.build.work_item import WORK_ITEM_TYPES, WorkItemType
 
 # ── Constants & paths ──────────────────────────────────────────────────
 
@@ -62,6 +65,133 @@ AUDIT_ARTIFACT_PERSISTED = "build_artifact_persisted"
 # Conservative: every project gets at least engineer+qa. Bundle authors
 # extend by setting metadata.intake.swarm_composition on the project.
 _DEFAULT_SQUAD = ("engineer", "qa")
+
+# ── Work-item-type routing fallback (mirrors V28 seed) ────────────────
+#
+# `_TYPE_PIPELINE_FALLBACK` + `_TYPE_ROLE_FALLBACK` are the in-process
+# fallback when the DB lookup against `spine_workitem.type_registry`
+# fails (offline / mid-migration / unit test). They MUST stay in lock-step
+# with the seed in ``db/flyway/sql/V28__work_item_types.sql`` — any drift
+# becomes a hard divergence between bash CLI and Python dispatcher.
+
+_TYPE_PIPELINE_FALLBACK: dict[str, str] = {
+    "feature":    "default_feature_pipeline",
+    "bug":        "default_bug_pipeline",
+    "incident":   "default_incident_pipeline",
+    "support":    "default_support_pipeline",
+    "refactor":   "default_refactor_pipeline",
+    "infra":      "default_infra_pipeline",
+    "compliance": "default_compliance_pipeline",
+}
+
+_TYPE_ROLE_FALLBACK: dict[str, tuple[str, ...]] = {
+    "feature":    ("product", "planner", "architect", "engineer", "qa"),
+    "bug":        ("engineer", "qa"),
+    "incident":   ("operator", "devops", "engineer", "conductor"),
+    "support":    ("customer_support", "engineer"),
+    "refactor":   ("architect", "engineer", "qa"),
+    "infra":      ("devops", "architect", "security_engineer"),
+    "compliance": ("compliance_officer", "security_engineer", "tech_writer"),
+}
+
+# Per #13 — engineer = hybrid by tier; thin wrapper over external coding
+# agents. Defaults are conservative (claude_code + low autonomy); bundle
+# policy can widen via metadata.intake.swarm_composition.
+ImplementerKind = Literal["claude_code", "cursor", "aider", "openhands", "human"]
+AutonomyTier = Literal["low", "medium", "high"]
+
+DEFAULT_IMPLEMENTER_KIND: ImplementerKind = "claude_code"
+DEFAULT_AUTONOMY_TIER: AutonomyTier = "low"
+
+
+# ── Pydantic BuildBrief (typed mirror of the brief dict) ──────────────
+
+
+class BuildBrief(BaseModel):
+    """Typed mirror of the brief dict persisted to ``project.metadata.build_brief``.
+
+    Wave-2 addition: carries ``work_item_type`` + ``implementer_kind`` +
+    ``autonomy_tier`` so per-type pipeline routing + #13 hybrid-engineer
+    dispatch can read off a single typed surface instead of stringly-typed
+    metadata.
+    """
+
+    model_config = ConfigDict(extra="allow", str_strip_whitespace=True)
+
+    version: str = BUILD_BRIEF_VERSION
+    brief_id: str
+    project_id: str
+    project_name: str
+    pipeline_version: str
+    work_item_type: WorkItemType = Field(
+        default="feature",
+        description="One of 7 canonical work-item types per #19; drives pipeline_id + role_set.",
+    )
+    pipeline_id: str = Field(
+        default=_TYPE_PIPELINE_FALLBACK["feature"],
+        description="Resolved pipeline identifier; matches V28 type_registry.pipeline_id.",
+    )
+    role_set: list[str] = Field(
+        default_factory=lambda: list(_TYPE_ROLE_FALLBACK["feature"]),
+        description="Per-type default role set; matches V28 type_registry.default_role_set.",
+    )
+    implementer_kind: ImplementerKind = Field(
+        default=DEFAULT_IMPLEMENTER_KIND,
+        description="External coding agent Spine wraps (#13 hybrid by tier).",
+    )
+    autonomy_tier: AutonomyTier = Field(
+        default=DEFAULT_AUTONOMY_TIER,
+        description="Autonomy tier; per-bundle opt-in to higher tiers (#13).",
+    )
+
+
+def _lookup_type_registry(work_item_type: str) -> Optional[tuple[str, list[str]]]:
+    """Fetch (pipeline_id, role_set) from ``spine_workitem.type_registry``.
+
+    Returns ``None`` if the DB lookup fails for any reason — callers must
+    then fall back to the in-process constants. We never raise so a missing
+    DB doesn't block routing decisions.
+    """
+    try:
+        out = _psql(
+            "SELECT pipeline_id || '|' || default_role_set::text "
+            "FROM spine_workitem.type_registry "
+            f"WHERE type = '{_esc(work_item_type)}' LIMIT 1;"
+        )
+    except Exception:
+        return None
+    if not out or "|" not in out:
+        return None
+    pipeline_id, role_json = out.split("|", 1)
+    try:
+        roles = json.loads(role_json or "[]")
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(roles, list):
+        return None
+    return pipeline_id.strip(), [str(r) for r in roles]
+
+
+def route_for_work_item_type(
+    work_item_type: str,
+    *,
+    use_db: bool = True,
+) -> tuple[str, list[str]]:
+    """Resolve (pipeline_id, role_set) for a work-item type.
+
+    Order: DB lookup against V28 `spine_workitem.type_registry` →
+    in-process fallback. Raises ``ValueError`` if the type is unknown.
+    """
+    if work_item_type not in WORK_ITEM_TYPES:
+        raise ValueError(
+            f"unknown work_item_type={work_item_type!r}; "
+            f"expected one of {list(WORK_ITEM_TYPES)}"
+        )
+    if use_db:
+        hit = _lookup_type_registry(work_item_type)
+        if hit is not None:
+            return hit
+    return _TYPE_PIPELINE_FALLBACK[work_item_type], list(_TYPE_ROLE_FALLBACK[work_item_type])
 
 
 # ── Errors surfaced to the MCP wrapper ─────────────────────────────────
@@ -223,21 +353,36 @@ def _load_project(project_id: int | str) -> dict[str, Any]:
     sql = (
         "SELECT id::text || '|' || project_uuid::text || '|' || name || '|' || "
         "current_phase || '|' || pipeline_version || '|' || "
+        "COALESCE(work_item_type,'feature') || '|' || "
         "COALESCE(metadata::text,'{}') "
         f"FROM spine_lifecycle.project WHERE ({where}) AND status='active' "
         "ORDER BY id ASC LIMIT 1;"
     )
-    out = _psql(sql)
+    try:
+        out = _psql(sql)
+    except RuntimeError:
+        # work_item_type column may not exist on pre-V28 deployments — retry
+        # without it so build dispatcher still works during migration.
+        legacy_sql = (
+            "SELECT id::text || '|' || project_uuid::text || '|' || name || '|' || "
+            "current_phase || '|' || pipeline_version || '|' || "
+            "'feature' || '|' || "
+            "COALESCE(metadata::text,'{}') "
+            f"FROM spine_lifecycle.project WHERE ({where}) AND status='active' "
+            "ORDER BY id ASC LIMIT 1;"
+        )
+        out = _psql(legacy_sql)
     if not out:
         raise RuntimeError(f"no active project for id/uuid/name={project_id!r}")
-    parts = out.split("|", 5)
+    parts = out.split("|", 6)
     return {
         "id": int(parts[0]),
         "project_uuid": parts[1],
         "name": parts[2],
         "current_phase": parts[3],
         "pipeline_version": parts[4],
-        "metadata": json.loads(parts[5] or "{}"),
+        "work_item_type": parts[5],
+        "metadata": json.loads(parts[6] or "{}"),
     }
 
 
@@ -382,11 +527,49 @@ def _squad_from_metadata(meta: dict[str, Any]) -> list[str]:
     return list(_DEFAULT_SQUAD)
 
 
+def _work_item_type_from_project(project: dict[str, Any]) -> str:
+    """Resolve a project's work_item_type.
+
+    V28 added ``spine_lifecycle.project.work_item_type`` (backfilled
+    'feature'). Older readers that loaded the row before this column
+    existed will have no key — fall back to 'feature' to match the V28
+    DEFAULT.
+    """
+    wit = project.get("work_item_type")
+    if isinstance(wit, str) and wit in WORK_ITEM_TYPES:
+        return wit
+    # Also accept it being tucked under metadata (e.g. set by intake before
+    # the column was populated).
+    meta_wit = (project.get("metadata") or {}).get("work_item_type")
+    if isinstance(meta_wit, str) and meta_wit in WORK_ITEM_TYPES:
+        return meta_wit
+    return "feature"
+
+
+def _implementer_kind_from_metadata(meta: dict[str, Any]) -> ImplementerKind:
+    intake = meta.get(METADATA_INTAKE_KEY) or {}
+    answers = intake.get("answers") or {}
+    candidate = answers.get("implementer_kind")
+    if isinstance(candidate, str) and candidate in {"claude_code", "cursor", "aider", "openhands", "human"}:
+        return candidate  # type: ignore[return-value]
+    return DEFAULT_IMPLEMENTER_KIND
+
+
+def _autonomy_tier_from_metadata(meta: dict[str, Any]) -> AutonomyTier:
+    intake = meta.get(METADATA_INTAKE_KEY) or {}
+    answers = intake.get("answers") or {}
+    candidate = answers.get("autonomy_tier")
+    if isinstance(candidate, str) and candidate in {"low", "medium", "high"}:
+        return candidate  # type: ignore[return-value]
+    return DEFAULT_AUTONOMY_TIER
+
+
 def synthesize_build_brief(
     *,
     project: dict[str, Any],
     prd: PRDv1,
     actor: str,
+    use_db_routing: bool = True,
 ) -> dict[str, Any]:
     """Build the Build Brief dict (build-brief-v1) from a validated PRD."""
     prd_dump = prd.model_dump(mode="json")
@@ -404,6 +587,14 @@ def synthesize_build_brief(
         elif isinstance(vals, str) and vals.strip():
             constraints[key] = [vals.strip()]
 
+    # Wave-2: per-type pipeline + role-set routing + #13 implementer fields.
+    work_item_type = _work_item_type_from_project(project)
+    pipeline_id, type_role_set = route_for_work_item_type(work_item_type, use_db=use_db_routing)
+    intake_role_set = _squad_from_metadata(project["metadata"])
+    # Prefer the intake-declared squad when it diverges from the type
+    # default (the user knows their project better than the registry).
+    role_set = intake_role_set if intake_role_set != list(_DEFAULT_SQUAD) else type_role_set
+
     brief_id = f"brief_{project['project_uuid'][:8]}_{int(datetime.now(timezone.utc).timestamp())}"
     return {
         "version": BUILD_BRIEF_VERSION,
@@ -411,6 +602,11 @@ def synthesize_build_brief(
         "project_id": project["project_uuid"],
         "project_name": project["name"],
         "pipeline_version": project["pipeline_version"],
+        "work_item_type": work_item_type,
+        "pipeline_id": pipeline_id,
+        "role_set": role_set,
+        "implementer_kind": _implementer_kind_from_metadata(project["metadata"]),
+        "autonomy_tier": _autonomy_tier_from_metadata(project["metadata"]),
         "derived_from": {
             "prd_version": prd.version,
             "prd_hash": prd_hash,
@@ -429,7 +625,7 @@ def synthesize_build_brief(
             for oq in prd.open_questions
         ],
         "constraints": constraints,
-        "recommended_squad_composition": _squad_from_metadata(project["metadata"]),
+        "recommended_squad_composition": role_set,
         "next_steps_for_implementer": [
             "Pick up engineering_goals in priority order (MUST then SHOULD).",
             "Each commit should reference an EG-id in the message.",
@@ -635,9 +831,14 @@ __all__ = [
     "AUDIT_COMPLETED_RECEIVED",
     "AUDIT_DISPATCHED",
     "BUILD_BRIEF_VERSION",
+    "DEFAULT_AUTONOMY_TIER",
+    "DEFAULT_IMPLEMENTER_KIND",
+    "AutonomyTier",
+    "BuildBrief",
     "BuildCompletionError",
     "BuildDispatchError",
     "DispatchResult",
+    "ImplementerKind",
     "IngestResult",
     "METADATA_ARTIFACT_KEY",
     "METADATA_BRIEF_KEY",
@@ -647,5 +848,6 @@ __all__ = [
     "METADATA_TRD_KEY",
     "dispatch_build",
     "ingest_build_artifact",
+    "route_for_work_item_type",
     "synthesize_build_brief",
 ]

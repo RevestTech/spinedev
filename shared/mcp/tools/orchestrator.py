@@ -32,9 +32,15 @@ logger = logging.getLogger(__name__)
 
 _FORBID = ConfigDict(extra="forbid")
 
-# Canonical project_type values mirror docs/PRD.md REQ-INIT-1. Kept narrow on
-# purpose; org bundles extend via the manifest, not by widening this Literal.
-ProjectType = Literal["greenfield", "evolve", "audit_only", "operate"]
+# Wave-2 (Design Decision #19): the project_type is now one of the 7
+# canonical work-item types (feature/bug/incident/support/refactor/infra/
+# compliance). Order matches the V28 ENUM seed in
+# ``db/flyway/sql/V28__work_item_types.sql``. The previous 4-value set
+# (greenfield/evolve/audit_only/operate) was per pre-#19 PRD; with all 7
+# work-item types Day 1, the lifecycle template IS the work-item type.
+ProjectType = Literal[
+    "feature", "bug", "incident", "support", "refactor", "infra", "compliance",
+]
 
 # Defaults for the unprovided fields on project_create. The manifest path is
 # the canonical pipeline shipped with stock Spine; bundles override it via

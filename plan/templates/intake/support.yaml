@@ -1,0 +1,50 @@
+# Spine v3 intake template — SUPPORT work-item type.
+# Customer-support request. Routed to customer_support + engineer.
+
+type_id: support
+description: A customer-support inquiry / ticket that needs Spine-owned follow-through.
+
+default_pipeline: default_support_pipeline
+default_role_set: [customer_support, engineer]
+
+required_fields:
+  - id: title
+    prompt: One-line summary of the customer request.
+    why_asked: Used as the work-item title and the audit trail subject.
+    required: true
+  - id: customer_id
+    prompt: Stable customer / account identifier (e.g. CRM id, org slug).
+    why_asked: Lets the audit trail tie back to the customer record + entitlement / SLA.
+    required: true
+  - id: sla_target
+    prompt: SLA target promised to this customer tier (e.g. "P1 1h ack / 8h resolve"). Optional.
+    why_asked: Drives the queue priority + escalation timer.
+    required: false
+  - id: escalated_from
+    prompt: Where did this ticket come from? (zendesk, intercom, tier1, email, etc.) Optional.
+    why_asked: Lets us measure escalation paths + identify tier1 deflection opportunities.
+    required: false
+  - id: customer_request
+    prompt: What is the customer actually asking for? Quote them when possible.
+    why_asked: Anchors the engineer's investigation in the customer's own words.
+    required: true
+  - id: requested_outcome
+    prompt: What does "resolved" look like for the customer?
+    why_asked: Closes the loop and prevents marking a ticket done before the customer agrees.
+    required: true
+
+validation_rules:
+  - rule: customer_id_non_empty
+    description: customer_id must be present and non-blank.
+  - rule: customer_request_min_length
+    description: customer_request must be at least 10 characters (no one-word descriptions).
+
+example_completed_intake:
+  title: "Acme Corp asking how to export their audit log to S3"
+  customer_id: "acme-corp"
+  sla_target: "P2 4h ack / 2 business days resolve"
+  escalated_from: "zendesk:tier1"
+  customer_request: |
+    "We need a way to pull our Spine audit log into our own S3 bucket nightly
+    so our SOC2 evidence pipeline can pick it up."
+  requested_outcome: "Working nightly export to acme-corp-soc2-evidence S3 bucket, with a runbook."
