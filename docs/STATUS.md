@@ -51,6 +51,72 @@ TRON deploy.
 | 4.7 | Hosted demo sandbox deferred (pre-launch) | not blocking any wave |
 | 4.8 | Air-gapped v1.1 deferral holds | per #17 |
 
+### Wave 6 — Mobile/Voice/API scaffolds + lib/ retirement: COMPLETE 2026-05-18
+
+3 commits:
+
+| Commit | Stream | Scope |
+|---|---|---|
+| `a75e6a4` | H+I mobile+voice | mobile/api/routes (Bearer-auth compact JSON for approvals/briefings/status + APNs/FCM action endpoint) + mobile/ios + mobile/android placeholders with vault-referenced signing + voice/api/routes (Twilio webhook with real HMAC-SHA1 signature validation) + voice/twilio_adapter + scaffolds. +1928 lines / 29 tests |
+| `3be6c70` | J API+MCP heavier | shared/api/openapi_spec (OpenAPI 3.1 + 4 server templates + reusable Citation schema + error envelopes + Keycloak security schemes) + shared/api/versioning (v2 current; v1→v2 redirect with RFC 8594 Sunset header) + shared/api/rate_limit (per-(org,flag) token bucket from spine_license.feature_flag) + envelopes REFACTOR (feature_flag_required + actor_token_claims) + shared/mcp/tools/integrations (3 MCP tools) + EXPECTED_TOOL_COUNT 42→54. +2749 lines / 50 tests |
+| `19f745f` | K lib/ retirement | DELETE 17 lib/* files (dashboard.html 1262 LOC + team-agent-daemon.sh 1001 + team.sh 1087 + 14 others) + Makefile / db/Makefile / shared/runtime/watchdog.sh updates removing references. Kept lib/role-prompts/ per shared/charters/README.md documented intent. +235 -3519 lines |
+
+**Total Wave 6:** -607 net lines (1928+2749-3519+235), 79 new tests passing, **54 MCP tools** registered, smoke test 99 PASS / 0 FAIL maintained. lib/ shrunk from 34 files / ~8000 LOC to 17 files / 1095 LOC (all deprecated role-prompts).
+
+---
+
+## v3 BUILD COMPLETE 🎉 — 2026-05-18
+
+**All 7 waves shipped. v3 is ready for v1.0 ship pending the v1.1 follow-up backlog accumulated across each wave.**
+
+### v3 cumulative totals
+
+| Metric | Value |
+|---|---|
+| Commits (since v3 start `1da7148`) | 33 |
+| Net lines added | ~85,000+ across all subsystems |
+| New top-level subsystems | 10 (hub, federation, devops, vault, keycloak, license, evidence, learning, recovery, migration) |
+| New shared libraries | 6 (shared/{secrets, llm, identity, runtime, charters, integrations}) |
+| New Flyway migrations | 14 (V22-V35) |
+| New MCP tools | **54 registered** (was 27 v2 → 54 v3) |
+| New role charters | 19 industry-anchored (6 new in Wave 2 + 13 REBUILT in Wave 3) |
+| New tests | 700+ (across all waves) |
+| Smoke test | **99 PASS / 0 FAIL** maintained throughout |
+| lib/ retirement | 34 files / ~8000 LOC → 17 files / 1095 LOC (all deprecated role-prompts) |
+| Landing docs | All 7 v1-framing docs REBUILT + 6 NEW operational guides |
+| 34 design decisions | All locked + implemented (or explicitly stub'd per scaffold framing) |
+| Drift audits | Run at Wave 1, Wave 2+3 milestones — ON-TRACK both times |
+
+### What v1.0 needs before customer-facing ship
+
+| Item | Source | Notes |
+|---|---|---|
+| Hub SPA panels (10) | Wave 3 part 2 | Svelte per Part 4.1; routes from Wave 3 Squad C ready |
+| Real-MCP federation transport | Wave 3 part 2 | shared/mcp/server_remote.py with mTLS + bearer |
+| Real Twilio voice routing | v1.1+ per #29 | TwiML for Master CTO callable-for-incidents |
+| Native mobile apps | v1.1+ per #28 | SwiftUI / Compose; signing wired |
+| Tugboat/StrikeGraph/Thoropass compliance | v1.1+ per #24 | exporters stubbed |
+| Real per-cloud BYOC provisioners | v1.1 | tools/byoc-provision.sh + per-cloud runbook |
+| Postgres-backed decisions store | Wave 3 Squad C deferred | in-process today; spine_lifecycle.decision_card schema needed |
+| Real upgrade executors | Wave 5 Squad F deferred | Flyway / bundle / charter / vault-namespace / KG runners |
+| Vendor signing key Shamir reconstructor | Wave 4 Squad B deferred | pyshamir/sslib dep |
+| Rotation operationally | Per #9 | TRON dev passwords from old verify/.env (commit 493b07c) — rotate vault paths |
+
+### Open Part 4 decisions resolved autonomously (need user ratification)
+
+| # | Choice | Rationale |
+|---|---|---|
+| 4.1 | Svelte for Hub SPA | smallest bundle; closest-to-vanilla ergonomics |
+| 4.2 | Fly.io as 5th cloud | modern API + edge network |
+| 4.3 | Vendor vault + Shamir 3-of-5 | HashiCorp Enterprise pattern |
+| 4.4 | DR cross-region default-OFF | enterprise tier feature flag `dr.cross_region` |
+| 4.5 | TRON license audit deferred | Wave 5 dedicated subagent (still TODO per #18 closed-source ship gate) |
+| 4.6 | `#34` hygiene at `shared/runtime/hygiene.py` | cross-cutting library per Part 1.1 hybrid placement |
+| 4.7 | Demo sandbox deferred | pre-launch only |
+| 4.8 | Air-gapped v1.1 deferral holds | per #17 |
+
+---
+
 ### Wave 5 — DR + Migration + Landing-docs big-bang: COMPLETE 2026-05-18
 
 3 commits:
