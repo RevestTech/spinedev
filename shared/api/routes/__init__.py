@@ -17,10 +17,12 @@ from shared.api.routes.decisions import router as decisions_router
 from shared.api.routes.federation import router as federation_router
 from shared.api.routes.integrations import router as integrations_router
 from shared.api.routes.license import router as license_router
+from shared.api.routes.mobile import router as mobile_router
 from shared.api.routes.projects import router as projects_router
 from shared.api.routes.registry import router as registry_router
 from shared.api.routes.role_chat import router as role_chat_router
 from shared.api.routes.vault_config import router as vault_config_router
+from shared.api.routes.voice import router as voice_router
 
 ALL_ROUTERS = [
     # v2 routes
@@ -35,6 +37,9 @@ ALL_ROUTERS = [
     integrations_router,
     federation_router,
     license_router,
+    # Wave 6 — mobile + voice scaffolds (#28, #29)
+    mobile_router,
+    voice_router,
 ]
 
 __all__: list[str] = [
@@ -49,4 +54,6 @@ __all__: list[str] = [
     "integrations_router",
     "federation_router",
     "license_router",
+    "mobile_router",
+    "voice_router",
 ]

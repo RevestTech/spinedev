@@ -1,0 +1,34 @@
+# Spine Android placeholder — per #34 (workspace hygiene).
+
+# Gradle
+.gradle/
+build/
+local.properties
+gradle-app.setting
+!gradle-wrapper.jar
+.gradletasknamecache
+
+# Android Studio / IntelliJ
+.idea/
+*.iml
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Signing artifacts (per #9 — NEVER commit these)
+*.jks
+*.keystore
+keystore.properties
+
+# Native build / NDK
+**/build/**
+.cxx/
+
+# APK / AAB output
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# OS cruft
+.DS_Store

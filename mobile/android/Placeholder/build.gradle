@@ -1,0 +1,93 @@
+// Spine Android — placeholder app build (v1.0 SCAFFOLD per #28 + #9).
+//
+// Signing config resolves from env vars sourced from the vendor's vault
+// at CI time. Keystore file path, password, alias, and key password all
+// come from env. The keystore BYTES never live in this repo (per #9).
+//
+// v1.1+ teams replace src/main/ with the real Compose app; the signing
+// block + applicationId env wiring stays intact.
+
+plugins {
+    id 'com.android.application' version '8.2.0' apply true
+    id 'org.jetbrains.kotlin.android' version '1.9.20' apply true
+}
+
+android {
+    namespace = providers.environmentVariable("SPINE_ANDROID_PACKAGE")
+                       .getOrElse("com.spine.hub")
+    compileSdk = 34
+
+    defaultConfig {
+        applicationId = providers.environmentVariable("SPINE_ANDROID_PACKAGE")
+                                 .getOrElse("com.spine.hub")
+        minSdk = 31
+        targetSdk = 34
+        versionCode = 1
+        versionName = "0.0.0-scaffold"
+    }
+
+    // ───────────────────────────────────────────────────────────────────
+    // Signing — vault-backed (per #9). Real values flow through env vars
+    // at CI time; build fails fast (rather than silently producing an
+    // unsigned APK) if release builds are attempted without them.
+    // ───────────────────────────────────────────────────────────────────
+    signingConfigs {
+        release {
+            // Path to keystore file decrypted from vault by CI step.
+            // Reference: spine/android/upload_keystore (base64, decoded at CI).
+            def keystorePath = providers.environmentVariable("SPINE_ANDROID_KEYSTORE_PATH")
+                                        .getOrNull()
+            if (keystorePath) {
+                storeFile = file(keystorePath)
+            }
+            // Vault path: spine/android/keystore_password
+            storePassword = providers.environmentVariable("SPINE_ANDROID_KEYSTORE_PASSWORD")
+                                     .getOrNull()
+            // Vault path: spine/android/key_alias
+            keyAlias = providers.environmentVariable("SPINE_ANDROID_KEY_ALIAS")
+                                .getOrNull()
+            // Vault path: spine/android/key_password
+            keyPassword = providers.environmentVariable("SPINE_ANDROID_KEY_PASSWORD")
+                                   .getOrNull()
+        }
+    }
+
+    buildTypes {
+        debug {
+            // Debug uses the SDK's default debug keystore — fine for
+            // local dev, never goes to Play.
+            applicationIdSuffix = ".debug"
+        }
+        release {
+            minifyEnabled = true
+            shrinkResources = true
+            signingConfig = signingConfigs.release
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'),
+                          'proguard-rules.pro'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = "17"
+    }
+}
+
+dependencies {
+    // v1.1+ activation adds Compose / AppAuth / WorkManager / Glance /
+    // Firebase Messaging here. Empty for the scaffold.
+}
+
+// ───────────────────────────────────────────────────────────────────
+// Vault paths (PATHS only — values NEVER in this file per #9):
+//   spine/android/upload_keystore        (base64 keystore bytes)
+//   spine/android/keystore_password
+//   spine/android/key_alias
+//   spine/android/key_password
+//   spine/android/upload_key_sha256      (for Play Console upload-key registration)
+//   spine/android/play_service_account   (JSON for Gradle Play Publisher)
+// ───────────────────────────────────────────────────────────────────

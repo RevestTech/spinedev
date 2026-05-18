@@ -1,0 +1,37 @@
+// Spine iOS signing configuration (v1.0 SCAFFOLD — per #28 + #9).
+//
+// All identifiers resolve from env vars sourced from the vendor's vault
+// at CI time. Real cert SHA / provisioning-profile bytes NEVER live in
+// this repo. v1.1+ Xcode builds pick this up unchanged.
+
+// Bundle identifier — default placeholder; override via env in CI.
+PRODUCT_BUNDLE_IDENTIFIER = $(SPINE_IOS_BUNDLE_ID:default=com.spine.hub)
+
+// Apple Developer Team ID — REQUIRED from env (vault path spine/ios/team_id).
+// Build fails fast (per #9) if unset rather than silently defaulting.
+DEVELOPMENT_TEAM = $(SPINE_IOS_TEAM_ID)
+
+// Signing posture — manual for enterprise-grade reproducibility.
+CODE_SIGN_STYLE = Manual
+CODE_SIGN_IDENTITY = Apple Distribution
+
+// Provisioning profile — UUID injected from vault at CI time.
+PROVISIONING_PROFILE_SPECIFIER = $(SPINE_IOS_PROVISIONING_PROFILE)
+
+// Deployment target — matches v1.1+ build plan in mobile/ios/README.md
+IPHONEOS_DEPLOYMENT_TARGET = 17.0
+TARGETED_DEVICE_FAMILY = 1,2
+
+// Bitcode disabled (Xcode 14+ removed support; explicit for clarity)
+ENABLE_BITCODE = NO
+
+// Vault references — these are LOOKUP PATHS, not values:
+//   spine/ios/signing_cert_sha1            — distribution cert fingerprint
+//   spine/ios/signing_cert_p12             — base64 .p12 bundle
+//   spine/ios/signing_cert_password        — .p12 unlock password
+//   spine/ios/provisioning_profile_uuid    — UUID injected above
+//   spine/ios/team_id                      — Apple Team ID injected above
+//   spine/apple_developer/asc_api_key      — App Store Connect upload
+//
+// Per #9 (vault-only secrets): the VALUES of these paths NEVER appear
+// in any file in this repo. Only the PATHS (metadata) are documented.

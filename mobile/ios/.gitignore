@@ -1,0 +1,29 @@
+# Spine iOS placeholder — keeps build cruft out of git.
+# Per #34 (workspace hygiene as architectural concern) — explicit ignore.
+
+# Xcode user state
+*.xcuserdatad/
+xcuserdata/
+*.xcuserstate
+
+# Build output
+build/
+DerivedData/
+*.ipa
+*.app
+*.dSYM/
+
+# Signing artifacts (per #9 — NEVER commit these)
+*.p12
+*.cer
+*.mobileprovision
+*.provisionprofile
+*.certSigningRequest
+
+# CocoaPods / SPM artifacts (if added in v1.1+)
+Pods/
+.swiftpm/
+Carthage/Build/
+
+# Local override file
+*.local.xcconfig

@@ -1,0 +1,24 @@
+// Spine Android — placeholder settings (v1.0 SCAFFOLD per #28).
+//
+// Single-module Gradle config. v1.1+ activation may add `:core`,
+// `:network`, `:design-system` sub-modules; the `:Placeholder`
+// (renamed `:app`) entry stays as the application target.
+
+pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+
+dependencyResolutionManagement {
+    repositoriesMode = RepositoriesMode.FAIL_ON_PROJECT_REPOS
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+rootProject.name = "SpineAndroid"
+include ':Placeholder'

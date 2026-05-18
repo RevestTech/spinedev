@@ -1,0 +1,25 @@
+// !$*UTF8*$!
+//
+// Spine iOS — placeholder Xcode project (v1.0 SCAFFOLD per #28).
+//
+// This is a minimal `project.pbxproj` that opens cleanly in Xcode but
+// builds to an empty bundle. Replace with a real SwiftUI app in v1.1+
+// — keep `Spine.xcconfig` (signing config) untouched.
+//
+// Format reference: https://github.com/tuist/XcodeProj
+//
+// NOTE: a real Xcode project is many hundreds of lines of GUID-laden
+// `pbxproj` content. The scaffold ships the file so v1.1+ teams have
+// the directory shape correct + the .xcconfig wiring intact; they
+// regenerate the real `project.pbxproj` with Xcode (File → New →
+// Project, select the existing folder) at activation time.
+
+{
+    archiveVersion = 1;
+    classes = {};
+    objectVersion = 56;
+    objects = {
+        /* placeholder — replace via Xcode at v1.1+ activation */
+    };
+    rootObject = "";
+}
