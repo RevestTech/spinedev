@@ -4,17 +4,25 @@ These tests verify the static shape of the tool registry without booting a
 real MCP runtime. They are safe to run in CI without the ``mcp`` SDK present
 (the server module imports the SDK lazily).
 
-Counts expected (must match ``shared/mcp/README.md`` tool catalog):
+Counts expected — updated post-v3 module split (Wave 2 housekeeping). The
+pre-split layout (17 tools across 6 modules) was outdated as soon as
+``iso.py``, ``sandbox.py``, and ``auditor.py`` were extracted from
+``verify.py`` and ``kg.py`` gained two more tools. Reality on
+2026-05 is 27 tools across 9 modules:
 
 * orchestrator.py — 4  (project_create, project_status, phase_advance, approval_grant)
 * plan.py         — 1  (plan_dispatch)
 * build.py        — 2  (build_dispatch, build_completed)
-* verify.py       — 2  (verify_audit, iso_invoke)
-* kg.py           — 7  (graph_query, find_callers, code_neighborhood, impact_radius,
-                        doc_for_region, who_owns, hybrid_search)
+* verify.py       — 1  (verify_audit)
+* iso.py          — 7  (iso_invoke + 6 *_iso_scan convenience tools)
+* sandbox.py      — 1  (sandbox_run)
+* auditor.py      — 1  (verify_build_artifact)
+* kg.py           — 9  (graph_query, find_callers, code_neighborhood, impact_radius,
+                        doc_for_region, who_owns, hybrid_search, find_by_satisfies,
+                        trace_dependency)
 * standards.py    — 1  (org_standards_get)
 
-Total: 17 tools.
+Total: 27 tools.
 """
 
 from __future__ import annotations
@@ -24,7 +32,7 @@ import importlib
 import pytest
 from pydantic import BaseModel
 
-EXPECTED_TOOL_COUNT: int = 17
+EXPECTED_TOOL_COUNT: int = 27
 
 EXPECTED_TOOLS_BY_MODULE: dict[str, set[str]] = {
     "shared.mcp.tools.orchestrator": {
@@ -35,7 +43,18 @@ EXPECTED_TOOLS_BY_MODULE: dict[str, set[str]] = {
     },
     "shared.mcp.tools.plan": {"plan_dispatch"},
     "shared.mcp.tools.build": {"build_dispatch", "build_completed"},
-    "shared.mcp.tools.verify": {"verify_audit", "iso_invoke"},
+    "shared.mcp.tools.verify": {"verify_audit"},
+    "shared.mcp.tools.iso": {
+        "iso_invoke",
+        "security_iso_scan",
+        "builder_iso_scan",
+        "qa_iso_scan",
+        "performance_iso_scan",
+        "compliance_iso_scan",
+        "documentation_iso_scan",
+    },
+    "shared.mcp.tools.sandbox": {"sandbox_run"},
+    "shared.mcp.tools.auditor": {"verify_build_artifact"},
     "shared.mcp.tools.kg": {
         "graph_query",
         "find_callers",
@@ -44,6 +63,8 @@ EXPECTED_TOOLS_BY_MODULE: dict[str, set[str]] = {
         "doc_for_region",
         "who_owns",
         "hybrid_search",
+        "find_by_satisfies",
+        "trace_dependency",
     },
     "shared.mcp.tools.standards": {"org_standards_get"},
 }

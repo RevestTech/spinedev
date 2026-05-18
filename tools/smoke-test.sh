@@ -402,7 +402,7 @@ def call(name, payload):
 def emit(cid, ok, msg=""): print(f"{cid}|{'PASS' if ok else 'FAIL'}|{msg}")
 NAME = os.environ["SMOKE_NAME"]
 # 1) project_create
-r = call("project_create", {"name": NAME, "project_type": "greenfield", "owner": "smoke-mcp"})
+r = call("project_create", {"name": NAME, "project_type": "feature", "owner": "smoke-mcp"})
 emit("mcp.project_create.ok", r["status"] == "ok", json.dumps(r)[:200])
 if r["status"] != "ok":
     sys.exit(0)
@@ -443,7 +443,7 @@ s2 = call("project_status", {"project_id": proj_uuid})
 emit("mcp.project_status.after", s2["data"].get("current_phase") == "plan_approved",
      s2["data"].get("current_phase"))
 # 7) Idempotency: second project_create with same name+owner must error.
-dup = call("project_create", {"name": NAME, "project_type": "greenfield", "owner": "smoke-mcp"})
+dup = call("project_create", {"name": NAME, "project_type": "feature", "owner": "smoke-mcp"})
 emit("mcp.project_create.idempotent", dup["status"] == "error" and
      (dup.get("error") or {}).get("code") == "project_already_exists",
      (dup.get("error") or {}).get("code", ""))
@@ -739,7 +739,7 @@ PREFIX = os.environ["SMOKE_NAME"]
 # Build fixtures via project_create to get a real BIGSERIAL id + uuid.
 def _mk(name_suffix):
     r = call("project_create", {"name": f"{PREFIX}-{name_suffix}",
-                                "project_type": "greenfield", "owner": "smoke-build"})
+                                "project_type": "feature", "owner": "smoke-build"})
     assert r["status"] == "ok", json.dumps(r)
     return r["data"]["id"], r["data"]["project_uuid"]
 

@@ -21,7 +21,7 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from shared.mcp.schemas import ToolResponse, ToolStatus
+from shared.mcp.schemas import Citation, ToolResponse, ToolStatus
 from shared.mcp.tools import register_tool
 from shared.schemas.build.build_artifact import BuildArtifact
 
@@ -174,6 +174,42 @@ def _audit(*, actor: str, artifact: BuildArtifact, verdict: Verdict,
     return audit_uuid
 
 
+def _build_citations(*, artifact: BuildArtifact, diff: KGImpactDiff | None,
+                     audit_id: UUID) -> list[Citation]:
+    """Compose Cite-or-Refuse evidence for a verdict (V3 #12).
+
+    Strategy: prefer ``kg_node`` citations sourced from the artifact's
+    declared ``kg_impact`` plus any nodes the auditor's own
+    ``impact_radius`` traversal discovered (``diff.missing_from_claim``).
+    Fall back to an ``audit_hash`` citation referencing this verdict's
+    audit row so the response always carries at least one citation —
+    the Cite-or-Refuse middleware refuses ``status='ok'`` with an empty
+    citation list.
+    """
+    citations: list[Citation] = []
+    seen: set[str] = set()
+
+    # 1. Engineer-declared kg_impact nodes (audited and accepted).
+    for node in artifact.kg_impact:
+        if node.node_id and node.node_id not in seen:
+            citations.append(Citation(type="kg_node", ref=node.node_id))
+            seen.add(node.node_id)
+
+    # 2. Auditor-discovered nodes the engineer did not declare; the
+    #    diff is the evidence trail behind a kg_impact_mismatch verdict.
+    if diff is not None:
+        for nid in diff.missing_from_claim:
+            if nid and nid not in seen:
+                citations.append(Citation(type="kg_node", ref=nid))
+                seen.add(nid)
+
+    # 3. Always include the audit row as a final, citation-of-last-resort.
+    #    ``audit_hash`` ref shape: the audit row UUID — downstream consumers
+    #    can resolve ``spine_audit.event_uuid`` -> ``content_hash``.
+    citations.append(Citation(type="audit_hash", ref=str(audit_id)))
+    return citations
+
+
 def _emit(*, payload: VerifyBuildArtifactInput, verdict: Verdict, rationale: str,
           t0: float, diff: KGImpactDiff | None = None,
           scope_violations: list[str] | None = None,
@@ -194,8 +230,9 @@ def _emit(*, payload: VerifyBuildArtifactInput, verdict: Verdict, rationale: str
         scope_violations=sv, schema_errors=se, audit_id=audit_id,
         rationale=rationale, remediation_directive=remediation,
         duration_ms=duration_ms)
+    citations = _build_citations(artifact=artifact, diff=diff, audit_id=audit_id)
     return ToolResponse(status="ok", data=out.model_dump(mode="json"),
-                        audit_id=audit_id)
+                        audit_id=audit_id, citation=citations)
 
 
 @register_tool(
@@ -203,6 +240,7 @@ def _emit(*, payload: VerifyBuildArtifactInput, verdict: Verdict, rationale: str
     story="STORY-7.4.3",
     description="Verify a BuildArtifact's claimed kg_impact matches actual graph traversal.",
     tags=("auditor", "build", "kg"),
+    requires_citation=True,  # V3 #12 — auditor is strict-tier Cite-or-Refuse
 )
 def verify_build_artifact(payload: VerifyBuildArtifactInput) -> ToolResponse:
     """Order: schema (local) → scope (local) → kg_impact diff (one DB call per
