@@ -467,12 +467,15 @@ def _audit_decision_event(
 @router.get("", response_model=DecisionList)
 async def list_decisions(
     user: Annotated[User, Depends(current_user)],
-    db: Annotated[DbHandle, Depends(get_db_pool)],
     status_filter: Optional[DecisionStatus] = Query(default="pending", alias="status"),
 ) -> DecisionList:
-    """List decisions visible to the caller (Wave 3.5: DB + cache merge)."""
-    # Wire the per-request DbHandle so the store can hydrate from DB.
-    _STORE.set_db(db)
+    """List decisions visible to the caller (Wave 3.5: DB + cache merge).
+
+    DB handle is injected once at startup by the FastAPI lifespan in
+    ``shared/api/app.py`` (which calls ``set_decisions_db(pool)``). When
+    the lifespan hasn't run (tests, bootstrap) the store falls back to
+    cache-only mode automatically.
+    """
     items = await _STORE.alist(status_filter=status_filter)
     return DecisionList(items=items, total=len(items))
 
@@ -481,10 +484,8 @@ async def list_decisions(
 async def get_decision(
     decision_id: str,
     user: Annotated[User, Depends(current_user)],
-    db: Annotated[DbHandle, Depends(get_db_pool)],
 ) -> DecisionCard:
-    """Single decision card."""
-    _STORE.set_db(db)
+    """Single decision card. See ``list_decisions`` re: lifespan wiring."""
     card = await _STORE.aget(decision_id)
     if card is None:
         raise HTTPException(
@@ -498,10 +499,8 @@ async def get_decision(
 async def ack_decision(
     decision_id: str,
     user: Annotated[User, Depends(current_user)],
-    db: Annotated[DbHandle, Depends(get_db_pool)],
 ) -> DecisionActionResponse:
     """Acknowledge / approve a decision card."""
-    _STORE.set_db(db)
     actor = actor_label(user)
     updated = await _STORE.atransition(decision_id, "acked", actor=actor)
     if updated is None:
@@ -521,10 +520,8 @@ async def ack_decision(
 async def reject_decision(
     decision_id: str,
     user: Annotated[User, Depends(current_user)],
-    db: Annotated[DbHandle, Depends(get_db_pool)],
 ) -> DecisionActionResponse:
     """Reject a decision card."""
-    _STORE.set_db(db)
     actor = actor_label(user)
     updated = await _STORE.atransition(decision_id, "rejected", actor=actor)
     if updated is None:

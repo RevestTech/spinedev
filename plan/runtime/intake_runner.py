@@ -58,9 +58,25 @@ TEMPLATES_DIR = Path(os.environ.get(
 # we default to when the user did not pass --template. `greenfield` projects
 # have no inherent product archetype, so we fall back to the CLI tool template
 # (matches the dogfood case). Bundles can extend this via the metadata field.
+#
+# Wave 2 Squad 2 (per #19) added the 7 work-item-type templates
+# (feature/bug/incident/support/refactor/infra/compliance). When the
+# project_type IS one of the 7 we route 1:1 to the matching template; the
+# legacy product-archetype templates (cli-tool / web-app / etc.) remain
+# the fallback for `greenfield` / `evolve` projects whose work-item type is
+# the catch-all `feature`.
 _DEFAULT_TEMPLATE_BY_PROJECT_TYPE: dict[str, str] = {
+    # Legacy lifecycle flags (pre-#19)
     "greenfield": "cli-tool",
     "evolve": "cli-tool",
+    # Wave-2 work-item types (#19) — template per type
+    "feature": "cli-tool",       # generic feature → product-archetype fallback
+    "bug": "bug",
+    "incident": "incident",
+    "support": "support",
+    "refactor": "refactor",
+    "infra": "infra",
+    "compliance": "compliance",
 }
 
 # project_type strings used by the intake YAMLs do not match the PRD's
@@ -72,6 +88,15 @@ _PRD_PROJECT_TYPE_BY_TEMPLATE: dict[str, PRDProjectType] = {
     "data-pipeline": PRDProjectType.DATA_PIPELINE,
     "mobile": PRDProjectType.MOBILE,
     "api-service": PRDProjectType.API_SERVICE,
+    # The 6 Wave-2 work-item-type templates (#19) do NOT correspond to
+    # product archetypes — they're operational work-item shapes. Map them
+    # all to CUSTOM so the synthesizer doesn't pretend they're a product type.
+    "bug": PRDProjectType.CUSTOM,
+    "incident": PRDProjectType.CUSTOM,
+    "support": PRDProjectType.CUSTOM,
+    "refactor": PRDProjectType.CUSTOM,
+    "infra": PRDProjectType.CUSTOM,
+    "compliance": PRDProjectType.CUSTOM,
 }
 
 
@@ -195,24 +220,54 @@ def _esc(value: str) -> str:
 
 
 def _load_project(project_id: int | str) -> dict[str, Any]:
-    """Resolve `project_id` (BIGINT id or name) to the row we need."""
+    """Resolve `project_id` (BIGINT id or name) to the row we need.
+
+    Returns a dict including ``work_item_type`` (V28; defaults to
+    ``'feature'`` when the column predates V28 / is null) so the
+    intake runner can route to the matching Wave-2 template.
+    """
     if isinstance(project_id, int) or (isinstance(project_id, str) and project_id.isdigit()):
         where = f"id = {int(project_id)}"
     else:
         where = f"name = '{_esc(str(project_id))}'"
     sql = (
         "SELECT id::text || '|' || project_uuid::text || '|' || name || '|' || "
-        "project_type || '|' || current_phase || '|' || COALESCE(metadata::text,'{}') "
+        "project_type || '|' || current_phase || '|' || "
+        "COALESCE(work_item_type,'feature') || '|' || "
+        "COALESCE(metadata::text,'{}') "
         f"FROM spine_lifecycle.project WHERE {where} AND status='active' LIMIT 1;"
     )
-    out = _psql(sql)
+    try:
+        out = _psql(sql)
+    except RuntimeError as exc:
+        # Pre-V28 deployments don't have work_item_type — fall back to
+        # the legacy projection.
+        if "work_item_type" not in str(exc):
+            raise
+        legacy_sql = (
+            "SELECT id::text || '|' || project_uuid::text || '|' || name || '|' || "
+            "project_type || '|' || current_phase || '|' || "
+            "COALESCE(metadata::text,'{}') "
+            f"FROM spine_lifecycle.project WHERE {where} AND status='active' LIMIT 1;"
+        )
+        out = _psql(legacy_sql)
+        if not out:
+            raise RuntimeError(f"no active project for id/name={project_id!r}")
+        parts = out.split("|", 5)
+        return {
+            "id": int(parts[0]), "project_uuid": parts[1], "name": parts[2],
+            "project_type": parts[3], "current_phase": parts[4],
+            "work_item_type": "feature",
+            "metadata": json.loads(parts[5] or "{}"),
+        }
     if not out:
         raise RuntimeError(f"no active project for id/name={project_id!r}")
-    parts = out.split("|", 5)
+    parts = out.split("|", 6)
     return {
         "id": int(parts[0]), "project_uuid": parts[1], "name": parts[2],
         "project_type": parts[3], "current_phase": parts[4],
-        "metadata": json.loads(parts[5] or "{}"),
+        "work_item_type": parts[5] or "feature",
+        "metadata": json.loads(parts[6] or "{}"),
     }
 
 
@@ -234,13 +289,33 @@ def _resolve_template_name(
     explicit: str | None,
     project_metadata: dict[str, Any],
     project_type: str,
+    work_item_type: str | None = None,
 ) -> str:
-    """Pick the intake template per priority: --template > metadata > default."""
+    """Pick the intake template per priority: --template > metadata >
+    work_item_type (V28 column) > project_type default.
+
+    The ``work_item_type`` parameter (added Wave-3.5 OP3 cleanup) is the
+    V28 column on ``spine_lifecycle.project``. When set to one of the 7
+    canonical types (feature/bug/incident/support/refactor/infra/
+    compliance) we route 1:1 to the matching Wave-2 template — even when
+    the legacy ``project_type`` is the umbrella ``greenfield``.
+    """
     if explicit:
         return explicit
     via_meta = (project_metadata.get("intake_template") or "").strip()
     if via_meta:
         return via_meta
+    # Wave-2 work-item-type override — preferred over legacy project_type
+    # whenever V28 work_item_type is one of the 6 specialised templates
+    # (bug/incident/support/refactor/infra/compliance). The 7th (feature)
+    # falls through to project_type so greenfield/evolve still pick the
+    # product-archetype template (cli-tool / web-app / etc.).
+    if work_item_type and work_item_type != "feature":
+        candidate = _DEFAULT_TEMPLATE_BY_PROJECT_TYPE.get(work_item_type)
+        if candidate and (TEMPLATES_DIR / f"{candidate}.yaml").exists():
+            return candidate
+        if (TEMPLATES_DIR / f"{work_item_type}.yaml").exists():
+            return work_item_type
     fallback = _DEFAULT_TEMPLATE_BY_PROJECT_TYPE.get(project_type)
     if fallback:
         return fallback
@@ -249,19 +324,90 @@ def _resolve_template_name(
     if (TEMPLATES_DIR / f"{project_type}.yaml").exists():
         return project_type
     raise IntakeTemplateNotFound(
-        f"no template resolvable for project_type={project_type!r}; "
-        f"pass --template, set metadata.intake_template, or extend "
-        f"_DEFAULT_TEMPLATE_BY_PROJECT_TYPE"
+        f"no template resolvable for project_type={project_type!r} "
+        f"work_item_type={work_item_type!r}; pass --template, set "
+        f"metadata.intake_template, or extend _DEFAULT_TEMPLATE_BY_PROJECT_TYPE"
     )
 
 
+#: Wave-2 Squad-2 (#19) templates (bug/incident/support/refactor/infra/
+#: compliance) use a different key (``required_fields``) and a slightly
+#: different question schema (type ``multi`` instead of ``multi_choice``,
+#: type ``numeric``, no ``section``). This translator normalises both
+#: shapes into the unified ``questions`` list the runner already speaks.
+_NEW_TEMPLATE_TYPE_MAP = {
+    # legacy → new and vice-versa; map them all into the legacy set the
+    # _normalize() function below already handles.
+    "multi": "multi_choice",
+    "multi_choice": "multi_choice",
+    "single_choice": "single_choice",
+    "yes_no": "yes_no",
+    "numeric": "open",  # treat as free-text; downstream consumers parse
+    "open": "open",
+}
+
+
+def _normalize_required_fields(rf: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Translate Wave-2 ``required_fields`` entries into the legacy
+    ``questions`` shape the runner's prompt loop already consumes.
+
+    Wave-2 fields lack a ``section`` (they're operational work-items, not
+    discovery surveys), so we use the type_id as a synthesized section
+    so the banner still renders meaningfully.
+    """
+    out: list[dict[str, Any]] = []
+    for entry in rf or []:
+        if not isinstance(entry, dict) or "id" not in entry:
+            continue
+        qtype = entry.get("type", "open")
+        mapped = _NEW_TEMPLATE_TYPE_MAP.get(qtype, "open")
+        normalised: dict[str, Any] = {
+            "id": entry["id"],
+            "type": mapped,
+            "prompt": entry.get("prompt", entry["id"]),
+            "required": bool(entry.get("required", False)),
+        }
+        if entry.get("why_asked"):
+            normalised["why_asked"] = entry["why_asked"]
+        if entry.get("options"):
+            normalised["options"] = list(entry["options"])
+        if entry.get("examples"):
+            normalised["examples"] = list(entry["examples"])
+        out.append(normalised)
+    return out
+
+
 def load_template(template_name: str) -> tuple[dict[str, Any], str]:
-    """Return (parsed_template, version_token) for `<TEMPLATES_DIR>/<name>.yaml`."""
+    """Return (parsed_template, version_token) for `<TEMPLATES_DIR>/<name>.yaml`.
+
+    Supports both template shapes:
+
+    * Legacy (cli-tool / web-app / etc.): top-level ``questions`` list,
+      ``project_type``, ``swarm_composition``.
+    * Wave-2 (#19) work-item-type templates (bug / incident / support /
+      refactor / infra / compliance): top-level ``required_fields`` list,
+      ``type_id``, ``default_pipeline``, ``default_role_set``.
+
+    The returned dict ALWAYS exposes a ``questions`` list so the runner's
+    prompt loop doesn't need to branch — the Wave-2 shape is normalised
+    in-place via ``_normalize_required_fields``.
+    """
     path = TEMPLATES_DIR / f"{template_name}.yaml"
     if not path.exists():
         raise IntakeTemplateNotFound(f"intake template missing: {path}")
     text = path.read_text(encoding="utf-8")
-    parsed = yaml.safe_load(text)
+    parsed = yaml.safe_load(text) or {}
+    if not isinstance(parsed, dict):
+        raise RuntimeError(
+            f"intake template {template_name!r} did not parse as a mapping"
+        )
+    # Wave-2 templates carry ``required_fields`` instead of ``questions``.
+    # If both are present, ``questions`` wins (so a bundle can shim a
+    # legacy template alongside an upstream Wave-2 one).
+    if "questions" not in parsed and "required_fields" in parsed:
+        parsed["questions"] = _normalize_required_fields(
+            parsed.get("required_fields") or []
+        )
     # Use mtime + size as a cheap version token. A real content hash is the
     # future option but mtime is enough to detect "template changed since
     # this project last ran intake".
@@ -630,7 +776,10 @@ def run_intake(
 
     proj = _load_project(project_id)
     template_name = _resolve_template_name(
-        template, proj["metadata"], proj["project_type"]
+        template,
+        proj["metadata"],
+        proj["project_type"],
+        work_item_type=proj.get("work_item_type"),
     )
     parsed, template_version = load_template(template_name)
     questions: list[dict[str, Any]] = parsed.get("questions") or []

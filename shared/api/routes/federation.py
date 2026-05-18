@@ -136,19 +136,51 @@ class ConsentResponse(BaseModel):
 #: always re-populate the cache so the snapshot is current.
 _GRAPH: dict[str, HubEntry] = {}
 
-#: V23 maps ``consent_status`` ∈ {pending, active, suspended, revoked}
-#: while the FastAPI surface uses {pending, accepted, rejected}. Wave 4
-#: should converge; for v1.0 we translate on every read/write.
+#: Consent-enum translation tables — PERMANENT for v1.0+ (OP3 decision, 2026-05-18).
+#:
+#: V23 defines ``spine_federation.hub.consent_status`` with the operational
+#: lifecycle the federation control plane runs against: ``pending`` (just
+#: registered, awaiting peer review) → ``active`` (consent granted, traffic
+#: allowed) → ``suspended`` (paused but reversible, e.g. quota breach
+#: cool-down) → ``revoked`` (terminal denial; row stays for audit but no
+#: traffic flows). That four-state machine matches the audit-chain
+#: invariant that no row is ever deleted (V15 append-only ledger) and gives
+#: ops a recovery state (``suspended``) distinct from termination.
+#:
+#: The FastAPI surface, by contrast, was contracted with the Wave 3 part 2
+#: SPA3 federation panel as a 3-state human decision: ``pending`` (no
+#: decision yet) → ``accepted`` / ``rejected``. Surfacing four states
+#: in the SPA dropdown would force every UI consumer to learn the
+#: ``suspended`` semantics, which is an ops concept not a per-user one.
+#:
+#: Convergence options considered:
+#:   (a) Rename API enum to match V23 — breaks SPA3 contract + every
+#:       client (mobile/voice/external) that already consumes the
+#:       3-state shape. Rejected.
+#:   (b) Migrate V23 down to 3 states (drop ``suspended``) via a new
+#:       Flyway migration — loses the reversible cool-down state that
+#:       the federation engine relies on, and forces a data migration.
+#:       Rejected.
+#:   (c) Keep both enums and translate at the route boundary —
+#:       LOCKED for v1.0+. The translator is forensically lossy in one
+#:       direction (``suspended`` and ``revoked`` both collapse to
+#:       ``rejected`` on the API), but the DB row keeps the precise
+#:       value so the federation control plane (and the audit
+#:       ledger queries that consume it) remain accurate.
+#:
+#: If a future API consumer needs the four-state shape, expose a
+#: dedicated ``GET /federation/hubs/{hub_id}/consent_status_raw``
+#: endpoint rather than widening the existing enum.
 _DB_TO_API_CONSENT = {
     "pending":  "pending",
     "active":   "accepted",
-    "suspended":"rejected",
-    "revoked":  "rejected",
+    "suspended":"rejected",  # rejected-and-recoverable (operationally)
+    "revoked":  "rejected",  # rejected-terminal
 }
 _API_TO_DB_CONSENT = {
     "pending":  "pending",
     "accepted": "active",
-    "rejected": "revoked",
+    "rejected": "revoked",   # operator can still flip to 'suspended' via the engine
 }
 
 

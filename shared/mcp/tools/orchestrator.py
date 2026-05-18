@@ -401,7 +401,37 @@ def project_create(payload: ProjectCreateInput) -> ToolResponse:
     # Insert project + initial phase_history row in one statement (atomic per
     # psql's implicit transaction around `-c`). CTE chain: project insert first,
     # phase_history derives from it, final SELECT surfaces the new ids.
+    #
+    # Wave-2 (#19) added a ``work_item_type`` column on
+    # ``spine_lifecycle.project`` (V28) seeded from the same 7-value enum
+    # as ``project_type``. We write both columns so downstream consumers
+    # (build_dispatcher.route_for_work_item_type, intake_runner template
+    # router) can read ``work_item_type`` without re-deriving it from
+    # ``project_type``. Pre-V28 deployments lack the column; we retry
+    # the legacy projection in that case.
+    work_item_type = payload.project_type  # 1:1 mapping per #19 (Wave-2 Squad-2)
     sql = (
+        "WITH ins AS ("
+        "  INSERT INTO spine_lifecycle.project "
+        "    (name, project_type, work_item_type, pipeline_version, "
+        "     pipeline_manifest_path, owner_user, current_phase) "
+        f"   VALUES ('{_esc(payload.name)}', '{_esc(payload.project_type)}', "
+        f"           '{_esc(work_item_type)}', "
+        f"           '{_esc(payload.pipeline_version)}', "
+        f"           '{_esc(payload.pipeline_manifest_path)}', "
+        f"           '{_esc(payload.owner)}', '{_INITIAL_PHASE}') "
+        "  RETURNING id, project_uuid, created_at"
+        "), "
+        "hist AS ("
+        f"  INSERT INTO spine_lifecycle.phase_history (project_id, phase) "
+        f"  SELECT id, '{_INITIAL_PHASE}' FROM ins "
+        "  RETURNING 1"
+        ") "
+        "SELECT id::text || '|' || project_uuid::text || '|' || created_at::text "
+        "FROM ins, hist;"
+    )
+    legacy_sql = (
+        # Back-compat for pre-V28 schemas (no work_item_type column).
         "WITH ins AS ("
         "  INSERT INTO spine_lifecycle.project "
         "    (name, project_type, pipeline_version, pipeline_manifest_path, "
@@ -423,7 +453,15 @@ def project_create(payload: ProjectCreateInput) -> ToolResponse:
     try:
         out = _psql(sql)
     except RuntimeError as exc:
-        return _error("db_error", f"project insert failed: {exc}", retryable=False)
+        if "work_item_type" in str(exc):
+            # Pre-V28 schema; retry without the new column.
+            try:
+                out = _psql(legacy_sql)
+            except RuntimeError as exc2:
+                return _error("db_error", f"project insert failed (legacy): {exc2}",
+                              retryable=False)
+        else:
+            return _error("db_error", f"project insert failed: {exc}", retryable=False)
     if not out:
         return _error("db_error", "project insert returned no row", retryable=True)
     pid_s, uuid_s, created_s = out.split("|", 2)
@@ -434,6 +472,7 @@ def project_create(payload: ProjectCreateInput) -> ToolResponse:
         action="project_created", project_id=pid, phase=_INITIAL_PHASE,
         actor=payload.owner, subject_type="project", subject_id=uuid_s,
         metadata={"name": payload.name, "project_type": payload.project_type,
+                  "work_item_type": work_item_type,
                   "owner": payload.owner,
                   "pipeline_version": payload.pipeline_version,
                   "pipeline_manifest_path": payload.pipeline_manifest_path},

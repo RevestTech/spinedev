@@ -183,6 +183,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     ok = await db.ping() if pool_ok else False
     logger.info("lifespan_start", extra={"db_reachable": ok})
 
+    # 1b. Wire the asyncpg-backed durability layer for the decision store
+    # once at startup (was per-request in FIX3). Lifespan injection lets
+    # the pool be cleanly torn down at shutdown and avoids re-stamping
+    # the handle on every list/ack/reject call.
+    try:
+        from shared.api.routes.decisions import set_decisions_db  # noqa: PLC0415
+
+        set_decisions_db(db if pool_ok else None)
+        logger.info(
+            "decisions_db_wired",
+            extra={"durable": pool_ok},
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("decisions_db_wire_failed", extra={"error": str(exc)})
+
     # 2. MCP — pre-warm the in-process tool registry.
     try:
         from shared.mcp.tools import TOOL_REGISTRY, discover_tools
@@ -251,6 +266,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             except Exception:  # noqa: BLE001
                 logger.warning("remote_mcp_client_close_failed")
             set_remote_mcp_client(None)
+        # Clear the decisions-store DB handle BEFORE the pool closes so
+        # any in-flight SSE callbacks fall back to cache-only writes
+        # rather than racing against a dying pool.
+        try:
+            from shared.api.routes.decisions import (  # noqa: PLC0415
+                set_decisions_db,
+            )
+
+            set_decisions_db(None)
+        except Exception:  # noqa: BLE001 — defensive teardown
+            pass
         await close_db_pool()
         logger.info("lifespan_stop")
 

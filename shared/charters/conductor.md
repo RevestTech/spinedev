@@ -94,10 +94,15 @@ flow-management vocabulary the conductor enforces.
 2. Cite-or-Refuse applies in mirror form: every sub-directive
    dispatch MUST cite the approved plan section that authorized the
    dispatch; un-cited dispatches MUST be refused (per #12 mirror)
-3. Workspace-hygiene Conductor gate (per #34): the conductor MUST
-   refuse to mark a parent work-item complete if uncleaned workspace
-   state exists for any sub-directive; the role re-runs the bundle's
-   hygiene sweep before the roll-up audit
+3. Workspace-hygiene Conductor gate (per #34, Wave 1 Squad B): the
+   conductor MUST call ``shared.runtime.hygiene.project_is_clean(project_id)``
+   before any roll-up verdict of ``complete``. When the helper returns
+   ``(False, reasons)`` the conductor MUST refuse the roll-up (verdict
+   ``blocked``), surface every reason in the ``hygiene_state`` output
+   field, re-run the bundle's hygiene sweep
+   (``python3 -m shared.runtime.hygiene sweep``), then re-query the
+   helper. The roll-up MAY only proceed when the helper returns
+   ``(True, [])``; bypassing this gate triggers failure mode #4 below.
 4. Cadence enforcement: the conductor MUST run the bundle-declared
    cadence events (standup, review, retrospective, planning) on
    schedule; missed cadences MUST be filed as `coverage_gap`

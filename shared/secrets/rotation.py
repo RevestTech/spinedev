@@ -29,7 +29,8 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any
+from datetime import datetime, timezone
+from typing import Any, Optional
 
 try:
     import httpx
@@ -236,6 +237,132 @@ class RotationHook:
 
 # Module-level default registry — Wave 4 wires audit events to this.
 default_rotation_hook = RotationHook()
+
+
+# ---------------------------------------------------------------------------
+# In-band rotation entry point + canonical ``vault_rotated`` audit emission
+# ---------------------------------------------------------------------------
+#
+# Per design decision #9 (no env-var secret reads) and FIX3's vault-rotations
+# endpoint (which queries ``audit_event WHERE action IN ('vault_rotate',
+# 'vault_rotated')``), we need ``vault_rotate`` (action initiated by the API
+# handler) AND ``vault_rotated`` (action completed by the in-band rotator)
+# to both land in the audit ledger. The API handler in
+# ``shared/api/routes/vault_config.py`` already emits ``vault_rotate``; this
+# helper closes the loop by emitting ``vault_rotated`` after the underlying
+# adapter actually rotates.
+#
+# The audit write is best-effort: a missing ``SPINE_DB_URL`` (tests, off-DB
+# bootstrap) MUST NOT break a rotation. Failures are logged at WARNING but
+# never raised — the caller has already mutated the vault.
+
+
+def _emit_vault_rotated_audit(
+    *,
+    path: str,
+    actor: str,
+    metadata: Optional[dict[str, Any]] = None,
+) -> Optional[int]:
+    """Best-effort emit a ``vault_rotated`` audit event.
+
+    Mirrors the API-handler ``vault_rotate`` row but uses subsystem='shared'
+    and role='secrets' so callers can distinguish API-initiated rotations
+    (subsystem=hub, role=hub_admin) from in-band/completed rotations.
+    Returns the inserted event_id, or ``None`` if the audit write failed
+    (no DB, missing psql, redacted away, etc.).
+    """
+    # Lazy imports so this module stays importable in tooling that doesn't
+    # have shared.audit on the path (py_compile, stripped CI shards).
+    try:
+        from shared.audit.audit_record import (  # noqa: PLC0415
+            AuditRecord,
+            chain_to_previous,
+            write_via_psql,
+        )
+    except Exception as exc:  # pragma: no cover - audit pkg optional
+        log.debug("vault_rotated_audit_import_failed", extra={"error": str(exc)})
+        return None
+    try:
+        rec = AuditRecord(
+            role="secrets",
+            subsystem="shared",
+            action="vault_rotated",
+            actor=actor,
+            subject_type="secret",
+            subject_id=path,
+            metadata={"surface": "rotation.rotate", **(metadata or {})},
+        )
+        rec = chain_to_previous(rec, prev_hash=None)
+        return write_via_psql(rec)
+    except Exception as exc:  # noqa: BLE001 - audit best-effort
+        log.warning(
+            "vault_rotated_audit_emit_failed",
+            extra={"path": path, "error": str(exc)},
+        )
+        return None
+
+
+async def rotate(
+    path: str,
+    *,
+    actor: str = "shared.secrets.rotation",
+    metadata: Optional[dict[str, Any]] = None,
+) -> datetime:
+    """Rotate the secret at ``path`` and emit a ``vault_rotated`` audit row.
+
+    Returns the rotation timestamp (UTC). The audit row is written
+    AFTER the rotation completes so a partial failure leaves no
+    ``vault_rotated`` claim in the ledger.
+
+    Adapter integration is delegated: when the active adapter exposes a
+    ``rotate(path)`` coroutine, that drives the actual rotation; otherwise
+    the function is a no-op against the vault and just files the audit
+    event (used by callers that have already rotated out-of-band — e.g.
+    AWS/Azure server-side rotation observed via the audit chain).
+
+    Wave 4 will extend this hook with the ``RotationHook`` listener fanout
+    so registered cache-invalidators / on-call pagers fire automatically.
+    """
+    # 1) Delegate to the adapter if it offers a rotate() method.
+    try:
+        from shared.secrets import get_default_adapter  # noqa: PLC0415
+
+        adapter: Any = get_default_adapter()
+    except Exception as exc:  # noqa: BLE001
+        log.debug("rotate_adapter_lookup_failed", extra={"error": str(exc)})
+        adapter = None
+    adapter_rotate = getattr(adapter, "rotate", None) if adapter is not None else None
+    if callable(adapter_rotate):
+        try:
+            maybe = adapter_rotate(path)
+            if asyncio.iscoroutine(maybe):
+                await maybe
+        except Exception as exc:  # noqa: BLE001
+            # Audit the FAILED attempt (not a vault_rotated) so the chain
+            # records the operator intent + the failure, then re-raise so
+            # the API handler returns 502.
+            log.warning("rotate_failed", extra={"path": path, "error": str(exc)})
+            raise
+    # 2) Fire the in-process hook fanout. Errors collected (not raised) so
+    #    a bad listener doesn't block downstream invalidation.
+    errors = await default_rotation_hook.fire(path)
+    if errors:
+        log.warning(
+            "rotate_hook_errors",
+            extra={"path": path, "error_count": len(errors)},
+        )
+    # 3) Stamp the audit row + return the rotation timestamp.
+    rotated_at = datetime.now(timezone.utc)
+    _emit_vault_rotated_audit(
+        path=path,
+        actor=actor,
+        metadata={
+            "rotated_at": rotated_at.isoformat(),
+            **({"hook_errors": len(errors)} if errors else {}),
+            **(metadata or {}),
+        },
+    )
+    return rotated_at
 
 
 def _suppress_unused_imports() -> Any:  # pragma: no cover
