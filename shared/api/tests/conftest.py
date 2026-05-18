@@ -10,37 +10,15 @@ Two main fixtures:
   every query and returns scripted rows. Routes that ``Depends(get_db_pool)``
   see the legacy ``DbHandle`` shape over this mock.
 
-Important sys.path note:
-
-Pytest auto-discovers the rootdir by walking up from each test file until
-it hits a directory without ``__init__.py``. ``shared/`` is a namespace
-package (no ``__init__.py``), so pytest inserts ``shared/`` on
-``sys.path``. That makes ``shared.secrets`` shadow Python's stdlib
-``secrets`` (which Starlette imports as ``from secrets import
-token_hex``). We undo the shadow at import time so any subsequent
-``import secrets`` resolves to stdlib.
+Note: the ``shared/secrets/`` vs stdlib ``secrets`` shadow fix lives in
+the repo-root ``conftest.py`` so every test suite inherits it.
 """
 
 from __future__ import annotations
 
-import sys as _sys
-from pathlib import Path as _Path
+from typing import Any, Iterator
 
-_SHARED_DIR = str(_Path(__file__).resolve().parents[2])
-# Remove the ``shared/`` directory from sys.path if pytest inserted it —
-# otherwise ``import secrets`` resolves to ``shared/secrets/`` and
-# breaks ``from secrets import token_hex`` (used by Starlette).
-while _SHARED_DIR in _sys.path:
-    _sys.path.remove(_SHARED_DIR)
-# Drop any pre-imported ``secrets`` module that resolved to our package
-# during conftest collection so the next ``import secrets`` re-resolves.
-_pre = _sys.modules.get("secrets")
-if _pre is not None and getattr(_pre, "__file__", "").startswith(_SHARED_DIR):
-    del _sys.modules["secrets"]
-
-from typing import Any, Iterator  # noqa: E402
-
-import pytest  # noqa: E402
+import pytest
 
 from shared.api.dependencies import set_db_pool
 from shared.identity.middleware import set_keycloak_client
