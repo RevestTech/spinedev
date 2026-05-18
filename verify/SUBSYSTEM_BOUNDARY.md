@@ -180,10 +180,16 @@ bash tools/smoke-test.sh --phase 11
 | Var | Default | When set |
 |---|---|---|
 | `POSTGRES_PASSWORD` | `tron_dev_only` | From `verify/.env` (already shipped) |
-| `ANTHROPIC_API_KEY` | unset → `tron_keys_missing` error | When invoking `verify_audit` for real |
-| `OPENAI_API_KEY` | unset | Alternative to anthropic key |
 | `TRON_DATABASE_URL` | `postgresql://tron:tron_dev_only@127.0.0.1:33010/tron` | Smoke phase 11 override |
 | `DATABASE_URL` | same | TRON alembic + runtime DB-bound paths |
+
+> **LLM provider credentials**: Per V3 #2 + #9 + Part 1.4 #6, TRON's
+> LLM client is a SHIM over `shared/llm/`; credentials are sourced
+> from `shared.secrets` (vault-only). `ANTHROPIC_API_KEY` /
+> `OPENAI_API_KEY` env vars are **no longer read** by the shim or by
+> `shared/mcp/tools/verify.py` / `iso.py`. Wire keys into vault via
+> Hub bootstrap. See `verify/LLM_BRIDGE.md` for the architectural
+> detail and the "adding a new provider" recipe.
 
 ### PYTHONPATH (the load-bearing gotcha)
 

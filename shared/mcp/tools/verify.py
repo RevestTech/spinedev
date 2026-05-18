@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import shutil
 import subprocess
 from decimal import Decimal
@@ -214,12 +213,17 @@ def _load_file_contents(artifact: BuildArtifact) -> dict[str, str]:
     return out
 
 
-def _tron_secrets_from_env() -> dict[str, str]:
-    """``ANTHROPIC_API_KEY``/``OPENAI_API_KEY`` env → TRON keyvault keys."""
-    s: dict[str, str] = {}
-    if ak := os.environ.get("ANTHROPIC_API_KEY", "").strip(): s["llm/anthropic-key"] = ak
-    if ok := os.environ.get("OPENAI_API_KEY", "").strip():    s["llm/openai-key"] = ok
-    return s
+def _tron_secrets() -> dict[str, str]:
+    """Return an empty secrets dict — TRON's LLM client is now a shim over
+    ``shared/llm/`` which sources credentials via ``shared.secrets`` per
+    V3 #9 (vault-only). The dict is still passed positionally to
+    ``AuditManager(secrets=...)`` and the ISO agents because TRON's
+    public Python API surface hasn't changed; the values are unused
+    (the SHIM ignores the legacy ``anthropic_key`` / ``openai_key``
+    kwargs). See ``verify/LLM_BRIDGE.md`` for the architectural detail.
+
+    Per V3 Part 1.4 #6 + #9: NEVER read provider API keys from env here."""
+    return {}
 
 
 def _run_async(coro: Any) -> Any:
@@ -244,12 +248,17 @@ def _aggregate_cost(agent_metrics: list[dict[str, Any]]) -> Decimal:
 def _register_default_iso_agents(manager: Any, secrets: dict[str, str]) -> list[str]:
     """Register the six default ISO agents onto ``manager`` (mirrors
     ``audit_executor._build_agent_manager``). Returns registered agent_ids;
-    silently skips agents that fail to import so a partial swarm still runs."""
+    silently skips agents that fail to import so a partial swarm still runs.
+
+    Provider/model defaults to Anthropic Haiku (DEFAULT_ANTHROPIC_FAST_MODEL).
+    Per V3 Part 1.4 #6 the LLM client is now a shim over ``shared/llm/``;
+    credentials resolve via ``shared.secrets`` per #9. The ``secrets`` dict
+    is forwarded to each agent for backward-compat — its values are ignored
+    by the shim."""
     from verify.tron.agents.base import ISOConfig, ISOSpecialization, LLMProvider
     from verify.tron.infra.llm.client import DEFAULT_ANTHROPIC_FAST_MODEL
-    provider = (LLMProvider.ANTHROPIC if "llm/anthropic-key" in secrets
-                else LLMProvider.OPENAI)
-    model = DEFAULT_ANTHROPIC_FAST_MODEL if provider == LLMProvider.ANTHROPIC else "gpt-4o"
+    provider = LLMProvider.ANTHROPIC
+    model = DEFAULT_ANTHROPIC_FAST_MODEL
     registered: list[str] = []
     for mod_suffix, cls_name, spec_name, tools in _DEFAULT_ISO_SPECS:
         try:
@@ -426,12 +435,14 @@ def verify_audit(payload: VerifyAuditInput) -> ToolResponse:
     # 5. Run the audit. TRON's AuditRequest: project_id, audit_run_id,
     #    file_contents, languages, workspace_root, check_types. Sandbox +
     #    cross-LLM are layered internally; cost cap enforced by Spine post-hoc.
-    secrets = _tron_secrets_from_env()
-    if not secrets:
-        return _error_envelope(code="tron_keys_missing", retryable=False, audit_id=audit_id,
-            message="Neither ANTHROPIC_API_KEY nor OPENAI_API_KEY in env — "
-                    "TRON AuditManager requires at least one LLM provider key.",
-            duration_ms=int((perf_counter() - t0) * 1000))
+    #
+    # Per V3 Part 1.4 #6: TRON's LLM client is now a SHIM over shared/llm/
+    # which sources provider credentials via shared.secrets per #9.
+    # The ``secrets`` dict is still forwarded to AuditManager for
+    # backward-compat with TRON's constructor signature; the shim ignores
+    # the legacy ``anthropic_key`` / ``openai_key`` kwargs it would
+    # otherwise extract. See verify/LLM_BRIDGE.md.
+    secrets = _tron_secrets()
     file_contents = _load_file_contents(payload.build_artifact)
     if not file_contents:
         return _error_envelope(code="no_source_files", retryable=False, audit_id=audit_id,

@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import time
 from decimal import Decimal
 from pathlib import Path
@@ -164,17 +163,17 @@ def _try_import_agent(agent_name: str) -> type | None:
         return None
 
 
-def _tron_secrets_from_env() -> dict[str, str]:
-    """``ANTHROPIC_API_KEY`` / ``OPENAI_API_KEY`` env → TRON keyvault keys.
+def _tron_secrets() -> dict[str, str]:
+    """Return an empty secrets dict — TRON's LLM client is now a shim over
+    ``shared/llm/`` which sources credentials via ``shared.secrets`` per
+    V3 #9 (vault-only). Kept as a function (rather than inlined) because
+    multiple call sites pass the dict into TRON's ISO-agent constructors,
+    and a single seam makes future per-bundle policy injection trivial.
 
-    Mirrors verify._tron_secrets_from_env (keeping a local copy avoids a
-    circular import: verify.py imports from this module)."""
-    out: dict[str, str] = {}
-    if ak := os.environ.get("ANTHROPIC_API_KEY", "").strip():
-        out["llm/anthropic-key"] = ak
-    if ok := os.environ.get("OPENAI_API_KEY", "").strip():
-        out["llm/openai-key"] = ok
-    return out
+    Per V3 Part 1.4 #6 + #9: NEVER read provider API keys from env here.
+    Mirrors ``verify._tron_secrets`` (kept local to avoid a circular
+    import — ``verify.py`` imports from this module)."""
+    return {}
 
 
 def _load_region_contents(region: "CodeRegion") -> dict[str, str]:
@@ -276,13 +275,17 @@ def _run_async(coro: Any) -> Any:
 def _build_iso_agent(agent_cls: type, agent_name: str,
                      secrets: dict[str, str]) -> Any:
     """Instantiate an ISO agent with sensible defaults. Mirrors the per-agent
-    factory in verify._register_default_iso_agents but for a single agent."""
+    factory in verify._register_default_iso_agents but for a single agent.
+
+    Provider/model defaults to Anthropic Haiku. Per V3 Part 1.4 #6 the
+    LLM client is now a shim over ``shared/llm/``; credentials resolve
+    via ``shared.secrets`` per #9. The ``secrets`` dict is forwarded to
+    the agent constructor for backward-compat — its values are ignored
+    by the shim."""
     from verify.tron.agents.base import ISOConfig, ISOSpecialization, LLMProvider
     from verify.tron.infra.llm.client import DEFAULT_ANTHROPIC_FAST_MODEL
-    provider = (LLMProvider.ANTHROPIC if "llm/anthropic-key" in secrets
-                else LLMProvider.OPENAI)
-    model = (DEFAULT_ANTHROPIC_FAST_MODEL if provider == LLMProvider.ANTHROPIC
-             else "gpt-4o")
+    provider = LLMProvider.ANTHROPIC
+    model = DEFAULT_ANTHROPIC_FAST_MODEL
     # Specialization is the agent_name minus the "ISO" suffix.
     spec_name = agent_name.replace("ISO", "").upper()
     tools_required: tuple[str, ...] = (
@@ -371,18 +374,13 @@ def iso_invoke(payload: IsoInvokeInput) -> ToolResponse:
                      "PYTHONPATH (STORY-8.2.x)."),
             retryable=False, audit_id=audit_id)
 
-    # 2. Need at least one LLM key — TRON ISO agents are LLM-driven.
-    secrets = _tron_secrets_from_env()
-    if not secrets:
-        audit_id = _audit_from_iso_invoke(
-            project_id=payload.project_id, actor=payload.actor,
-            agent_name=payload.agent_name, cost_usd=Decimal("0"),
-            cost_attribution=payload.cost_attribution)
-        return _error(
-            code="tron_keys_missing",
-            message=("Neither ANTHROPIC_API_KEY nor OPENAI_API_KEY in env — "
-                     "TRON ISO agents require at least one LLM provider key."),
-            retryable=False, audit_id=audit_id)
+    # 2. Per V3 Part 1.4 #6: TRON's LLM client is now a SHIM over
+    #    shared/llm/ which sources provider credentials via
+    #    shared.secrets per #9 (vault-only). No env-var key read here;
+    #    no early ``tron_keys_missing`` gate. If shared.llm has no
+    #    credential for the configured provider the SHIM raises a
+    #    ProviderConfigError that surfaces inside the agent run below.
+    secrets = _tron_secrets()
 
     # 3. Load the file slice and build TRON's Blueprint.
     file_contents = _load_region_contents(payload.code_region)

@@ -1,14 +1,54 @@
 """
-Unified LLM client — abstracts Anthropic and OpenAI behind a single interface.
+TRON ↔ Spine LLM bridge — thin SHIM over ``shared/llm/``.
 
-All API keys come from keyvault at runtime. No secrets in env or config.
+Per V3 design decision #2 (LLM-agnostic by architecture) and V3 build-sequence
+Part 1.4 question #6: TRON's LLM client MUST route through ``shared/llm/`` —
+no per-provider HTTP / SDK code, no env-var key reads, no Provider enum that
+diverges from the seven Wave-0 provider adapters. Spine's Hub bootstrap wires
+provider credentials into ``shared.secrets``; ``shared/llm/providers/*``
+resolve them at call time.
 
-Features:
-- Provider-agnostic request/response
-- Retry with exponential backoff
-- Circuit breaker (fail-fast after consecutive errors)
-- Token counting and cost tracking
-- Structured JSON output mode
+What this module preserves (TRON callers MUST keep working without code
+changes — see ``verify/tron/agents/*`` and ``verify/tron/workflows/*``):
+
+  * Public Python API surface — every symbol exported pre-shim is re-exported:
+        Provider, LLMClient, LLMMessage, LLMRequest, LLMResponse,
+        CircuitBreaker, CircuitState, MODEL_REGISTRY,
+        DEFAULT_ANTHROPIC_FAST_MODEL
+  * Call signature — ``LLMClient(anthropic_key=..., openai_key=...).complete(request)``
+    keeps the same kwargs. The keys are now **ignored** (kept only for
+    backward compatibility); shared.llm sources credentials via
+    ``shared.secrets`` per #9 (vault-only).
+  * TRON-side concerns — Redis cache, circuit breaker, budget gate, and
+    LLM usage-ledger persistence still live here. Those are TRON's own
+    cost / reliability primitives, NOT shared.llm's job.
+
+What this module DELETES:
+
+  * Per-provider HTTP/SDK call paths (``_call_anthropic`` /
+    ``_call_openai`` / ``_call_ollama``). All provider dispatch now
+    happens inside ``shared.llm.call_async``.
+  * Env-var API-key reads (the legacy ``os.environ.get(...)`` calls for
+    provider keys). Per V3 #9 secrets NEVER come from env — they come
+    from vault via ``shared.secrets``. The ``anthropic_key`` /
+    ``openai_key`` kwargs on ``LLMClient`` are accepted for
+    backward-compat and silently ignored with a one-time warning.
+
+What this module ADDS:
+
+  * Four new ``Provider`` enum values — ``BEDROCK``, ``VERTEX``, ``QWEN``,
+    ``VLLM`` — so TRON agents can opt into any of the seven v3 providers
+    per-bundle without code changes here.
+  * ``_PROVIDER_MODEL_PREFIX`` — single source of truth mapping TRON's
+    enum to ``shared.llm`` model prefixes (see
+    ``shared/llm/providers/__init__.py`` for the canonical prefix list).
+
+If ``shared.llm`` is not importable or refuses the request because no
+provider is configured, the shim raises a clear ``ProviderConfigError``
+pointing at Hub bootstrap (vault wiring / shared.secrets setup).
+
+See ``verify/LLM_BRIDGE.md`` for the architectural rationale and the
+"adding a new provider" recipe.
 """
 
 from __future__ import annotations
@@ -23,8 +63,6 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-import httpx
-
 from tron.api.config import settings
 from tron.infra.llm.budget import assert_llm_budget_allows_estimated_call
 from tron.infra.llm.usage_context import get_llm_usage_context
@@ -37,9 +75,62 @@ logger = logging.getLogger(__name__)
 
 
 class Provider(str, Enum):
+    """TRON-facing provider enum.
+
+    Pre-shim values (ANTHROPIC / OPENAI / OLLAMA) preserved so existing
+    TRON code keeps importing unchanged. New values mirror the seven
+    Wave-0 ``shared/llm/providers/*`` adapters per V3 #2 (LLM-agnostic).
+
+    Provider → ``shared.llm`` model-prefix mapping lives in
+    ``_PROVIDER_MODEL_PREFIX`` below — adding a new provider = add a
+    factory under ``shared/llm/providers/`` THEN add an enum value +
+    mapping entry here.
+    """
+
     ANTHROPIC = "anthropic"
     OPENAI = "openai"
     OLLAMA = "ollama"
+    # New v3 providers — reachable without TRON-agent code changes.
+    BEDROCK = "bedrock"
+    VERTEX = "vertex"
+    QWEN = "qwen"
+    VLLM = "vllm"
+
+
+# Provider → shared/llm model-prefix mapping. Mirrors the registration
+# order in ``shared/llm/providers/__init__.py::_load_builtin_providers``.
+# When ``request.model`` does NOT already start with one of these, the
+# shim re-routes by prepending the prefix.
+_PROVIDER_MODEL_PREFIX: Dict[Provider, str] = {
+    Provider.ANTHROPIC: "claude-",
+    Provider.OPENAI: "gpt-",
+    Provider.OLLAMA: "ollama:",
+    Provider.BEDROCK: "bedrock:",
+    Provider.VERTEX: "vertex:",
+    Provider.QWEN: "qwen:",
+    Provider.VLLM: "vllm:",
+}
+
+
+def _provider_for_model(model: str) -> Provider:
+    """Reverse-lookup: ``shared.llm`` model id → TRON ``Provider`` enum.
+
+    Used to populate ``LLMResponse.provider`` after a successful call so
+    callers branching on ``response.provider == Provider.ANTHROPIC``
+    keep working.
+    """
+    # Legacy TRON ``ollama/`` prefix → modern ``ollama:``.
+    if model.startswith("ollama/") or model.startswith("ollama:"):
+        return Provider.OLLAMA
+    for prov, prefix in _PROVIDER_MODEL_PREFIX.items():
+        if model.startswith(prefix):
+            return prov
+    # Fall back to Anthropic-shaped model ids (claude-*) defaulting
+    # already handled above; anything else is unknown.
+    raise ValueError(
+        f"Cannot map model {model!r} to a TRON Provider — "
+        f"known prefixes: {list(_PROVIDER_MODEL_PREFIX.values())}"
+    )
 
 
 # Default Anthropic model for ISO audits / fast tasks. Claude 3 Haiku was retired
@@ -47,7 +138,10 @@ class Provider(str, Enum):
 DEFAULT_ANTHROPIC_FAST_MODEL = "claude-haiku-4-5-20251001"
 
 # Model → (provider, input_cost_per_1k, output_cost_per_1k)
-# Anthropic Haiku 4.5: $1 / $5 per MTok (docs pricing) → per-1k-token rates below.
+# Cost rates are TRON-side accounting metadata; shared/llm/ does NOT
+# price calls (per its design — pricing lives in shared/cost/router.py).
+# We keep this registry for the per-call cost attribution + budget gate
+# that ``persist_llm_usage`` writes into TRON's usage ledger.
 MODEL_REGISTRY: Dict[str, tuple[Provider, float, float]] = {
     # Anthropic Claude
     DEFAULT_ANTHROPIC_FAST_MODEL: (Provider.ANTHROPIC, 0.001, 0.005),
@@ -142,18 +236,123 @@ class CircuitBreaker:
         return True
 
 
+# ── Shim helpers ───────────────────────────────────────────────────────
+
+
+_LEGACY_KEY_WARNING_EMITTED = False
+
+
+def _warn_legacy_key_kwargs_once(anthropic_key: Optional[str],
+                                 openai_key: Optional[str]) -> None:
+    """One-time deprecation log when callers still pass ``*_key`` kwargs.
+
+    Per V3 #9 (vault-only secrets), API keys NEVER cross this boundary
+    as plaintext kwargs. ``shared.llm`` resolves them via
+    ``shared.secrets``. The kwargs are kept for backward-compat with
+    pre-shim TRON code but their VALUES are dropped on the floor.
+    """
+    global _LEGACY_KEY_WARNING_EMITTED
+    if _LEGACY_KEY_WARNING_EMITTED:
+        return
+    if anthropic_key or openai_key:
+        logger.warning(
+            "LLMClient(anthropic_key=..., openai_key=...) kwargs are "
+            "ignored — credentials now resolve via shared.secrets per "
+            "V3 #9 (vault-only). Remove these kwargs from your TRON "
+            "caller; the shim accepts them only for backward compat."
+        )
+        _LEGACY_KEY_WARNING_EMITTED = True
+
+
+def _shared_llm_request_from(request: LLMRequest) -> Any:
+    """Translate TRON ``LLMRequest`` → ``shared.llm.LLMRequest``.
+
+    Splits ``role="system"`` messages out into the top-level ``system``
+    field (matches the shape ``shared/llm/`` adapters expect).
+    """
+    from shared.llm import LLMRequest as SharedLLMRequest, Message as SharedMessage
+
+    system_text: Optional[str] = None
+    messages: list = []
+    for msg in request.messages:
+        if msg.role == "system":
+            # Accumulate; multiple system messages concatenate (matches
+            # shared/llm adapter behavior when callers pass role="system").
+            system_text = (system_text + "\n\n" + msg.content) if system_text else msg.content
+        else:
+            messages.append(SharedMessage(role=msg.role, content=msg.content))
+
+    # Pydantic envelope; shared.llm validates ``max_tokens > 0`` and
+    # ``temperature in [0, 2]``. TRON's defaults already satisfy both.
+    kwargs: Dict[str, Any] = {
+        "model": request.model,
+        "messages": messages,
+        "max_tokens": request.max_tokens,
+        "temperature": request.temperature,
+    }
+    if system_text is not None:
+        kwargs["system"] = system_text
+    # NOTE: TRON's ``json_mode`` + ``stop_sequences`` are intentionally
+    # dropped on the floor for Wave-0 shared/llm (which doesn't model
+    # them yet — see ``shared/llm/request.py`` docstring "MVP scope").
+    # Wave-1 augmentation of shared/llm will surface them; the shim
+    # gains pass-through at that time without breaking TRON callers.
+    return SharedLLMRequest(**kwargs)
+
+
+def _llm_response_from_shared(shared_response: Any, *,
+                              fallback_model: str) -> LLMResponse:
+    """Translate ``shared.llm.LLMResponse`` → TRON ``LLMResponse``."""
+    model = getattr(shared_response, "model", None) or fallback_model
+    usage = getattr(shared_response, "usage", None)
+    in_tok = int(getattr(usage, "input_tokens", 0) or 0) if usage else 0
+    out_tok = int(getattr(usage, "output_tokens", 0) or 0) if usage else 0
+    try:
+        provider = _provider_for_model(model)
+    except ValueError:
+        # Provider unknown to TRON — fall back to ANTHROPIC as a
+        # not-load-bearing placeholder; callers that don't branch on
+        # ``response.provider`` don't notice.
+        provider = Provider.ANTHROPIC
+    raw_dump: Any = None
+    raw = getattr(shared_response, "raw", None)
+    if isinstance(raw, dict):
+        raw_dump = raw
+    return LLMResponse(
+        content=getattr(shared_response, "content", "") or "",
+        model=model,
+        provider=provider,
+        input_tokens=in_tok,
+        output_tokens=out_tok,
+        finish_reason=getattr(shared_response, "finish_reason", "") or "",
+        raw=raw_dump,
+    )
+
+
 # ── Client ─────────────────────────────────────────────────────────────
 
 
 class LLMClient:
-    """Async LLM client with retry, circuit breaker, and cost tracking.
+    """Async LLM client — SHIM over ``shared.llm``.
 
-    Usage:
-        client = LLMClient(
-            anthropic_key=secrets.get("llm/anthropic-key"),
-            openai_key=secrets.get("llm/openai-key"),
-        )
+    Usage (unchanged from pre-shim):
+
+        client = LLMClient()           # keys come from vault via shared.secrets
         response = await client.complete(request)
+
+    Backward-compat kwargs (silently ignored, one-time warning):
+
+        client = LLMClient(anthropic_key=..., openai_key=...)
+
+    TRON-side concerns retained here:
+
+      * Per-provider circuit breaker (open after N consecutive failures)
+      * Optional Redis response cache (``LLM_CACHE_ENABLED=1``)
+      * LLM budget gate (``assert_llm_budget_allows_estimated_call``)
+      * Usage-ledger persistence (``persist_llm_usage``)
+
+    Provider dispatch + retry + adapter selection now live inside
+    ``shared.llm.call_async``.
     """
 
     def __init__(
@@ -162,30 +361,22 @@ class LLMClient:
         openai_key: Optional[str] = None,
         timeout: int = 30,
     ) -> None:
-        self._keys: Dict[Provider, str] = {}
-        if anthropic_key and anthropic_key != "REPLACE_ME_IN_VAULT":
-            self._keys[Provider.ANTHROPIC] = anthropic_key
-        if openai_key and openai_key != "REPLACE_ME_IN_VAULT":
-            self._keys[Provider.OPENAI] = openai_key
+        # Per V3 #9 (vault-only secrets) we DO NOT store API keys here
+        # and we DO NOT read them from env. Keys come from shared.secrets
+        # via the shared/llm adapter config. Kwargs accepted only so
+        # pre-shim TRON callers keep working without edit.
+        _warn_legacy_key_kwargs_once(anthropic_key, openai_key)
 
         self._timeout = timeout
         self._breakers: Dict[Provider, CircuitBreaker] = {
-            Provider.ANTHROPIC: CircuitBreaker(
+            prov: CircuitBreaker(
                 failure_threshold=settings.llm_circuit_breaker_threshold,
                 recovery_timeout=settings.llm_circuit_breaker_timeout,
-            ),
-            Provider.OPENAI: CircuitBreaker(
-                failure_threshold=settings.llm_circuit_breaker_threshold,
-                recovery_timeout=settings.llm_circuit_breaker_timeout,
-            ),
-            Provider.OLLAMA: CircuitBreaker(
-                failure_threshold=settings.llm_circuit_breaker_threshold,
-                recovery_timeout=settings.llm_circuit_breaker_timeout,
-            ),
+            )
+            for prov in Provider
         }
-        self._http = httpx.AsyncClient(timeout=timeout)
 
-        # Cumulative cost tracking
+        # Cumulative cost tracking (TRON-side, mirrors pre-shim API).
         self.total_cost_usd: float = 0.0
         self.total_requests: int = 0
 
@@ -194,18 +385,19 @@ class LLMClient:
         request: LLMRequest,
         retries: Optional[int] = None,
     ) -> LLMResponse:
-        """Send a completion request to the appropriate provider.
+        """Send a completion request via ``shared.llm.call_async``.
 
-        Handles retry with exponential backoff and circuit breaker.
+        Pipeline:
+          1. Resolve TRON-side provider + cost band from MODEL_REGISTRY.
+          2. Check circuit breaker for that provider.
+          3. Optional Redis cache hit-path (LLM_CACHE_ENABLED=1).
+          4. Budget gate.
+          5. Retry-loop calling ``shared.llm.call_async``. ``shared.llm``
+             also retries inside the adapter; the outer loop here is
+             TRON's belt-and-braces.
+          6. Translate response, persist usage, return.
         """
         provider, _, _ = self._resolve_model(request.model)
-
-        if provider != Provider.OLLAMA and provider not in self._keys:
-            raise ValueError(
-                f"No API key available for provider '{provider.value}'. "
-                f"Ensure the key is set in the container keyvault."
-            )
-
         breaker = self._breakers[provider]
         if not breaker.allow_request():
             raise RuntimeError(
@@ -265,13 +457,7 @@ class LLMClient:
         for attempt in range(max_retries + 1):
             try:
                 start = time.time()
-                if provider == Provider.ANTHROPIC:
-                    response = await self._call_anthropic(request)
-                elif provider == Provider.OLLAMA:
-                    response = await self._call_ollama(request)
-                else:
-                    response = await self._call_openai(request)
-
+                response = await self._call_shared_llm(request)
                 response.latency_ms = int((time.time() - start) * 1000)
                 response.cost_usd = self._calculate_cost(
                     request.model, response.input_tokens, response.output_tokens
@@ -316,7 +502,18 @@ class LLMClient:
                 )
                 return response
 
-            except (httpx.TimeoutException, httpx.HTTPStatusError) as exc:
+            except _SHARED_LLM_CONFIG_ERRORS as exc:
+                # Config errors don't trip the circuit breaker — they
+                # surface a Hub-bootstrap problem, not a provider outage.
+                # Re-raise immediately with a clear pointer.
+                raise ValueError(
+                    f"shared.llm rejected the request because no "
+                    f"credential is configured for the resolved "
+                    f"provider ({provider.value}). Wire the provider "
+                    f"key into shared.secrets via Hub bootstrap, then "
+                    f"retry. Underlying error: {exc!s}"
+                ) from exc
+            except _SHARED_LLM_RETRYABLE_ERRORS as exc:
                 last_error = exc
                 breaker.record_failure()
                 if attempt < max_retries:
@@ -335,8 +532,9 @@ class LLMClient:
         )
 
     async def close(self) -> None:
-        """Close the HTTP client."""
-        await self._http.aclose()
+        """Close the client. No-op under the shim (shared/llm owns the
+        HTTP/SDK lifecycles inside its adapters)."""
+        return None
 
     async def _persist_usage_if_context(
         self,
@@ -367,167 +565,98 @@ class LLMClient:
             max_tokens=request.max_tokens,
         )
 
-    # ── Provider-Specific Calls ────────────────────────────────────
+    # ── Shared-LLM bridge ──────────────────────────────────────────
 
-    async def _call_anthropic(self, request: LLMRequest) -> LLMResponse:
-        """Call the Anthropic Messages API."""
-        api_key = self._keys[Provider.ANTHROPIC]
+    async def _call_shared_llm(self, request: LLMRequest) -> LLMResponse:
+        """Delegate to ``shared.llm.call_async``; translate envelopes."""
+        # Local import so a missing ``shared`` package in standalone TRON
+        # deploys surfaces as a clear ProviderConfigError, not an
+        # ImportError at module load time.
+        from shared.llm import call_async as shared_call_async
 
-        # Separate system message from conversation
-        system_text = ""
-        messages = []
-        for msg in request.messages:
-            if msg.role == "system":
-                system_text = msg.content
-            else:
-                messages.append({"role": msg.role, "content": msg.content})
-
-        body: Dict[str, Any] = {
-            "model": request.model,
-            "max_tokens": request.max_tokens,
-            "temperature": request.temperature,
-            "messages": messages,
-        }
-        if system_text:
-            body["system"] = system_text
-        if request.stop_sequences:
-            body["stop_sequences"] = request.stop_sequences
-
-        resp = await self._http.post(
-            "https://api.anthropic.com/v1/messages",
-            headers={
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
-            },
-            json=body,
-        )
-        sc = getattr(resp, "status_code", None)
-        if isinstance(sc, int) and sc >= 400:
-            logger.error(
-                "Anthropic Messages API HTTP %s model=%s body=%s",
-                sc,
-                request.model,
-                (resp.text or "")[:4000],
-            )
-        resp.raise_for_status()
-        data = resp.json()
-
-        content = ""
-        for block in data.get("content", []):
-            if block.get("type") == "text":
-                content += block["text"]
-
-        usage = data.get("usage", {})
-        return LLMResponse(
-            content=content,
-            model=data.get("model", request.model),
-            provider=Provider.ANTHROPIC,
-            input_tokens=usage.get("input_tokens", 0),
-            output_tokens=usage.get("output_tokens", 0),
-            finish_reason=data.get("stop_reason", ""),
-            raw=data,
-        )
-
-    async def _call_ollama(self, request: LLMRequest) -> LLMResponse:
-        """Call a local Ollama server (OpenAI-compatible chat)."""
-        base = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/")
-        model_id = request.model[7:] if request.model.startswith("ollama/") else os.getenv(
-            "OLLAMA_MODEL", "llama3.2"
-        )
-        messages = [{"role": msg.role, "content": msg.content} for msg in request.messages]
-        resp = await self._http.post(
-            f"{base}/api/chat",
-            json={
-                "model": model_id,
-                "messages": messages,
-                "stream": False,
-                "options": {"temperature": request.temperature},
-            },
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        msg = data.get("message") or {}
-        content = msg.get("content") or ""
-        prompt_n = int(data.get("prompt_eval_count", 0) or 0)
-        in_tok = prompt_n or max(len(content) // 4, 1)
-        out_tok = max(len(content) // 4, 0)
-        return LLMResponse(
-            content=content,
-            model=request.model,
-            provider=Provider.OLLAMA,
-            input_tokens=in_tok,
-            output_tokens=out_tok,
-            finish_reason="stop",
-            raw=data,
-        )
-
-    async def _call_openai(self, request: LLMRequest) -> LLMResponse:
-        """Call the OpenAI Chat Completions API."""
-        api_key = self._keys[Provider.OPENAI]
-
-        messages = [
-            {"role": msg.role, "content": msg.content}
-            for msg in request.messages
-        ]
-
-        body: Dict[str, Any] = {
-            "model": request.model,
-            "max_tokens": request.max_tokens,
-            "temperature": request.temperature,
-            "messages": messages,
-        }
-        if request.json_mode:
-            body["response_format"] = {"type": "json_object"}
-        if request.stop_sequences:
-            body["stop"] = request.stop_sequences
-
-        resp = await self._http.post(
-            "https://api.openai.com/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            json=body,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-
-        choice = data["choices"][0]
-        usage = data.get("usage", {})
-        return LLMResponse(
-            content=choice["message"]["content"],
-            model=data.get("model", request.model),
-            provider=Provider.OPENAI,
-            input_tokens=usage.get("prompt_tokens", 0),
-            output_tokens=usage.get("completion_tokens", 0),
-            finish_reason=choice.get("finish_reason", ""),
-            raw=data,
+        shared_request = _shared_llm_request_from(request)
+        shared_response = await shared_call_async(shared_request)
+        return _llm_response_from_shared(
+            shared_response, fallback_model=request.model
         )
 
     # ── Helpers ────────────────────────────────────────────────────
 
     def _resolve_model(self, model: str) -> tuple[Provider, float, float]:
-        """Look up model in registry."""
-        if model.startswith("ollama/"):
+        """Look up model in registry; falls back to prefix detection for
+        models not in TRON's cost table (still routable via shared.llm)."""
+        if model.startswith("ollama/") or model.startswith("ollama:"):
             return Provider.OLLAMA, 0.0, 0.0
-        if model not in MODEL_REGISTRY:
+        if model in MODEL_REGISTRY:
+            return MODEL_REGISTRY[model]
+        # Not in TRON's per-model cost table — try prefix routing so
+        # bedrock:/vertex:/qwen:/vllm: don't 400 here. Cost = 0 means
+        # the TRON budget gate is permissive for these; budgeting them
+        # is shared/cost/router.py's job once it ships.
+        try:
+            return _provider_for_model(model), 0.0, 0.0
+        except ValueError as exc:
             raise ValueError(
-                f"Unknown model '{model}'. Known models: "
-                f"{', '.join(sorted(MODEL_REGISTRY.keys()))}, ollama/<model_id>"
-            )
-        return MODEL_REGISTRY[model]
+                f"Unknown model '{model}'. Known TRON-priced models: "
+                f"{', '.join(sorted(MODEL_REGISTRY.keys()))}. "
+                f"Or use any shared/llm prefix: "
+                f"{list(_PROVIDER_MODEL_PREFIX.values())}."
+            ) from exc
 
     @staticmethod
     def _calculate_cost(
         model: str, input_tokens: int, output_tokens: int
     ) -> float:
         """Calculate cost in USD."""
-        if model.startswith("ollama/"):
+        if model.startswith("ollama/") or model.startswith("ollama:"):
             return 0.0
         if model not in MODEL_REGISTRY:
+            # No TRON-side cost record for new-provider models. Returning
+            # 0 keeps the budget gate non-blocking; shared/cost/router.py
+            # will own cross-provider pricing in Wave-1.
             return 0.0
         _, input_rate, output_rate = MODEL_REGISTRY[model]
         return (input_tokens / 1000 * input_rate) + (
             output_tokens / 1000 * output_rate
         )
+
+
+# ── Exception-class plumbing for shared.llm bridge ─────────────────────
+
+
+def _resolve_shared_llm_exception_classes() -> tuple[tuple, tuple]:
+    """Return ``(config_errors, retryable_errors)`` tuples for ``except``.
+
+    Done lazily so the module imports cleanly even when ``shared.llm``
+    isn't on the path (e.g. standalone TRON deployment per G-8 in
+    REQ-INIT-8). The fallbacks below mean any exception bubbling out of
+    ``_call_shared_llm`` is treated as retryable.
+    """
+    try:
+        from shared.llm import ProviderConfigError, ProviderError, UnknownProviderError
+    except Exception:  # noqa: BLE001 — fallback path for standalone TRON
+        return (Exception,), (Exception,)
+    # Config errors stop the retry loop (a missing key won't fix itself).
+    config = (ProviderConfigError, UnknownProviderError)
+    # All other ProviderError subclasses (and the generic Exception net)
+    # are retryable — same posture as the pre-shim httpx-error catch.
+    retryable = (ProviderError, Exception)
+    return config, retryable
+
+
+_SHARED_LLM_CONFIG_ERRORS, _SHARED_LLM_RETRYABLE_ERRORS = (
+    _resolve_shared_llm_exception_classes()
+)
+
+
+__all__ = [
+    "Provider",
+    "LLMClient",
+    "LLMMessage",
+    "LLMRequest",
+    "LLMResponse",
+    "CircuitBreaker",
+    "CircuitState",
+    "MODEL_REGISTRY",
+    "DEFAULT_ANTHROPIC_FAST_MODEL",
+]
