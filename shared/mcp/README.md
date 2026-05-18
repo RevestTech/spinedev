@@ -157,6 +157,105 @@ pytest shared/mcp/tests/
 The smoke suite does **not** require a real MCP runtime; it exercises only
 the static registry, envelope shapes, and `SpineMcpServer.load_tools`.
 
+## Remote MCP transport (federation parent <-> child)
+
+> **Status:** Shipped Wave 3 part 2 (`shared/mcp/server_remote.py`).
+> Activated by federation bundle policy; defaults remain in-process.
+
+### When to use remote
+
+Use the remote transport ONLY when this Hub is a child in a federation
+tree (V3 #4 + #10) and the parent Hub owns tool implementations that
+the child needs to delegate up to. Concrete examples:
+
+- A division Hub delegating a `verify_audit` to the corporate Hub
+  (centralised verify-class control plane).
+- A child Hub mirroring the parent's decision queue via
+  `subscribe("decisions")` for cross-tree visibility.
+- A child Hub asking the parent for the canonical license bundle when
+  its local cache expired (rare; usually the parent pushes via the
+  update cascade).
+
+### When NOT to use remote
+
+DO NOT enable remote transport for:
+
+- Single-Hub deployments. Everything stays in-process — no network hop,
+  no mTLS surface to manage, no upstream availability dependency.
+- High-volume tool calls (`graph_query`, `find_callers`, etc.). Those
+  should run against the local KG; if the local KG lacks data, fix
+  ingestion, not transport.
+- Anything in the project Spine's hot path. The Hub never gates a
+  project Spine's per-commit work on a remote round trip.
+
+The default is in-process. Activating remote is an explicit opt-in via
+the federation bundle.
+
+### Vault path conventions
+
+Per design decision #9, every secret routes through `shared.secrets`.
+The remote transport uses the SAME path templates as
+`federation/upstream_client.py` (Wave 4 Squad A), so a child Hub that
+already has federation wiring needs zero additional vault writes:
+
+```
+federation/mtls/<role>/cert      # PEM client certificate
+federation/mtls/<role>/key       # PEM client private key
+federation/bearer/<role>         # Keycloak service-account bearer token
+```
+
+`<role>` is the LOCAL Hub's federation role from the parent's
+perspective; almost always `"child"`. Bundles may layer additional
+roles (e.g. `"security_reporter"` for mandatory upward incident flow
+per #10).
+
+The path TEMPLATES (not values) can be overridden via env metadata
+(`SPINE_FED_MTLS_CERT_PATH_TPL` etc.) — metadata is not a secret per #9.
+
+### Wiring at startup
+
+The FastAPI lifespan (`shared/api/app.py`) reads
+`SPINE_FEDERATION_PARENT_MCP_URL` (Wave 4+ will source this from the
+bundle instead of env). When set:
+
+1. `set_mcp_transport("remote", url=..., role=..., actor=...)` records
+   the configuration.
+2. `RemoteMcpClient.open(...)` fetches mTLS material + bearer from
+   vault and constructs one long-lived httpx client (vault IO happens
+   once, not per request).
+3. `set_remote_mcp_client(client)` registers it in the dependency
+   layer; the FastAPI `McpClient` injected into routes now routes
+   remote requests to that client.
+
+If the parent is unreachable at lifespan start, the Hub falls back to
+in-process (federation autonomy per #10 + DR layer 6 in #32) and logs
+`remote_mcp_client_init_failed`. The child Hub stays up.
+
+### Cite-or-Refuse posture across the boundary
+
+Per #12, verify-class responses must carry a non-empty `citation`. The
+client enforces this LOCALLY even on responses from the remote — if
+the parent returns `status='ok'` for a verify-class tool with no
+citation, `RemoteMcpClient.acall` raises `RemoteMcpCitationRefusal`.
+Trust must be local.
+
+### Wave 6 Stream J pass-through
+
+`feature_flag_required` + `actor_token_claims` are propagated verbatim
+in the `ToolRequest` envelope. The parent Hub's router gates the call
+on the flag (fail-closed) BEFORE dispatch; the claims are available to
+the tool implementation for downstream authorisation decisions without
+re-verifying the JWT.
+
+### Server side
+
+Parent Hubs that act as the remote target call
+`shared.mcp.server_remote.build_remote_router()` and mount the
+returned APIRouter on their FastAPI app. mTLS is terminated at the
+ingress layer (per the OIDC middleware contract — we do NOT re-do TLS
+inside the app process). The bearer is verified by the existing
+Keycloak middleware (`shared/api/middleware/oidc.py`).
+
 ## Future consolidation
 
 TRON's `tron/mcp/` server folds into this one per `STORY-8.2.2` (see

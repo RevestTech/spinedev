@@ -24,11 +24,15 @@ on ``shared/api/dependencies.py`` are addressed here:
 
 3. **MCP (#4 federation)** — ``mcp_client()`` still returns the in-process
    dispatcher for Hub-owned tools, but the indirection layer now supports
-   *both* in-process AND remote-MCP transport. The remote transport is a
-   placeholder import — ``shared.mcp.server_remote`` will be implemented
-   in Wave 3 part 2; until then the dependency returns the in-process
-   client unconditionally, and `set_mcp_transport("remote", url=...)`
-   raises ``NotImplementedError`` with the upgrade path.
+   *both* in-process AND remote-MCP transport. ``set_mcp_transport("remote",
+   url=..., role=...)`` records the federation parent's MCP URL +
+   federation role; the FastAPI lifespan in ``shared/api/app.py`` then
+   constructs a long-lived :class:`shared.mcp.server_remote.RemoteMcpClient`
+   and registers it via :func:`set_remote_mcp_client`. ``mcp_client()``
+   returns the in-process client by default; verbs that explicitly
+   request the remote transport receive the federation client (used for
+   the rare cross-Hub tool delegation case — single-Hub deployments stay
+   in-process for free).
 
 New runtime deps (already in ``requirements.txt`` — not modified by this
 file, only noted here):
@@ -283,33 +287,55 @@ McpTransport = Literal["in_process", "remote"]
 
 @dataclass
 class _McpTransportConfig:
-    """Selected transport + its parameters (remote URL, auth token, …)."""
+    """Selected transport + its parameters (remote URL, federation role, …).
+
+    ``role`` is the LOCAL Hub's federation role from the parent's
+    perspective; used by :class:`shared.mcp.server_remote.RemoteMcpClient`
+    to compute the vault paths for the mTLS material + bearer
+    (``federation/mtls/<role>/...`` and ``federation/bearer/<role>``).
+    """
 
     kind: McpTransport = "in_process"
     remote_url: Optional[str] = None
-    remote_token: Optional[str] = None
+    remote_role: str = "child"
+    remote_actor: str = "federation_child"
 
 
 _MCP_TRANSPORT: _McpTransportConfig = _McpTransportConfig()
 
+#: Long-lived ``RemoteMcpClient`` instance — populated by the FastAPI
+#: lifespan in :mod:`shared.api.app` when the federation bundle declares
+#: an upstream parent. ``None`` for single-Hub deployments (the vast
+#: majority of installations).
+_REMOTE_MCP_CLIENT: Any | None = None
+
 
 def set_mcp_transport(
-    kind: McpTransport, *, url: Optional[str] = None, token: Optional[str] = None
+    kind: McpTransport,
+    *,
+    url: Optional[str] = None,
+    role: str = "child",
+    actor: str = "federation_child",
 ) -> None:
     """Switch the process-wide MCP transport.
 
     ``"in_process"`` (default) → ``shared.mcp.tools.TOOL_REGISTRY`` dispatch.
-    ``"remote"`` → call out to a federated Hub's MCP server.
+    ``"remote"`` → :class:`shared.mcp.server_remote.RemoteMcpClient`
+    against the federation parent at ``url``, with mTLS + bearer
+    fetched from vault under the federation ``role``.
 
-    Wave 3 part 1 (this) only ships the in-process path. Selecting
-    ``"remote"`` is accepted as configuration but the actual remote
-    transport class lands in ``shared/mcp/server_remote.py`` in part 2 —
-    until then ``mcp_client()`` will raise ``NotImplementedError`` if the
-    remote transport is selected and used.
+    This function only records configuration. The actual ``RemoteMcpClient``
+    is constructed by the FastAPI lifespan via
+    :func:`shared.mcp.server_remote.RemoteMcpClient.open` so vault IO
+    happens once at startup (not on every request) — wired below via
+    :func:`set_remote_mcp_client`.
     """
+    if kind == "remote" and not url:
+        raise ValueError("set_mcp_transport('remote', ...) requires url=...")
     _MCP_TRANSPORT.kind = kind
     _MCP_TRANSPORT.remote_url = url
-    _MCP_TRANSPORT.remote_token = token
+    _MCP_TRANSPORT.remote_role = role
+    _MCP_TRANSPORT.remote_actor = actor
 
 
 def get_mcp_transport() -> _McpTransportConfig:
@@ -317,26 +343,60 @@ def get_mcp_transport() -> _McpTransportConfig:
     return _MCP_TRANSPORT
 
 
+def set_remote_mcp_client(client: Any | None) -> None:
+    """Register (or clear) the long-lived remote-MCP client.
+
+    Called by the FastAPI lifespan AFTER ``RemoteMcpClient.open(...)``
+    succeeds (so a vault outage or unreachable parent fails the lifespan
+    rather than every individual request). Passing ``None`` clears it
+    (used on lifespan shutdown).
+    """
+    global _REMOTE_MCP_CLIENT
+    _REMOTE_MCP_CLIENT = client
+
+
+def get_remote_mcp_client() -> Any | None:
+    """Return the registered remote-MCP client, or ``None`` if unconfigured."""
+    return _REMOTE_MCP_CLIENT
+
+
 class McpClient:
-    """In-process dispatcher to the unified MCP tool registry.
+    """Dispatcher to the unified MCP tool registry — in-process or remote.
 
     Same shape as the v2 client so existing routes (``projects.py``) keep
-    working. New routes should ``await`` the result if/when the registry
-    grows async tool functions (today's tools are sync).
+    working. New code calling out to the federation parent should
+    ``await mcp.acall(...)`` instead of ``mcp.call(...)`` to avoid the
+    sync-over-async bridge.
     """
 
     def __init__(self, transport: _McpTransportConfig | None = None) -> None:
         self._transport = transport or _MCP_TRANSPORT
 
-    def call(self, name: str, payload: dict[str, Any]) -> dict[str, Any]:
+    def call(
+        self,
+        name: str,
+        payload: dict[str, Any],
+        *,
+        feature_flag_required: Optional[str] = None,
+        actor_token_claims: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
         """Validate payload, invoke the tool, return its data dict."""
         if self._transport.kind == "remote":
-            # Wave 3 part 2 will land the remote-MCP client. We refuse loudly
-            # rather than silently fall back, so a misconfigured federation
-            # Hub fails closed.
-            raise NotImplementedError(
-                "remote-MCP transport is not available in this build; "
-                "Wave 3 part 2 ships shared/mcp/server_remote.py"
+            remote = _REMOTE_MCP_CLIENT
+            if remote is None:
+                # Configuration says remote, lifespan never registered a
+                # client. Fail closed rather than silently fall back —
+                # a misconfigured federation parent is a P0, not a P3.
+                raise RuntimeError(
+                    "remote-MCP transport selected but no RemoteMcpClient "
+                    "is registered; the FastAPI lifespan must call "
+                    "shared.mcp.server_remote.RemoteMcpClient.open() and "
+                    "register via set_remote_mcp_client() at startup"
+                )
+            return remote.call(
+                name, payload,
+                feature_flag_required=feature_flag_required,
+                actor_token_claims=actor_token_claims,
             )
         from shared.mcp.tools import TOOL_REGISTRY, discover_tools  # noqa: PLC0415
 
@@ -351,6 +411,34 @@ class McpClient:
             response.model_dump(mode="json")
             if hasattr(response, "model_dump")
             else dict(response)
+        )
+
+    async def acall(
+        self,
+        name: str,
+        payload: dict[str, Any],
+        *,
+        feature_flag_required: Optional[str] = None,
+        actor_token_claims: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
+        """Async variant — preferred path for new FastAPI routes."""
+        if self._transport.kind == "remote":
+            remote = _REMOTE_MCP_CLIENT
+            if remote is None:
+                raise RuntimeError(
+                    "remote-MCP transport selected but no RemoteMcpClient "
+                    "is registered; see set_remote_mcp_client()."
+                )
+            return await remote.acall(
+                name, payload,
+                feature_flag_required=feature_flag_required,
+                actor_token_claims=actor_token_claims,
+            )
+        # In-process — sync work, just rewrap.
+        return self.call(
+            name, payload,
+            feature_flag_required=feature_flag_required,
+            actor_token_claims=actor_token_claims,
         )
 
 
@@ -394,6 +482,8 @@ __all__: list[str] = [
     "mcp_client",
     "set_mcp_transport",
     "get_mcp_transport",
+    "set_remote_mcp_client",
+    "get_remote_mcp_client",
     # Identity surface
     "current_user",
     "optional_user",
