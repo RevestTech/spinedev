@@ -1,0 +1,228 @@
+# Spine v3 — Hub Day-0 default org bundle (Wave 3 Squad B)
+#
+# This bundle is the starting point applied by hub/wizard/init.sh when no
+# parent-Hub bundle is inherited. It is intentionally MINIMAL and FREE-TIER:
+# every feature flag defaults OFF except the small set documented in
+# free_tier_flags.yaml (per decision #14 + #25 5-tier matrix).
+#
+# Per decision #9: NO secret VALUES in this file. Anything that looks like a
+# credential is a vault reference (vault://...) or a path hint
+# (<adapter>://<path>) resolved at runtime by shared/secrets/.
+#
+# Per decision #23: license bundle is a SEPARATE Ed25519-signed bundle that
+# overrides feature_flags here at runtime. The defaults in this file are what
+# applies when no license bundle is loaded (laptop free tier).
+#
+# Per decision #10: federation.parent_hub is NULL for the root hub; child
+# hubs override this via their wizard run.
+
+bundle_version: "1.0"
+bundle_id: "spine-default-day0"
+inherits_from: null          # root bundle — does not inherit from a parent
+description: |
+  Spine v3 Day-0 default bundle. Applies free-tier feature flags, OpenBao
+  vault adapter, Keycloak bundled, anthropic LLM provider, web+email comm
+  prefs. Overridden in priority order by: parent-Hub bundle (federation),
+  license bundle (Ed25519-signed from vendor), per-project bundle.
+
+# ----------------------------------------------------------------------------
+# Identity (decision #25 — Keycloak embedded by default).
+# ----------------------------------------------------------------------------
+identity:
+  provider: keycloak
+  keycloak:
+    deployment: bundled            # bundled | external
+    realm: spine
+    client_id: spine-hub
+    # Issuer URL is computed at runtime: ${SPINE_KEYCLOAK_URL}/realms/spine.
+    # Stored here only as a reminder for operators; not source-of-truth.
+    issuer_url_hint: "http://keycloak:8080/realms/spine"
+    # Where the spine-hub OIDC client secret is stored. Wizard writes this.
+    client_secret_vault_path: "spine/data/keycloak/spine-hub/client-secret"
+    # Admin password rotation policy. Free tier: rotate manually.
+    admin_rotation_days: 0
+  # Feature-flag lightening per #14 5-tier matrix. Free tier = single realm,
+  # username+password only, no MFA, no IdP federation.
+  mfa_required: false
+  idp_federation_enabled: false
+  scim_enabled: false
+
+# ----------------------------------------------------------------------------
+# Secrets (decision #9 — Vault-only, OpenBao Day-0).
+# ----------------------------------------------------------------------------
+secrets:
+  adapter: vault                   # vault | aws | azure | gcp | infisical | onepassword
+  vault:
+    addr_hint: "http://vault:8200"
+    mount: spine
+    auth_method: approle           # approle | kubernetes | aws-iam | azure | jwt
+    approle:
+      role_name: spine-hub
+  # Cache for secret values inside the Hub process. Per #9, cap kept tight.
+  cache_ttl_seconds: 60
+
+# ----------------------------------------------------------------------------
+# License (decision #23 — feature-flag licensing as Day-1 primitive).
+# ----------------------------------------------------------------------------
+license:
+  tier: free                       # free | founder | team | enterprise | air-gapped
+  bundle_path: null                # path to signed license bundle when present
+  vendor_pubkey_id: "spine-vendor-root-2026"
+  validate_on_start: true
+  validate_interval_seconds: 3600
+  # When license is missing / invalid, the Hub still runs but in free-tier
+  # mode with all paid flags off. Never blocks startup outright.
+  fallback_tier_on_invalid: free
+
+# ----------------------------------------------------------------------------
+# Communications (decision #5 + #6 — active push + per-user prefs).
+# Free tier ships web + email only; Slack/Teams/PagerDuty/Twilio require
+# higher-tier flags or per-user overrides via Hub UI.
+# ----------------------------------------------------------------------------
+comm_prefs:
+  default_channels:
+    - web
+    - email
+  decision_classes:
+    decision_card:
+      default_channels: [web, email]
+      escalation_after_minutes: 1440      # 24h before escalation
+    daily_briefing:
+      default_channels: [email]
+    weekly_briefing:
+      default_channels: [email]
+    release_announcement:
+      default_channels: [web, email]
+    incident_pageout:
+      default_channels: [email]           # free tier: no PagerDuty until upgraded
+      escalation_after_minutes: 15
+  rate_limits:
+    per_user_per_hour: 20
+    per_decision_class_per_hour: 100
+
+# ----------------------------------------------------------------------------
+# Feature flags (decision #23 — every feature has a flag).
+#
+# All flags default OFF here. free_tier_flags.yaml lists the small subset
+# the free tier explicitly turns ON. Higher tiers turn additional flags ON
+# via license bundle override.
+# ----------------------------------------------------------------------------
+feature_flags:
+  # --- Federation (#10) --------------------------------------------------
+  federation.enabled: false
+  federation.child_registration: false
+  federation.update_cascade: false
+  # --- Identity advanced (#25) -------------------------------------------
+  identity.mfa_required: false
+  identity.idp_federation: false
+  identity.scim: false
+  identity.multi_realm: false
+  identity.custom_themes: false
+  identity.audit_export: false
+  # --- Integrations (#19 + #24) ------------------------------------------
+  integrations.github: true       # always-on; Day-1 must (#33 A onboarding)
+  integrations.linear: false
+  integrations.jira: false
+  integrations.slack: false
+  integrations.pagerduty: false
+  integrations.twilio: false
+  integrations.teams: false
+  integrations.vanta: false
+  integrations.drata: false
+  integrations.secureframe: false
+  # --- Master roles (#5, #8) ---------------------------------------------
+  master_roles.enabled: false
+  master_roles.scrum_master: false
+  master_roles.architect: false
+  master_roles.release_manager: false
+  master_roles.devops: false
+  # --- Smart Spine (#27) -------------------------------------------------
+  learning.tier1_project: true     # per-project learning — always on
+  learning.tier1b_within_hub: false   # default ON only at tier >= team
+  learning.tier2_cross_org: false  # opt-in only
+  # --- DR (#31, #32) -----------------------------------------------------
+  dr.cross_region: false
+  dr.kms_auto_unseal: false
+  # --- Mobile / voice / heavier API scaffolds (#28, #29, #30) ------------
+  mobile.responsive_web: true      # responsive web works on free tier
+  mobile.native_apps: false
+  voice.twilio: false
+  api.public: true                 # /api/v2 is publicly exposed (Keycloak-gated)
+  api.mcp_remote: false            # remote MCP transport opt-in at team tier
+  # --- Quotas ------------------------------------------------------------
+  quotas.max_projects: 3
+  quotas.max_users: 5
+  quotas.max_federated_children: 0
+
+# ----------------------------------------------------------------------------
+# Federation (decision #10 — fractal Hub).
+# parent_hub null = root Hub. Wizard sets this for child Hubs.
+# ----------------------------------------------------------------------------
+federation:
+  hub_id: null                     # written by wizard; UUIDv4
+  parent_hub: null                 # null = root; URL of upstream Hub otherwise
+  consent_model: peer              # peer | mandatory-upward
+  pipeline:
+    extensions_allowed: true
+    phases:
+      - id: intake
+        removable: false
+      - id: prd
+        removable: false
+      - id: trd
+        removable: true
+      - id: build
+        removable: false
+      - id: verify
+        removable: false
+      - id: release
+        removable: true
+  update_policy:
+    auto_approve_security_patches: false
+    auto_approve_minor: false
+    auto_approve_major: false
+    approval_required_classes: [security, minor, major]
+
+# ----------------------------------------------------------------------------
+# LLM providers (decision #2 — agnostic by architecture).
+# Default: anthropic for primary; ollama as local-only fallback.
+# Wizard re-orders this per --llm-provider flag.
+# ----------------------------------------------------------------------------
+llm:
+  default_provider: anthropic
+  providers:
+    anthropic:
+      enabled: true
+      api_key_vault_path: "spine/data/llm/anthropic/api-key"
+      default_model: "claude-sonnet-4-6"
+    openai:
+      enabled: false
+      api_key_vault_path: "spine/data/llm/openai/api-key"
+    bedrock:
+      enabled: false
+      region_hint: "us-west-2"
+    vertex:
+      enabled: false
+    ollama:
+      enabled: false
+      base_url_hint: "http://localhost:11434"
+    qwen:
+      enabled: false
+    vllm:
+      enabled: false
+
+# ----------------------------------------------------------------------------
+# Workspace hygiene (decision #34).
+# ----------------------------------------------------------------------------
+hygiene:
+  retention_days: 30
+  sweep_cron: "0 3 * * *"          # daily 03:00
+  conductor_gate_enabled: true     # Conductor refuses "done" if cruft present
+
+# ----------------------------------------------------------------------------
+# Telemetry (decision #27 tier 2 — opt-in only).
+# ----------------------------------------------------------------------------
+learning:
+  cross_org:
+    consent: false                 # explicit opt-in via Hub UI
+    data_classes: []               # populated only after consent

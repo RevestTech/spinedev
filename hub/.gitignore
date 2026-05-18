@@ -1,0 +1,20 @@
+# Per v3 design decision #9 — wizard outputs are LOCAL ONLY, never committed.
+# hub/_state/ holds hub_id.txt + wizard_manifest.json + (eventually) cached
+# OIDC discovery / JWKS for offline boot. None of it is secret on its own,
+# but it's per-deployment state that doesn't belong in git.
+_state/
+
+# Any local .env files dropped in hub/ during dev. The canonical .env.local
+# location is the repo root (so the same env file works with sibling
+# vault/ + keycloak/ composes). This belt-and-suspenders entry prevents an
+# operator from accidentally committing a stray copy here.
+.env
+.env.local
+.env.*.local
+
+# Python caches.
+__pycache__/
+*.pyc
+
+# Wizard temp files (we mktemp under /tmp, but defense-in-depth).
+*.tmp

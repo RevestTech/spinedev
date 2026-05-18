@@ -1,0 +1,258 @@
+# Spine v3 — Hub laptop deployment (Wave 3 Squad B)
+#
+# Decision drivers:
+#   - #3  Hub as primary management surface — single `up` brings the whole product up.
+#   - #17 Laptop deployment shape. BYOC / customer-cloud / on-prem use the
+#         k8s charts in devops/planes/* (not in this file's scope).
+#   - #9  NO secrets in this file. All secret values flow through vault.
+#         Operator runs `hub/wizard/init.sh` once; that script puts the
+#         Hub AppRole credentials into a gitignored .env.local + writes the
+#         keycloak admin password into vault before this compose ever
+#         references them.
+#   - #25 Keycloak is bundled.
+#   - #14 All 3 segments share this compose for the laptop shape; tier
+#         differences are applied via the license bundle, not the topology.
+#
+# Usage:
+#   1. ./hub/wizard/init.sh                            # Day-0 wizard, creates .env.local
+#   2. docker compose -f hub/docker-compose.yml --env-file .env.local up -d
+#   3. Open Hub URL printed by the wizard.
+#
+# NB: `docker compose config` will error out without .env.local because the
+# required-env syntax (${FOO:?msg}) is intentional — per #9 we refuse to
+# start if a secret reference is missing. That is the expected validation
+# behavior described in hub/README.md.
+
+name: spine-hub
+
+services:
+  # ---------------------------------------------------------------------------
+  # Vault — OpenBao bundled per #9 (Day-0 default).
+  # Image is built from ../vault/Dockerfile (sibling subsystem owned by
+  # Wave 0). Storage is a named volume so vault data survives container
+  # recreate; SHARED `spine` network so hub:8080 can reach vault:8200.
+  # ---------------------------------------------------------------------------
+  vault:
+    image: ${SPINE_VAULT_IMAGE:-openbao/openbao:2.1.1}
+    container_name: spine-hub-vault
+    restart: unless-stopped
+    cap_add:
+      - IPC_LOCK
+    environment:
+      BAO_ADDR: http://0.0.0.0:8200
+      BAO_API_ADDR: http://0.0.0.0:8200
+      BAO_CLUSTER_ADDR: http://0.0.0.0:8201
+      BAO_LOG_LEVEL: ${VAULT_LOG_LEVEL:-info}
+      BAO_LOG_FORMAT: json
+      BAO_LOCAL_CONFIG: |
+        ui = true
+        disable_mlock = false
+        storage "raft" {
+          path    = "/openbao/data"
+          node_id = "spine-hub-vault-1"
+        }
+        listener "tcp" {
+          address     = "0.0.0.0:8200"
+          tls_disable = true
+        }
+        api_addr = "http://0.0.0.0:8200"
+        cluster_addr = "http://0.0.0.0:8201"
+    volumes:
+      - vault_data:/openbao/data
+      - vault_logs:/openbao/logs
+    command: ["server"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- 'http://127.0.0.1:8200/v1/sys/health?standbyok=true&sealedcode=200&uninitcode=200' >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - spine
+
+  # ---------------------------------------------------------------------------
+  # Keycloak's own Postgres (per Keycloak operational best practice — its
+  # state is isolated from Spine's spine_pg).
+  # ---------------------------------------------------------------------------
+  keycloak-db:
+    image: postgres:16-alpine
+    container_name: spine-hub-keycloak-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: ${KEYCLOAK_DB_PASSWORD:?KEYCLOAK_DB_PASSWORD must be set (wizard writes .env.local)}
+    volumes:
+      - keycloak_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keycloak -d keycloak"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks:
+      - spine
+
+  # ---------------------------------------------------------------------------
+  # Keycloak — embedded per #25. Hub trusts ONLY Keycloak.
+  # ---------------------------------------------------------------------------
+  keycloak:
+    image: ${SPINE_KEYCLOAK_IMAGE:-quay.io/keycloak/keycloak:26.0.7}
+    container_name: spine-hub-keycloak
+    restart: unless-stopped
+    depends_on:
+      keycloak-db:
+        condition: service_healthy
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://keycloak-db:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:?KEYCLOAK_DB_PASSWORD must be set}
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?KEYCLOAK_ADMIN_PASSWORD must be set (wizard writes .env.local then rotates into vault)}
+      KC_HOSTNAME: ${KC_HOSTNAME:-localhost}
+      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_STRICT_HTTPS: "false"
+      KC_HTTP_ENABLED: "true"
+      KC_PROXY_HEADERS: xforwarded
+      KC_HEALTH_ENABLED: "true"
+      KC_METRICS_ENABLED: "true"
+      KC_LOG_LEVEL: ${KC_LOG_LEVEL:-INFO}
+    ports:
+      - "${KEYCLOAK_HTTP_PORT:-8081}:8080"
+      - "${KEYCLOAK_MGMT_PORT:-9001}:9000"
+    command:
+      - start
+      - --optimized
+      - --http-enabled=true
+      - --hostname-strict=false
+    networks:
+      - spine
+
+  # ---------------------------------------------------------------------------
+  # Spine's primary Postgres (with pgvector for KG/memory).
+  # Postgres 16 + pgvector init in the docker-entrypoint-initdb.d directory
+  # makes the extension available without a custom image build (Squad B
+  # scope forbids requiring a separate image build for the demo path).
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: spine-hub-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: spine
+      POSTGRES_USER: spine
+      POSTGRES_PASSWORD: ${SPINE_DB_PASSWORD:?SPINE_DB_PASSWORD must be set}
+    volumes:
+      - spine_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U spine -d spine"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    ports:
+      - "${SPINE_DB_HOST_PORT:-33000}:5432"
+    networks:
+      - spine
+
+  # ---------------------------------------------------------------------------
+  # Flyway migrator — runs once, applies db/flyway/sql/*.sql, exits clean.
+  # Wave 3 Squad B scope: we do NOT author migrations here. Wave 0 already
+  # produced V22-V32 under db/flyway/sql/. This service just runs them.
+  # ---------------------------------------------------------------------------
+  flyway:
+    image: flyway/flyway:10-alpine
+    container_name: spine-hub-flyway
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ../db/flyway/sql:/flyway/sql:ro
+      - ../db/flyway/conf:/flyway/conf:ro
+    environment:
+      FLYWAY_URL: jdbc:postgresql://postgres:5432/spine
+      FLYWAY_USER: spine
+      FLYWAY_PASSWORD: ${SPINE_DB_PASSWORD:?SPINE_DB_PASSWORD must be set}
+      FLYWAY_SCHEMAS: spine_lifecycle,spine_audit,spine_kg,spine_memory,spine_calibration
+    command: ["migrate"]
+    networks:
+      - spine
+    restart: "no"
+
+  # ---------------------------------------------------------------------------
+  # The Hub itself.
+  # ---------------------------------------------------------------------------
+  hub:
+    build:
+      context: ..
+      dockerfile: hub/Dockerfile
+      args:
+        PYTHON_VERSION: "3.11"
+    image: ${SPINE_HUB_IMAGE:-spine/hub:v3-dev}
+    container_name: spine-hub
+    restart: unless-stopped
+    depends_on:
+      vault:
+        condition: service_healthy
+      keycloak:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+      flyway:
+        condition: service_completed_successfully
+    environment:
+      # --- Non-secret runtime hints (per #9, NEVER secret values). -----------
+      SPINE_HUB_PORT: "8080"
+      SPINE_HUB_HOST: "0.0.0.0"
+      SPINE_HUB_LOG_LEVEL: ${SPINE_HUB_LOG_LEVEL:-info}
+      SPINE_HUB_DEV: ${SPINE_HUB_DEV:-0}            # 0 = require vault adapter; 1 = InMemoryAdapter
+      SPINE_VAULT_ADDR: http://vault:8200
+      SPINE_SECRETS_ADAPTER: ${SPINE_SECRETS_ADAPTER:-vault}
+      SPINE_KEYCLOAK_URL: http://keycloak:8080
+      SPINE_KEYCLOAK_REALM: spine
+      SPINE_KEYCLOAK_CLIENT_ID: spine-hub
+      SPINE_DB_URL: postgres://spine@postgres:5432/spine     # password fetched via vault
+      SPINE_DB_PASSWORD_VAULT_PATH: ${SPINE_DB_PASSWORD_VAULT_PATH:-spine/data/db/spine-app-password}
+      SPINE_FEDERATION_PARENT_HUB: ${SPINE_FEDERATION_PARENT_HUB:-}
+      SPINE_HUB_ID: ${SPINE_HUB_ID:-}
+      # --- Vault AppRole login (NON-SECRET hints; the wrapped secret-id is
+      # exchanged for a real token at startup; we never write the real
+      # secret-id to env).
+      SPINE_VAULT_ROLE_ID: ${SPINE_VAULT_ROLE_ID:?SPINE_VAULT_ROLE_ID must be set (wizard writes .env.local)}
+      SPINE_VAULT_SECRET_ID_WRAPPED: ${SPINE_VAULT_SECRET_ID_WRAPPED:?SPINE_VAULT_SECRET_ID_WRAPPED must be set (wizard writes .env.local; single-use wrap token)}
+    volumes:
+      # Bundle is non-secret signed YAML; mount read-only.
+      - ./config:/etc/spine/config:ro
+      # Hub-managed state (run artifacts, audit-chain checkpoints, etc.) —
+      # NOT secrets. Per #34 (workspace hygiene), this is where .spine/work/
+      # and .spine/archive/ live for the hub itself.
+      - hub_state:/var/lib/spine
+    ports:
+      - "${SPINE_HUB_HOST_PORT:-8090}:8080"
+    networks:
+      - spine
+
+# -----------------------------------------------------------------------------
+# Persistent volumes — each subsystem owns its own. No bind-mounts to the host
+# repo (would mix dev artifacts with container state).
+# -----------------------------------------------------------------------------
+volumes:
+  vault_data:
+    driver: local
+  vault_logs:
+    driver: local
+  keycloak_db_data:
+    driver: local
+  spine_db_data:
+    driver: local
+  hub_state:
+    driver: local
+
+# -----------------------------------------------------------------------------
+# Shared `spine` bridge network so this compose file integrates cleanly with
+# the standalone vault/docker-compose.yml + keycloak/docker-compose.yml when
+# someone is running them separately for dev.
+# -----------------------------------------------------------------------------
+networks:
+  spine:
+    name: spine
+    driver: bridge

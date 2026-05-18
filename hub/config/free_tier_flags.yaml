@@ -1,0 +1,69 @@
+# Spine v3 — Free-tier feature flag overlay (Wave 3 Squad B)
+#
+# Per decision #14 (3 segments) + #25 (5-tier identity matrix), the FREE tier
+# (laptop / solo founder eval) exposes the smallest surface that still proves
+# the product end-to-end:
+#
+#   * Single Keycloak realm, username+password only, no MFA enforcement
+#   * Web + email comms only (no Slack/Teams/PagerDuty/SMS)
+#   * GitHub integration only (the #33 A onboarding minimum)
+#   * Per-project Smart Spine learning (tier 1a)
+#   * Mobile-responsive web (no native apps)
+#   * Single LLM provider configurable (default anthropic)
+#   * Workspace hygiene + Conductor gate enforced (the trust differentiator)
+#
+# Higher tiers (founder / team / enterprise) add flags via signed license
+# bundle (#23). This file does NOT define those — it only defines what FREE
+# turns ON above default_bundle.yaml's all-OFF baseline.
+#
+# Wizard merge order (highest wins):
+#   1. default_bundle.yaml             — all flags OFF baseline
+#   2. free_tier_flags.yaml (this)     — free-tier ON-set
+#   3. license bundle                  — paid-tier ON-set (Ed25519-signed)
+#   4. parent-Hub bundle (federation)  — operator-mandated overrides
+#   5. per-project bundle              — project-scoped tuning
+
+tier: free
+description: |
+  Feature flags turned ON for the free tier. Applied AFTER default_bundle.yaml
+  by hub/wizard/init.sh. License-bundle overlays apply on top of this layer.
+
+feature_flags:
+  # --- Integrations ----------------------------------------------------------
+  # Per #33 A, GitHub is the Day-1 onboarding minimum; always-on at every tier.
+  integrations.github: true
+
+  # --- Identity --------------------------------------------------------------
+  # Free tier = single realm, username+password, no MFA, no IdP federation.
+  # Already false in default_bundle.yaml; reaffirmed here for clarity.
+  identity.mfa_required: false
+  identity.idp_federation: false
+  identity.scim: false
+
+  # --- Smart Spine -----------------------------------------------------------
+  # Per #27: per-project learning is always on (tier 1a). within-Hub aggregation
+  # (1b) requires team tier or higher. Cross-org (tier 2) is opt-in regardless.
+  learning.tier1_project: true
+
+  # --- API / MCP -------------------------------------------------------------
+  # Public REST API surface is on by default (Keycloak gates auth).
+  # Remote MCP transport is a team-tier feature; stays OFF here.
+  api.public: true
+  api.mcp_remote: false
+
+  # --- Mobile ---------------------------------------------------------------
+  # Responsive web works on every tier; native apps deferred to v1.1 (#28).
+  mobile.responsive_web: true
+  mobile.native_apps: false
+
+  # --- Workspace hygiene (#34) ----------------------------------------------
+  # The Conductor gate is the trust mechanism — never OFF at any tier.
+  # Already true in default_bundle.yaml; reaffirmed.
+  hygiene.conductor_gate_enabled: true
+
+  # --- Quotas ---------------------------------------------------------------
+  # Free tier: 3 projects, 5 users, 0 federated children. Overridden by
+  # license bundle for paid tiers.
+  quotas.max_projects: 3
+  quotas.max_users: 5
+  quotas.max_federated_children: 0
