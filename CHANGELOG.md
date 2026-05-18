@@ -172,7 +172,7 @@ Wave 1 dispatched.
 - **Hash-chained audit ledger** per #24. Every action writes a `spine_audit.audit_event` row chained to the prior row's SHA-256. Two-party attestation pattern (customer auditor + Vanta/Drata).
 - **mTLS + bearer for federation** per #10 + #16. `shared/mcp/server_remote.py` validates both; vault paths `federation/mtls/<role>/{cert,key}` + `federation/bearer/<role>`.
 - **Cite-or-Refuse** for verify-class roles per #12. Auditor / QA / Verify roles must cite KG node ID / file:line / prior audit row hash or refuse. Refusal is itself an audit event.
-- **Rotation required before v1.0** per #9: TRON Postgres / Redis / MinIO / Grafana passwords were `tron_dev_only` in old `verify/.env` (single commit `493b07c`). Rotate vault paths per `V1_SHIP_CHECKLIST.md` §4.
+- **TRON dev password rotation (code-side, 2026-05-18):** Literal `tron_dev_only` (exposed in old `verify/.env` via git history commit `493b07c`) rotated to loud sentinel `tron_LOCAL_DEV_ONLY_2026` across 4 code-default sites (`orchestrator/bin/spine`, `tools/_smoke_phase11_tron.py`, `tools/_tron_alembic_upgrade.py`, `tools/verify-overrides/docker-compose.override.yml`). New helper `tools/_tron_local_default.py` adds a **fail-closed guard** that refuses sentinel-on-non-loopback connections — prevents copy-paste of the leaked literal into a prod URL. Local dev rotation: `cd verify && docker compose down -v postgres && docker compose up -d postgres`. Vault-side rotation (real prod passwords at `tron/postgres/password` etc.) tracked separately in `V1_SHIP_CHECKLIST.md` §4.
 
 ### Deprecated
 

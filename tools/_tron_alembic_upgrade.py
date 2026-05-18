@@ -23,10 +23,10 @@ import sys
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 VERIFY = REPO_ROOT / "verify"
 
-os.environ.setdefault(
-    "DATABASE_URL",
-    "postgresql://tron:tron_dev_only@127.0.0.1:33010/tron",
-)
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from _tron_local_default import resolve_tron_db_url  # noqa: E402
+
+os.environ.setdefault("DATABASE_URL", resolve_tron_db_url("DATABASE_URL"))
 sys.path.insert(0, str(VERIFY))
 
 from alembic.config import Config  # noqa: E402

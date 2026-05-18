@@ -483,8 +483,19 @@ for k,v in d.items():
 
   # ── 5. tron postgres ────────────────────────────────────────────
   # psql parses user+password from the URL itself; no need to split it.
+  # Fail-closed guard: if the local-dev sentinel password leaks into a
+  # non-loopback URL, refuse the connection. Rotate via vault path
+  # `tron/postgres/password` for prod. See docs/V1_SHIP_CHECKLIST.md §4.
   printf '\n%s[5] tron postgres (verify/)%s\n' "$C_D" "$C_X"
-  local tron_db_url="${TRON_DATABASE_URL:-postgresql://tron:tron_dev_only@127.0.0.1:33010/tron}"
+  local tron_dev_pw="tron_LOCAL_DEV_ONLY_2026"
+  local tron_db_url="${TRON_DATABASE_URL:-postgresql://tron:${tron_dev_pw}@127.0.0.1:33010/tron}"
+  if [[ "$tron_db_url" == *"$tron_dev_pw"* && \
+        "$tron_db_url" != *"127.0.0.1"* && \
+        "$tron_db_url" != *"localhost"* ]]; then
+    _row_fail "refused: local-dev sentinel password on non-loopback host" \
+              "rotate vault path tron/postgres/password — see docs/V1_SHIP_CHECKLIST.md §4"
+    return
+  fi
   if psql "$tron_db_url" -A -t -X -q -v ON_ERROR_STOP=1 -c 'SELECT 1;' >/dev/null 2>&1; then
     local rev; rev="$(psql "$tron_db_url" -A -t -X -q -c 'SELECT version_num FROM alembic_version;' 2>/dev/null | tr -d ' \n')"
     if [[ -n "$rev" ]]; then

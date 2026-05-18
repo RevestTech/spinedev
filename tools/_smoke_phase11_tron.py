@@ -82,10 +82,9 @@ except Exception as exc:
 # Uses psycopg2 (sync) — keeps the smoke off the async hot path.
 try:
     import psycopg2
-    db_url = os.environ.get(
-        "TRON_DATABASE_URL",
-        "postgresql://tron:tron_dev_only@127.0.0.1:33010/tron",
-    )
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from _tron_local_default import resolve_tron_db_url
+    db_url = resolve_tron_db_url()
     conn = psycopg2.connect(db_url, connect_timeout=5)
     with conn.cursor() as cur:
         cur.execute(
@@ -103,3 +102,66 @@ try:
              f"tables={tcount} alembic={rev} (want >=14, 008)")
 except Exception as exc:
     emit("tron.db.reachable", "FAIL", f"{type(exc).__name__}: {exc}")
+
+# Check 5: iso_invoke MCP tool — dispatcher into TRON ISO agents. We
+# call SecurityISO on a tiny synthetic Python file; the call must succeed
+# end-to-end (status='ok' or 'degraded') OR fail with one of the
+# documented error codes (tron_keys_missing / agent_execution_failed when
+# the LLM key isn't valid). What we WON'T tolerate is a Python exception
+# or a stub_implementation return.
+try:
+    from shared.mcp.tools import TOOL_REGISTRY, discover_tools
+    discover_tools()
+    spec = TOOL_REGISTRY.get("iso_invoke")
+    if spec is None:
+        emit("iso.iso_invoke.registered", "FAIL", "iso_invoke not in TOOL_REGISTRY")
+    else:
+        emit("iso.iso_invoke.registered", "PASS",
+             f"story={spec.story} module={spec.module}")
+        with tempfile.TemporaryDirectory(prefix="spine-iso-smoke-") as td:
+            src_path = os.path.join(td, "fixture.py")
+            with open(src_path, "w") as fh:
+                fh.write("def hello():\n    return 'world'\n")
+            payload = spec.input_model.model_validate({
+                "project_id": "smoke",
+                "actor": "smoke-iso",
+                "agent_name": "SecurityISO",
+                "code_region": {"file_path": src_path},
+                "cost_attribution": "pre_verify",
+            })
+            resp = spec.fn(payload).model_dump(mode="json")
+            status = resp.get("status")
+            code = (resp.get("error") or {}).get("code", "")
+            # Acceptable outcomes:
+            #  - ok / degraded with a real findings list
+            #  - error with code in the documented set (LLM key not valid, etc.)
+            ok = (
+                (status in ("ok",) and resp.get("data", {}).get("status") in ("ok", "degraded"))
+                or (status == "error" and code in (
+                    "tron_keys_missing", "agent_execution_failed",
+                    "agent_init_failed", "no_source_files",
+                    "tron_not_importable", "blueprint_build_failed",
+                ))
+            )
+            # NOT acceptable: stub_implementation (the bug we just fixed).
+            if status == "stub_implementation":
+                emit("iso.iso_invoke.dispatched", "FAIL",
+                     f"still returning stub_implementation: {str(resp)[:200]}")
+            else:
+                emit("iso.iso_invoke.dispatched", "PASS" if ok else "FAIL",
+                     f"status={status} code={code or 'n/a'}")
+            # Convenience wrapper must delegate to the same impl.
+            sec_spec = TOOL_REGISTRY.get("security_iso_scan")
+            if sec_spec is not None:
+                conv_payload = sec_spec.input_model.model_validate({
+                    "project_id": "smoke", "actor": "smoke-iso",
+                    "code_region": {"file_path": src_path},
+                    "cost_attribution": "pre_verify",
+                })
+                conv_resp = sec_spec.fn(conv_payload).model_dump(mode="json")
+                conv_status = conv_resp.get("status")
+                emit("iso.security_iso_scan.delegates",
+                     "PASS" if conv_status != "stub_implementation" else "FAIL",
+                     f"status={conv_status}")
+except Exception as exc:
+    emit("iso.iso_invoke.dispatched", "FAIL", f"{type(exc).__name__}: {exc}")

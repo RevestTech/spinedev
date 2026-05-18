@@ -179,9 +179,18 @@ bash tools/smoke-test.sh --phase 11
 
 | Var | Default | When set |
 |---|---|---|
-| `POSTGRES_PASSWORD` | `tron_dev_only` | From `verify/.env` (already shipped) |
-| `TRON_DATABASE_URL` | `postgresql://tron:tron_dev_only@127.0.0.1:33010/tron` | Smoke phase 11 override |
+| `POSTGRES_PASSWORD` | `tron_LOCAL_DEV_ONLY_2026` | From `verify/.env` (operator-generated; not tracked); rotated 2026-05-18 from `tron_dev_only` |
+| `TRON_DATABASE_URL` | `postgresql://tron:tron_LOCAL_DEV_ONLY_2026@127.0.0.1:33010/tron` | Smoke phase 11; fail-closed guard refuses sentinel on non-loopback host |
 | `DATABASE_URL` | same | TRON alembic + runtime DB-bound paths |
+
+> **Password rotation 2026-05-18:** The literal `tron_dev_only` was
+> exposed in git history (commit `493b07c`). All code defaults rotated
+> to `tron_LOCAL_DEV_ONLY_2026` (loud, dated sentinel) with a
+> fail-closed guard that refuses sentinel-on-non-loopback connections.
+> Local devs must regenerate `verify/.env` + recreate
+> `spine_tron_postgres` (`cd verify && docker compose down -v postgres
+> && docker compose up -d postgres`) to pick up the new password. See
+> `docs/V1_SHIP_CHECKLIST.md` §4 + `tools/_tron_local_default.py`.
 
 > **LLM provider credentials**: Per V3 #2 + #9 + Part 1.4 #6, TRON's
 > LLM client is a SHIM over `shared/llm/`; credentials are sourced

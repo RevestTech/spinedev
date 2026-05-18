@@ -33,10 +33,13 @@ plan (`docs/V3_BUILD_SEQUENCE.md`).
 pre-Wave-0 baseline. V22-V32 applied clean against live Postgres
 transactionally.
 
-**Rotation required before v1.0** (#9 no-exceptions): TRON
-Postgres / Redis / MinIO / Grafana passwords were `tron_dev_only` in
-old `verify/.env` (single commit `493b07c`). Rotate when wiring real
-TRON deploy.
+**Code-side rotation done 2026-05-18** (#9 no-exceptions): Literal
+`tron_dev_only` (exposed in old `verify/.env` via git history commit
+`493b07c`) rotated to sentinel `tron_LOCAL_DEV_ONLY_2026` across 4
+code-default sites + new `tools/_tron_local_default.py` fail-closed
+guard. Vault-side rotation (real prod passwords at
+`tron/postgres/password` etc.) still pending — tracked in
+`V1_SHIP_CHECKLIST.md` §4.
 
 ### Open Part 4 decisions (resolved autonomously during overnight run)
 

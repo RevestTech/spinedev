@@ -34,8 +34,12 @@
 #     docker compose up -d postgres
 #
 # To run alembic migrations (from repo root, after postgres is up):
-#     DATABASE_URL=postgresql://tron:tron_dev_only@127.0.0.1:33010/tron \
+#     DATABASE_URL=postgresql://tron:tron_LOCAL_DEV_ONLY_2026@127.0.0.1:33010/tron \
 #       .venv/bin/python -m alembic -c verify/alembic.ini upgrade head
+#
+# (The literal above is the rotated local-dev sentinel. Old `tron_dev_only`
+# is permanently exposed in git history commit 493b07c. See
+# docs/V1_SHIP_CHECKLIST.md §4 + tools/_tron_local_default.py.)
 
 services:
   postgres:

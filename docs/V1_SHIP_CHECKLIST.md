@@ -90,7 +90,8 @@
     | grep -v -E "vault-refs|TRIAGE|BUILD_SEQUENCE|DESIGN_DECISIONS|SECURITY_GUIDE|README"
   ```
   Must return ZERO hits for SECRET VALUES (vault-path references are OK).
-- [ ] **TRON dev password rotation** — `tron_dev_only` exposed in old `verify/.env` (commit `493b07c`). Rotate:
+- [x] **TRON dev password rotation (code-side)** — Literal `tron_dev_only` rotated to loud sentinel `tron_LOCAL_DEV_ONLY_2026` across 4 code-default sites (`orchestrator/bin/spine`, `tools/_smoke_phase11_tron.py`, `tools/_tron_alembic_upgrade.py`, `tools/verify-overrides/docker-compose.override.yml`). New helper `tools/_tron_local_default.py` adds a fail-closed guard that refuses sentinel-on-non-loopback connections. Local dev: `cd verify && docker compose down -v postgres && docker compose up -d postgres` to pick up the new password.
+- [ ] **TRON prod password population (vault-side)** — Operator must set real values at:
   - TRON Postgres password (vault path `tron/postgres/password`)
   - TRON Redis password (vault path `tron/redis/password`)
   - TRON MinIO admin user + password (vault path `tron/minio/{user,password}`)
