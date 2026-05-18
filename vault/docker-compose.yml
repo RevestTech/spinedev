@@ -1,0 +1,78 @@
+# Spine v3 — Vault (OpenBao) for the LAPTOP deployment shape (#17).
+#
+# Per V3_DESIGN_DECISIONS #9 + V3_BUILD_SEQUENCE Wave 0. This compose is for
+# the laptop / dev tier ONLY. Customer-cloud and on-prem tiers (#17) use the
+# k8s charts + KMS auto-unseal documented in vault/unseal/kms-config-*.md.
+#
+# NO SECRETS in this file. Runtime config that is NOT a secret lives in
+# vault/.env (which the user creates from vault/.env.example after running
+# init-wizard.sh). Recovery keys, root tokens, and KMS credentials are NEVER
+# written here.
+#
+# Usage:
+#   1. cp vault/.env.example vault/.env       # if you have an example file
+#   2. ./vault/init-wizard.sh                  # interactive Day-0 init
+#   3. docker compose -f vault/docker-compose.yml up -d
+#   4. shared/secrets/ (Agent A) talks to http://vault:8200 from inside the
+#      compose network, or http://127.0.0.1:8200 from the host.
+
+services:
+  vault:
+    # Use the Spine-built image once available; until then, pull upstream.
+    # Wave 0 acceptance does NOT build; keep both names documented for clarity.
+    image: ${SPINE_VAULT_IMAGE:-openbao/openbao:2.1.1}
+    container_name: spine-vault
+    restart: unless-stopped
+    cap_add:
+      # OpenBao locks memory pages to prevent secret material from being
+      # swapped to disk. Required for production-grade operation.
+      - IPC_LOCK
+    ports:
+      - "${VAULT_HOST_PORT:-8200}:8200"
+    environment:
+      BAO_ADDR: http://0.0.0.0:8200
+      BAO_API_ADDR: http://0.0.0.0:8200
+      BAO_CLUSTER_ADDR: http://0.0.0.0:8201
+      BAO_LOG_LEVEL: ${VAULT_LOG_LEVEL:-info}
+      BAO_LOG_FORMAT: json
+      # BAO_LOCAL_CONFIG is the standard escape-hatch for inlining HCL
+      # without mounting a file. Non-secret single-node Raft storage.
+      BAO_LOCAL_CONFIG: |
+        ui = true
+        disable_mlock = false
+        storage "raft" {
+          path    = "/openbao/data"
+          node_id = "spine-vault-laptop-1"
+        }
+        listener "tcp" {
+          address     = "0.0.0.0:8200"
+          tls_disable = true
+        }
+        api_addr = "http://0.0.0.0:8200"
+        cluster_addr = "http://0.0.0.0:8201"
+    volumes:
+      - vault_data:/openbao/data
+      - vault_logs:/openbao/logs
+      - ./policies:/openbao/policies:ro
+    command: ["server"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- 'http://127.0.0.1:8200/v1/sys/health?standbyok=true&sealedcode=200&uninitcode=200' >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - spine
+
+volumes:
+  vault_data:
+    driver: local
+  vault_logs:
+    driver: local
+
+networks:
+  spine:
+    # External so shared/secrets/ + hub/ containers in sibling compose files
+    # can attach to the same network and reach `vault:8200` by service name.
+    name: spine
+    driver: bridge

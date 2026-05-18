@@ -1,0 +1,20 @@
+# Spine v3 — vault/ subsystem gitignore
+#
+# Never commit local env files, recovery-key dumps, or any wizard output.
+
+.env
+.env.*
+!.env.example
+
+# init-wizard.sh recovery-output artifacts
+recovery-keys*
+*.recovery
+*.unseal
+root-token*
+spine-vault-init-*.json
+spine-vault-init-*.txt
+
+# Local dev data / logs
+data/
+logs/
+*.log
