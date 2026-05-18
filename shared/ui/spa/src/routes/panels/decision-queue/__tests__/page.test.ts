@@ -37,12 +37,16 @@ vi.mock('$app/stores', () => {
 vi.mock('$app/environment', () => ({ browser: true }));
 
 import { api } from '$lib/api/client';
+import { decisions } from '$lib/stores/decisions';
 import Page from '../+page.svelte';
 
 describe('DecisionQueue page', () => {
   beforeEach(() => {
     (api.get as ReturnType<typeof vi.fn>).mockReset();
     (api.post as ReturnType<typeof vi.fn>).mockReset();
+    // The decisions store is a module-scope singleton; tests share it.
+    // Reset its items array so the previous test's cards don't leak.
+    decisions.__setItems([]);
   });
   afterEach(() => vi.restoreAllMocks());
 

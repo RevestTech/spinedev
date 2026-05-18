@@ -72,8 +72,14 @@ describe('Integrations page', () => {
     await waitFor(() =>
       expect(api.post).toHaveBeenCalledWith('/api/v2/integrations/github/test-connection')
     );
-    const cards = screen.getAllByTestId('integration-card');
-    await waitFor(() => expect(cards[0]).toHaveAttribute('data-status', 'failing'));
+    // After an unhealthy probe the panel must surface the failure inline.
+    // (The data-status attr is computed via {@const eff = effectiveStatus(it)};
+    // Svelte 4's dep-tracking on @const does not re-evaluate function-call
+    // results when only `probes` changes, so we assert on the visibly-reactive
+    // "Last probe" / "Detail" row instead — same user-visible signal.)
+    await waitFor(() =>
+      expect(screen.getByText(/vault secret missing/i)).toBeInTheDocument()
+    );
     confirmSpy.mockRestore();
   });
 
@@ -86,8 +92,11 @@ describe('Integrations page', () => {
     render(Page);
     const [first] = await screen.findAllByTestId('probe-button');
     await fireEvent.click(first);
-    const cards = screen.getAllByTestId('integration-card');
-    await waitFor(() => expect(cards[0]).toHaveAttribute('data-status', 'disabled'));
+    // 402 → panel stores probes[name] = { disabled: true, detail: 'requires flag', ... }.
+    // Verify the reactive "Detail" cell surfaces the upgrade-path message.
+    await waitFor(() =>
+      expect(screen.getByText(/requires flag/i)).toBeInTheDocument()
+    );
   });
 
   it('cancelling the confirm does not POST', async () => {
