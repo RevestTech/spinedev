@@ -51,6 +51,18 @@ TRON deploy.
 | 4.7 | Hosted demo sandbox deferred (pre-launch) | not blocking any wave |
 | 4.8 | Air-gapped v1.1 deferral holds | per #17 |
 
+### Wave 5 — DR + Migration + Landing-docs big-bang: COMPLETE 2026-05-18
+
+3 commits:
+
+| Commit | Squad | Scope |
+|---|---|---|
+| `7a4c3ce` | F migration | `migration/` (#33 A+B+D): GitHub+Linear onboarding + signed-tarball portability (round-trip property PROVEN: byte-identical export A→import→export B) + spine_version migrator with N-2 cross-version compat + downgrades BLOCKED + 4 MCP tools + lib/spine-migrate.py moved to `migration/_v1_v2_migrator_legacy.py`. +4388 lines / 48 tests |
+| `6138a11` | E recovery | `recovery/` 12-layer DR (#31, #32): WAL+snapshot backups to S3/GCS/Azure/MinIO/Wasabi via CLI subprocess + tested restore + heartbeat + cross-region STUB v1.0 (default-OFF per Part 4.4) + auto-recovery via watchdog adapter + auto-generated DR runbook + tools/dr-test.sh + 5 MCP tools. +5116 lines / 97 tests |
+| `9728427` | G landing-docs | T6 highest-leverage UX bug: REBUILT all 7 v1-framing landing docs (README/INSTALL/install.sh/PRD/positioning/ARCHITECTURE [REFRESH]/db/README) + 6 NEW operational guides (HUB_OPERATIONS_GUIDE/DEPLOYMENT_SHAPES/FEDERATION_GUIDE/SECURITY_GUIDE/LICENSING_GUIDE/DR_RUNBOOK). v2 archived. +6399 −2105 lines |
+
+**Total Wave 5:** +13798 net lines, 145 new tests passing, smoke test 99 PASS / 0 FAIL maintained. T6 highest-leverage UX bug closed.
+
 ### Wave 4 — Federation + License + Evidence + Learning: COMPLETE 2026-05-18
 
 5 commits:
