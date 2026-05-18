@@ -51,6 +51,27 @@ TRON deploy.
 | 4.7 | Hosted demo sandbox deferred (pre-launch) | not blocking any wave |
 | 4.8 | Air-gapped v1.1 deferral holds | per #17 |
 
+### Wave 3 part 1 — Hub product + runtime migration + charter REBUILDs + API expansion: COMPLETE 2026-05-18
+
+5 commits:
+
+| Commit | Scope |
+|---|---|
+| `18a82d7` | Squad A — `shared/runtime/` migration from `lib/` (9 keeper bash files: vitals/heartbeat/watchdog/notify/executor/usage-parsers/file-lock/updater/db-outbox) + `ALLOWED_SUBSYSTEMS` 'devops' extension + V35 Flyway DB CHECK extension (applied LIVE). +3852 lines |
+| `2f02370` | Squad B — `hub/` containerized product subsystem (multi-arch Dockerfile + docker-compose with vault+keycloak+pg+flyway + entrypoint with wait-for-X + Day-0 wizard with 7 steps fully flag-driven for AI + smoke test). +2052 lines |
+| `ec112df` | Squad D — 13 existing charter REBUILDs against industry standards (architect→TOGAF, auditor→NIST 800-53+Cite-or-Refuse, conductor→Scrum+SAFe, datawright→DAMA+Kimball, engineer→#13 tier-bifurcation+Clean Code, operator→SRE-internal-variant+12-factor, planner→PMBOK 7, product→Inspired+JTBD, qa→ISTQB, researcher→#12 Cite-or-Refuse+IDEO+NN/g, ux→Nielsen+WCAG 2.2). +2562 lines |
+| `496962f` | Squad C — `shared/api/` REBUILD: `dependencies.py` now uses `shared.identity.current_user` + asyncpg pool (vault DSN) + remote-MCP placeholder; 7 NEW routes (decisions/role_chat/registry/vault_config/integrations/federation/license); 3 NEW middleware (OIDC cookie/session, feature-flag enforcement). +3545 lines, 52 new tests |
+| `d52e107` | Hygiene cleanup — populate `.deprecated` marker + relocate `chatsession.md` → `docs/_archived/` (drift+hygiene audit findings) |
+
+**Total Wave 3 part 1:** +12011 net lines, 79+ new tests passing, smoke test 99 PASS / 0 FAIL maintained.
+
+**Wave 3 part 2 deferred** (depends on Squad C routes; can run when context permits):
+- 10 Svelte SPA panels consuming Squad C routes (decision-queue, master-roles, registry, audit, vault-config, integrations, role-chat, federation, license, kg-search)
+- `shared/ui/dashboard/responsive.css` per #28
+- `shared/ui/login/` OIDC flow integration
+- `shared/mcp/server_remote.py` (mTLS + bearer)
+- Wave 6 `lib/` daemon deletions (12 files: team.sh, team-agent-daemon.sh, dashboard.html, engagement-hook.sh, etc.)
+
 ### Wave 2 — Work-item types + charters + devops/: COMPLETE 2026-05-18
 
 5 commits:
