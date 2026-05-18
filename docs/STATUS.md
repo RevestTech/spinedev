@@ -1,9 +1,76 @@
-# Spine v2 — Status & Handoff
+# Spine — Status & Handoff
 
-> **Last updated:** 2026-05-16 (end of wave 9 — Tier 1 bug fixes + smoke harness)
+> **Last updated:** 2026-05-18 (Wave 0 complete — v3 rebuild started)
 > **Branch:** `main`
-> **Latest commit:** wave 9 (see `git log --oneline -15` for full history)
-> **For: anyone picking up Spine v2 development.**
+> **For:** anyone picking up Spine development.
+
+---
+
+## v3 status (current)
+
+**v3 rebuild is in flight.** 34 design decisions locked
+(`docs/V3_DESIGN_DECISIONS.md`); full codebase triage shipped across 6
+subsystems (`docs/V3_TRIAGE.md`); 7-wave dependency-ordered execution
+plan (`docs/V3_BUILD_SEQUENCE.md`).
+
+### Wave 0 — Foundations: COMPLETE 2026-05-18
+
+7 focused commits:
+
+| Commit | Subsystem | Scope |
+|---|---|---|
+| `3bc6805` | `shared/secrets/` | 15 files / 2288 lines — vault adapter library + InMemoryAdapter + cli wrapper |
+| `7a34d58` | `shared/llm/` | 19 files / 2984 lines — 7 provider adapters + retry + streaming |
+| `882b8a6` | `shared/identity/` | 11 files / 2144 lines — Keycloak OIDC client + 5-tier matrix |
+| `a756b2f` | `vault/` | 14 files / 1658 lines — OpenBao container + Day-0 wizard + 5 unseal/DR runbooks |
+| `1a96a41` | `keycloak/` | 15 files / 1723 lines — Keycloak container + 5 IdP presets |
+| `5c17e7a` | `db/flyway/sql/V22-V32` | 11 files / 1129 lines — 11 new schemas (license / federation / hub / evidence / identity / devops / workitem / learning / provider / cloud / dr) |
+| `2212742` | Pass 2 refactors | 10 files / +933 −131 — 5 vault violations closed + verify/.env vault-refs + downstream fixups (InMemoryAdapter / orchestrator.py / smoke-test.sh) |
+
+**Total Wave 0:** ~12858 net lines added, 0 vault violations remaining.
+
+**Validation:** smoke test 99 PASS / 0 FAIL / 1 WARN / 0 SKIP — same as
+pre-Wave-0 baseline. V22-V32 applied clean against live Postgres
+transactionally.
+
+**Rotation required before v1.0** (#9 no-exceptions): TRON
+Postgres / Redis / MinIO / Grafana passwords were `tron_dev_only` in
+old `verify/.env` (single commit `493b07c`). Rotate when wiring real
+TRON deploy.
+
+### Open Part 4 decisions (resolved autonomously during overnight run)
+
+| # | Choice | Notes |
+|---|---|---|
+| 4.1 | Svelte for Wave 3 Hub SPA | smallest bundle; closest-to-vanilla ergonomics |
+| 4.2 | Fly.io as 5th cloud Day 1 | better modern API + edge network |
+| 4.3 | Vendor vault + Shamir 3-of-5 recovery for license keys | HashiCorp Enterprise pattern |
+| 4.4 | DR cross-region default-OFF | enterprise feature flag `dr.cross_region` |
+| 4.5 | TRON license audit deferred to Wave 5 dedicated subagent | per build sequence |
+| 4.6 | `#34` workspace hygiene at `shared/runtime/hygiene.py` | cross-cutting library per Part 1.1 |
+| 4.7 | Hosted demo sandbox deferred (pre-launch) | not blocking any wave |
+| 4.8 | Air-gapped v1.1 deferral holds | per #17 |
+
+### Next waves (per `docs/V3_BUILD_SEQUENCE.md`)
+
+- **Wave 1** — substrate wiring (memory writer hooks + KG indexer + calibration sink + Cite-or-Refuse middleware + cross_llm/notify/memory refactors + 4 quiet-bug fixes)
+- **Wave 2** — work-item types + 6 new role charters
+- **Wave 3** — Hub product (container + SPA + `lib/` retirement)
+- **Wave 4** — federation + license + evidence + learning (4 parallel squads)
+- **Wave 5** — DR + migration + landing-docs (3 parallel squads)
+- **Wave 6** — mobile/voice/API scaffolds + `lib/` retirement complete
+
+---
+
+## v2 status (historical — superseded by v3)
+
+The sections below describe the v2 state at the end of v2 wave 9. Most
+of v2 is KEEP or REFACTOR for v3 (per `docs/V3_TRIAGE.md`). The dominant
+subtraction is `lib/` (file-bus daemon system) which retires in Wave 3 +
+Wave 6. The landing-docs big-bang rewrite (README / INSTALL / ARCHITECTURE
+/ PRD / positioning) happens in Wave 5.
+
+---
 
 This is the single doc for "where are we, what's next, what to test." Complements (not replaces) `docs/BACKLOG.md` (the per-story tracker) and `docs/ARCHITECTURE.md` (the architecture plan).
 
