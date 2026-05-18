@@ -52,6 +52,12 @@ python-multipart==0.0.28
 pyjwt==2.12.1
 cryptography==48.0.0
 
+# ── License signing (Shamir secret sharing for vendor key custody) ───
+# Activates the 26 currently-skipped tests in license/tests/test_shamir.py
+# and powers `tools/license-sign.sh shamir-split / recover-shamir` for the
+# 3-of-5 custodian distribution per docs/V1_SHIP_CHECKLIST.md §2a.
+pyshamir>=1.0.0
+
 # ── Console output (TRON CLI helpers + bandit output formatting) ─────
 click==8.3.3
 rich==15.0.0
