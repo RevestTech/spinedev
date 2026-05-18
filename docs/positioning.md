@@ -1,131 +1,164 @@
 # Spine — Positioning
 
-> One-page positioning doc. Strategic source-of-truth for how Spine describes itself to outsiders. Implements `STORY-5.1.1` in `docs/BACKLOG.md`. Source: `docs/research/COMPETITIVE_LANDSCAPE.md`.
+> Strategic source-of-truth for how Spine describes itself to outsiders. Drivers: [`V3_DESIGN_DECISIONS.md`](V3_DESIGN_DECISIONS.md) — **#1** (positioning + sub-tagline), **#3** (Hub-as-product), **#14** (3 segments), **#15** (NOT SaaS), **#17** (4 deployment shapes), **#18** (closed-source v1.0), **#21** (ALL AI ALL THE TIME), **#23** (feature-flag licensing), **#24** (Vanta/Drata SOC 2 evidence), **#27** (Smart Spine), **#31/32** (DR built properly).
 
 ---
 
 ## Tagline
 
-**Spine is the local-deployed virtual engineering team for vibecoders building under organizational control.**
+**"AI software company in a box."**
+
+## Sub-tagline
+
+**AI does the work. AI scrum masters bring decisions to you. The audit log proves you understood what you signed.**
 
 ## What Spine is (two paragraphs)
 
-Spine is a **single product, three subsystems, one central orchestrator** that runs an entire SDLC — Plan → Build → Verify — on the user's own machine, against the user's own LLM accounts, under the user's organization's standards. Mental model: *what if a single person needed to hire a full engineering team to ship something — Spine is that team, on tap.* Thirteen role-bounded agents (product, planner, architect, conductor, researcher, engineer, ux, qa, operator, datawright, seer, auditor, memory) collaborate via a markdown message bus, gated by approval checkpoints, coordinated by a bash state machine, and persisted in a single Postgres backbone.
+Spine is a **containerized product — the Hub** — that runs an entire AI engineering organization on your laptop, your cloud account, or your datacenter. Plan, Build, Verify, Operate. Product Managers, Architects, Scrum Masters, Engineers, QA, DevOps, Security, Release, Compliance — every role you'd hire if you were standing up an engineering org, running 24/7, paying their own LLM bills, talking to YOU when they need a decision and shipping when they don't. The Hub is the primary surface — not a template you drop into a project (the v1 framing was wrong, #3).
 
-Spine is **not** a SaaS coding agent, not an IDE plugin, not a developer framework. It is the *only* product aiming at the intersection of **local-deploy + multi-agent + role-bounded + SDLC-gated + requirements-first + verification-as-first-class**. Every other category has at least one player that beats Spine on a single corner (Devin on SaaS turnkey UX, ruflo on surface area, LangGraph on programmatic control, Cursor on IDE feel, superpowers on per-agent discipline) — none of them line up all six corners that an enterprise rolling AI to every employee actually needs.
+Spine is **enterprise-grade software for orgs OR individuals who want production software**. It is **not** for vibecoder one-offs. It is **not** a SaaS coding agent. It is **not** an IDE plugin. It is **not** a framework. It is **not** multi-tenant — Spine vendor never holds your code, secrets, or audit trail (#15). It is closed-source v1.0 (#18). It is the only product aiming at: **fully-AI engineering organization + self-hosted + audit-grade + LLM-agnostic + active-push communication + 6-corner SDLC (Plan/Build/Verify/Operate/Federate/Comply)** — and the only one whose vendor is willing to dogfood it as their entire engineering team (#21).
 
 ---
 
-## The six-corner moat
+## The differentiation, in one sentence per category
+
+| Category | Spine claim |
+|---|---|
+| **Coverage** | A full org — not a coder. Product → Plan → Build → Verify → Release → Operate → Comply. |
+| **Communication** | Active push (#5). Scrum Masters bring decisions to you on Slack / email / SMS / WhatsApp / Teams / PagerDuty. You approve; they ship. You don't babysit a dashboard. |
+| **Deployment** | NOT SaaS (#15). Laptop / BYOC / customer-cloud / on-prem (#17). 5+ clouds Day 1 (#20). Air-gapped v1.1. |
+| **Source posture** | Closed-source v1.0 (#18). Trust comes from SOC 2 + pen tests + source escrow + audit chain + design-partner case studies — not from GitHub stars. |
+| **Identity** | Keycloak embedded (#25). Federate to your Okta / Azure AD / Google Workspace / Ping / OneLogin. |
+| **Secrets** | Vault-only (#9). OpenBao bundled by default. Spine never holds your secrets. |
+| **LLM** | 7 providers Day 1 (#2): Anthropic / OpenAI / Bedrock / Vertex / Ollama / Qwen / vLLM. Customer chooses. We never marry one. |
+| **Compliance** | Vanta + Drata + Secureframe Day 1 (#24). Audit chain → evidence pipeline as a byproduct. *"We started SOC 2 today"* really means *"we have 18 months of evidence already collected."* |
+| **Federation** | Fractal Hub (#10): same container at team / division / enterprise / corporate tier. Updates cascade through the tree (#16); each tier admin approves. |
+| **Licensing** | Feature-flag licensing as a Day-1 architectural primitive (#23). Every feature has a flag. Bundles are signed Ed25519. License grants ride the federation tree. |
+| **Smart Spine** | 3-tier learning (#27). Project Spine learns from itself. Within-Hub aggregates across projects. Cross-org (opt-in, anonymized) learns across customers — vendor publishes refined charters back through the federation tree. |
+| **Disaster recovery** | Built properly (#31), 12 layers (#32). Tested restore on a schedule. Backup verification on every release. |
+| **Workspace hygiene** | Architectural concern (#34) — Conductor refuses to mark a project done if uncleaned workspace state exists. The same trust mechanism as the audit chain. |
+| **Self-dogfooded** | Spine is built by Spine (#21). The proof of the product is the product. *"Yours will be too."* |
+
+---
+
+## Target market — ALL three segments (#14)
+
+One product. One Hub container. Different SKUs and onboarding paths. Same underlying engine.
+
+### Solo founder (laptop / BYOC)
+*One person trying to be a full team.* Free tier on laptop for evaluation. Founder tier on BYOC ($50–200/mo management fee, deferred pricing per #23) when ready to ship. PM, architect, engineer, QA, devops, security, release manager — all AI, all the time. The same person stays in the loop as the approver at every gate. Audit chain produces SOC 2-grade evidence automatically — so the day your first enterprise customer asks for SOC 2, you have 18 months of evidence already collected (#24).
+
+### Mid-market tech (BYOC → self-hosted)
+*A staff engineer at a 50-person company who can't hire 5 more engineers but can ship a parallel AI org alongside their human team.* Customer-cloud shape on EKS / AKS / GKE. MFA required, multi-IdP federation, basic SCIM (Keycloak Team tier per `keycloak/tier-config.md`). Standards bundles enforce house rules — banned libraries, required QA scope, mandatory architect-sign on schema migrations. Smart Spine within-Hub means the Master Scrum Master learns from Finance's PRDs what Marketing's PRDs typically miss.
+
+### Regulated enterprise (on-prem / air-gapped v1.1)
+*A bank, defense supplier, healthcare provider, government.* On-prem K8s, OpenShift, or Rancher. Shamir 3-of-5 vault unseal (#32 layer 8). Cross-region active-passive DR (#32 layer 7). In-house vLLM or Ollama serving local weights (no outbound LLM calls). Full SCIM 2.0 + multi-realm Keycloak + WebAuthn / passkey + step-up auth + admin event export. Bounded mandatory upward flows to corporate Hub for security incident reporting (#10 — fractal Hub, consent-leaning + bounded mandatory). Hash-chained audit log + two-party attestation via Vanta/Drata = regulatory-grade trust (#24).
+
+Bottom-up adoption (solo) → mid-market expansion → enterprise. Notion / Linear / Figma growth pattern, but with a **unified product** rather than separate-tier-as-separate-product.
+
+---
+
+## NOT SaaS (#15) — explicit and repeated
+
+**No vendor-hosted multi-tenant cloud. Period.** Spine is enterprise-self-hosted at every tier. The vendor never holds customer data or runs customer workloads.
+
+> Spine doesn't hold your code, doesn't hold your secrets, doesn't hold your audit trail. Ever. It can't be subpoenaed for your data. It can't be breached for your data. It doesn't exist in our cloud.
+
+`try.spine.dev` is a public demo sandbox — demo data, 24h expiry, marketing/evaluation only. **Not a product tier.**
+
+This is the architectural answer to the procurement department's *"what about data residency / sovereignty / breach exposure?"* question. Spine cannot become the breached vendor in your security review because Spine never had your data to begin with.
+
+---
+
+## Closed-source v1.0 (#18) — and what replaces GitHub stars
+
+No public source code in v1.0. Open-sourcing the project Spine engine is on the table after enterprise traction is real — not Day 1. The OSS license question (Apache 2.0 vs MIT vs other) is deferred until/unless anything open-sources.
+
+**What replaces "GitHub stars as trust signal":**
+
+- **Founder presence.** Khash is reachable. Office hours. Discord. Public roadmap (`docs/V3_BUILD_SEQUENCE.md`). Direct line for design-partner customers.
+- **Design-partner case studies** with named customers as they ship.
+- **Discord community** — for support, recipes, integration patterns, escalation.
+- **Public roadmap + Wave-by-Wave status** (`docs/STATUS.md`).
+- **Public uptime + security posture page** — vendor's own SOC 2 status, advisory feed.
+- **SOC 2 Type II** (in progress, no longer optional under closed-source).
+- **Independent pen test reports** — annually, published summary.
+- **Source-escrow option** (Iron Mountain / NCC Group) for top-tier enterprise contracts.
+- **Demo-environment access** for security reviews — full Hub in a sandbox you can hit with whatever scanner you want.
+
+Cloud-provider competition risk: **zero.** Nothing to fork.
+
+---
+
+## ALL AI ALL THE TIME (#21) — the ultimate proof of the product
+
+Cursor isn't built by Cursor. Devin isn't built by Devin. Factory isn't built by Factory. **Spine IS built by Spine.**
+
+Every line of code in this repo was shipped by AI roles operating through the same Hub you'd run yourself. Every architectural decision went through the same decision queue. Every PR has an audit-chain entry. The vendor's own Spine deployment is the proving ground for every feature before it ships to customers (Smart Spine Tier 3, #27).
+
+This is not marketing copy. It is operationally true and verifiable in the public commit log. The human role at Spine is irreducibly: strategic direction, approval gates, customer relationships, brand / voice. **Everything else is AI.**
+
+Pitch line: *"Spine built itself this way — yours will too."*
+
+---
+
+## Three worked examples (3-segment)
+
+### A — Solo founder ships a time-tracking SaaS (laptop → BYOC)
+Khash equivalent: a non-technical founder runs `bash install.sh ~/spine`. Hub UI lands on a Decision Queue. Master Product role intros itself, runs the 5-move intake protocol (naive cast → provoke → reframe → tier → PRD artifact). Founder approves the PRD. Master Architect convenes a swarm; TRD comes back; founder approves. Conductor decomposes; Engineer team fans out across worker slots; auditor cross-checks every file; Verify subsystem runs sandboxed tests + cross-LLM consensus. Compliance role pushes audit-chain events into Vanta automatically (#24). Five days, one person, full SDLC, audit-grade. When the founder needs to focus on customers and not ops, they flip to BYOC — Spine vendor provisions identical Hub into the founder's AWS account; same product, vendor handles ops. To exit BYOC: revoke the IAM role. Hub keeps running. No data migration. No lock-in.
+
+### B — Mid-market team ships a multi-quarter migration (customer-cloud)
+Acme Corp, 80 engineers, EKS. CTO runs `helm install spine/hub`. Day-0 wizard federates Keycloak to their existing Okta. License bundle declares: per-feature flags, banned-libraries list, mandatory QA + security swarm for revenue paths, weekly DR test on. Smart Spine within-Hub aggregates: Master Scrum Master notices that revenue-critical PRDs from the Billing team always need a Compliance sign-off the Marketing team's don't — proactively surfaces this on Decision cards. A 6-month migration from session-cookie auth → OAuth2: Master Architect queries the Knowledge Graph for impact radius, decomposer uses KG-driven story sequencing, Engineer team fans out across the touched modules, Auditor re-runs impact_radius against each report to flag missed callers, Cross-region DR active-passive standby in second AWS region (#32 layer 7). Migration ships behind a feature flag with full test coverage and zero scope creep.
+
+### C — Regulated enterprise rolls Spine to 5,000 devs (on-prem federation)
+Acme Bank, 5,000 devs, OpenShift, OpenBao, Active Directory, in-house vLLM. Corporate Hub at the root. Division Hubs for Retail / Investment / Asset Mgmt — each registers under Corporate. Team Hubs under each Division — each registers under their parent. Updates cascade vendor → corporate → division → team (#16); each admin approves. Bundle policy at Corporate declares: *"all subsidiary Hubs report security incidents upward"* (#10 — bounded mandatory upward flow). Shamir 3-of-5 vault unseal across 5 named compliance officers; cloud-KMS auto-unseal forbidden by policy. Cross-LLM consensus on every security-critical decision (#12 Cite-or-Refuse contract — verify-class roles must cite KG-node ID or refuse). Audit-chain entries push to Vanta + the bank's existing GRC; two-party attestation matches independently. *"Spine started today; here's 18 months of evidence-grade decision history for our regulator."*
+
+---
+
+## The six corners of the moat (v3 frame)
 
 ```
-                       LOCAL-DEPLOY
-                            │
-                            │
-  REQUIREMENTS    ──────────●──────────    MULTI-AGENT
-   -FIRST                  / \
-                          /   \
-                         /     \
-                        /  SPINE \
-                       /          \
-                      /            \
-  VERIFICATION  ─────●──────────────●─────  ROLE-BOUNDED
-   -AS-PHASE          \            /         AUTHORITY
-                       \          /
-                        \        /
-                         \      /
-                          \    /
-                           \  /
-                       SDLC-GATED
+                       SELF-HOSTED EVERYWHERE
+                       (laptop → on-prem, NOT SaaS)
+                                  │
+                                  │
+   ACTIVE-PUSH        ────────────●────────────    FRACTAL FEDERATION
+   SCRUM MASTERS                 / \                (Hub IS a Hub IS a Hub)
+                                /   \
+                               /     \
+                              /  SPINE \
+                             /          \
+                            /            \
+   CITE-OR-REFUSE     ─────●──────────────●─────  ALL-AI BUILD + 6-CORNER
+   VERIFY CONTRACT          \            /         COVERAGE (Plan/Build/
+                             \          /          Verify/Operate/Comply/
+                              \        /           Release)
+                               \      /
+                                \    /
+                                 \  /
+                            FEATURE-FLAG LICENSING
+                            + AUDIT-CHAIN EVIDENCE
+                            (SOC 2 as byproduct)
 ```
 
-Each corner is necessary; the moat is *all six together*.
+| Corner | Spine | Devin | Factory | Cursor | ruflo | MetaGPT |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|
+| Self-hosted everywhere (#15 #17) | ✅ | ❌ | ❌ | ⚠️ | ⚠️ | ✅ |
+| Active-push Scrum Masters (#5) | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Fractal federation (#4 #10) | ✅ | ❌ | ❌ | ❌ | ⚠️ | ❌ |
+| 6-corner coverage (#11 #19) | ✅ | ❌ | ❌ | ❌ | ❌ | ⚠️ |
+| Cite-or-Refuse verify (#12) | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Feature-flag licensing + audit evidence (#23 #24) | ✅ | ⚠️ | ⚠️ | ❌ | ⚠️ | ❌ |
 
-### 1. Local-deploy
-No SaaS runtime. The org keeps its data. The user pays their own LLM bills. Spine installs from a tarball, runs as bash daemons + a Postgres instance on the user's own machine, and never phones home. Compliance, security review, and data-residency arguments collapse: there's nothing to review except the code the org already audited at install time.
-**Who has this:** ruflo (partial — federation tilts SaaS), MetaGPT (research demo). **Who doesn't:** Devin, Factory, Cursor, superpowers (plugin only).
-
-### 2. Multi-agent
-Not "one smart agent with subagents on demand" — a *standing coordinated team*. Thirteen roles, each with its own daemon, prompt, memory, and authority bounds. Fan-out to up to ten workers per manager (130 parallel worker slots stock). The orchestrator dispatches; roles report back; the auditor cross-checks every file touched.
-**Who has this:** ruflo (98 agents), MetaGPT (4-7), Spine (13). **Partial:** Devin, Factory (single agent w/ subagent calls).
-
-### 3. Role-bounded authority
-Researchers cannot write code. Engineers cannot deploy. Operators cannot edit application source. The boundary is enforced by *role prompt + auditor cross-check + module-boundary linter*, not just by hope. Mistakes get caught at the role boundary instead of mid-execution.
-**Who has this:** MetaGPT (architecturally), Spine (deeply). **Who doesn't:** ruflo, Devin, Factory, Cursor — any agent can do anything in those tools.
-
-### 4. SDLC-gated
-Plan → Build → Verify. Each phase produces a signed artifact (PRD → TRD → Roadmap → BuildArtifact → VerifyFindings). No phase advances without explicit user approval. The pipeline definition lives in declarative YAML (`sdlc-pipeline.yaml`) and is editable by authorized roles — but a project locks to a pipeline version at start so mid-flight edits never break in-flight work.
-**Who has this:** MetaGPT (rigidly), Spine (with the flexibility principle). **Who doesn't:** Devin, Factory, Cursor, ruflo — any of those will happily skip from "idea" to "PR".
-
-### 5. Requirements-first interrogation
-Spine *refuses to build* until the spec is real. The `product` role runs a 5-move dialogue protocol (naive cast → provoke correction → reframe and redo → tier MUST/SHOULD/COULD → produce the PRD artifact). Per-project-type intake templates (web-app, internal-tool, data-pipeline, mobile, api-service, cli-tool) drag the requirements out of someone who can't articulate them. A PRD with any `TBD` field cannot be marked complete.
-**Who has this:** Spine. Uniquely. Every other tool treats intake as a free-form prompt to an agent.
-
-### 6. Verification-as-first-class-phase
-A separate subsystem (`verify/`, integrated from TRON) runs scanners, ISO agents, ephemeral Docker sandbox execution, cross-LLM validation (Anthropic + OpenAI), and Platt-scaled confidence calibration. The auditor verifies the engineer's `BuildArtifact` against the Knowledge Graph impact set *before* anything ships. Verify failure auto-generates a remediation directive that routes back to Build.
-**Who has this:** Spine (via TRON integration). **Who doesn't:** anyone else in the multi-agent category — verification is at best a linter call.
-
-### Who has what — quick matrix
-
-| Corner | Devin | Factory | Cursor | ruflo | MetaGPT | superpowers | **Spine** |
-|---|---|---|---|---|---|---|---|
-| Local-deploy | ❌ | ❌ | ⚠️ | ⚠️ | ✅ | ✅ | **✅** |
-| Multi-agent | ⚠️ | ⚠️ | ⚠️ | ✅ | ✅ | ❌ | **✅** |
-| Role-bounded | ❌ | ⚠️ | ❌ | ❌ | ✅ | ❌ | **✅** |
-| SDLC-gated | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | **✅** |
-| Requirements-first | ❌ | ❌ | ❌ | ❌ | ⚠️ | ⚠️ | **✅** |
-| Verify-as-phase | ⚠️ | ⚠️ | ❌ | ⚠️ | ❌ | ⚠️ | **✅** |
-
----
-
-## Target user
-
-### Vibecoder
-Someone who wants to ship software but cannot articulate what they want, cannot write code well enough to debug failures, and cannot afford to be wrong. Spine is the front door (`product` role drags requirements out), the engine room (Plan → Build → Verify produces the artifacts a real team would produce), and the safety net (auditor + verify catch the mistakes the vibecoder can't see).
-
-### Enterprise dev team
-A CTO who wants every employee to have an AI engineering team without losing control of standards, security, compliance, or budget. SaaS orchestrators (Devin, Factory) own the runtime and the data; Spine deploys locally, enforces org policy in role prompts and auditor checks via **org bundles** (`shared/standards/bundle-schema.yaml`), and bills directly to each user's LLM account with **per-user budget enforcement** (hard caps, not warnings).
-
-### Solo founder
-One person trying to be a full team. Spine fills the gaps — `product` is the PM, `architect` is the staff engineer, `engineer` is the implementer, `qa` is the tester, `operator` is the DevOps lead, `datawright` is the data engineer — without the salary line items or the meeting overhead. The same person stays in the loop as the approver at every gate.
-
----
-
-## Three worked examples
-
-### A. Vibecoder builds a SaaS app
-*"I want to build an app for managing my team's time off."* User runs `spine project new`. `product` role asks ten web-app intake questions (auth model, user roles, payment, deployment target, etc.), drafts a strawman PRD, invites attack, rebuilds. User signs off. Technical review swarm (architect + researcher + engineer + operator + qa) produces a TRD. User signs off. Decomposer emits a Roadmap. Engineer daemons fan out to build. Auditor cross-checks every file. Sandbox runs the test suite. Cross-LLM validates the security-critical paths. User approves the build artifact. Five days, one person, full SDLC.
-
-### B. Engineering team uses Spine for a refactor
-A staff engineer at a 50-person company runs `spine project new` with the directive *"migrate auth service from session cookies to OAuth2"*. Architect queries the Knowledge Graph (`impact_radius`, `who_owns`) to compute blast radius before drafting the TRD. Decomposer uses KG dependency detection (not heuristics) to sequence the stories. Engineer daemons fan out across the touched modules. Auditor re-runs `impact_radius` against each engineer's report and flags missed callers. The company's org bundle (`acme-corp.yaml`) injected its banned-patterns list (no `eval()`, no raw SQL, no `requests` without timeout) into every role prompt automatically. The migration ships behind a feature flag with full test coverage and no scope creep.
-
-### C. Org rolls Spine to 50 employees
-A CTO publishes an org bundle (`acme-corp-v3.yaml`) containing coding standards, security rules, approved libraries, banned patterns, per-user budget caps ($50/day), required swarm composition (must include `qa` and `operator` for production-bound work), and required gates (TRD requires CTO + Compliance both sign for revenue-critical projects). Every employee runs `spine install --org-bundle acme-corp-v3.yaml`. Drift detector warns each user when the bundle is older than the org's published version. The CTO can audit every LLM call via the append-only `spine_audit` table — prompt hash, output hash, model, cost, role, user, timestamp, directive ref, with HMAC hash-chain for tamper detection.
-
----
-
-## Key tech choices
-
-### Bash + Postgres core (debuggability moat)
-The orchestrator state machine, daemon infra, transitions, gates, and routing are bash + Postgres. When something breaks, you can `cat` the daemon log and `psql` the state table. No abstract framework to debug, no opaque agent runtime to introspect, no Temporal cluster to keep alive. Python is used selectively (HMAC, structured validation, swarm subgraphs) but stays under ~500 LOC inside the orchestrator.
-
-### Pipeline-as-data (custom SDLC per org via YAML, no fork)
-`sdlc-pipeline.yaml` declares phases, role leads, swarm composition, artifact templates, tier defaults, and gates. Each org can shape its own SDLC without forking Spine. Override hierarchy: org bundle → team → project (most-specific wins). Every edit is a git commit with author + timestamp + rationale (≥8 chars enforced). Projects lock to a pipeline version at start; explicit migration is the only legal change path.
-
-### Knowledge Graph (deterministic code reasoning, not grep)
-Code parsed by tree-sitter (Python, TypeScript, Bash, Markdown shipping; Go, Rust, SQL next). Nodes + edges + embeddings live in Postgres (`spine_kg` schema + pgvector). Eight MCP tools (`find_callers`, `trace_dependency`, `code_neighborhood`, `impact_radius`, `doc_for_region`, `who_owns`, `find_by_satisfies`, `hybrid_search`) replace token-burning grep loops with deterministic millisecond queries. Architect and engineer query the KG *before* drafting; auditor queries it *after* the report to verify nothing was missed.
-
-### TRON-integrated verify (sandbox + cross-LLM + calibration)
-The Verify subsystem is TRON, integrated via `git subtree` into `verify/`. Ephemeral Docker sandbox with seccomp profile runs untrusted code. Cross-LLM validation (Anthropic + OpenAI) on high-stakes outputs (PRD final, TRD final, security findings); single-key deployments degrade gracefully (cap confidence at 0.7, skip cross-check). Platt-scaled calibration applied to architect risk scores, decomposer estimates, qa severity, auditor finding confidence.
-
-### Local-first; no SaaS dependency
-No external service is required to operate Spine. Postgres, the LLM API of choice, and bash are the only runtime dependencies. The org's data never leaves the org's machines. The user's LLM account is the only billing relationship.
+Each corner is necessary; the moat is *all six together* — and the seventh, unspoken corner is that **Spine is built by Spine** (#21).
 
 ---
 
 ## Status
 
-**v2 unified architecture in active build.** Eight commits, ~25,000 LOC, ~80 stories Done out of ~180 across 9 INITs. Core runtime functional: orchestrator state machine, gate engine, routing layer, cost router with budget enforcement, unified cost ledger, unified audit log, eight Knowledge Graph MCP tools, build artifact contract, verify subsystem MCP wrappers. Integration testing (end-to-end Plan → Build → Verify thread) is the active focus of Sprints 1–3 (see `docs/BACKLOG.md` Sprint Plan). Source visible in the repo; license terms not yet finalized — track `STORY-5.1.3` (naming + branding) and the project root for the final declaration.
+v3 rebuild in flight. Waves 0–4 complete (foundations, substrate wiring, work-item types, Hub product part 1, federation + license + evidence + learning). Wave 5 (DR + Migration + Landing docs) in progress. Wave 6 (Mobile/Voice/API scaffolds + lib/ retirement) to follow.
+
+See [`docs/STATUS.md`](STATUS.md) for the wave-by-wave state and [`docs/V3_BUILD_SEQUENCE.md`](V3_BUILD_SEQUENCE.md) for the full execution plan.
 
 ---
 
@@ -134,8 +167,11 @@ No external service is required to operate Spine. Postgres, the LLM API of choic
 ```bash
 git clone <repo>
 cd SpineDevelopment
-make team-up      # bring up the agent team
-make team-status  # see what's in flight
+bash install.sh ~/spine
+cd ~/spine && make hub-up
+open $(cat _state/hub_url)
 ```
 
-Full instructions: [`INSTALL.md`](../INSTALL.md). Architecture deep-dive: [`docs/ARCHITECTURE.md`](ARCHITECTURE.md). Why each design choice: [`docs/research/COMPETITIVE_LANDSCAPE.md`](research/COMPETITIVE_LANDSCAPE.md). Honest comparison vs the field: [`docs/comparison.md`](comparison.md).
+Or run the marketing-only hosted demo at `try.spine.dev` (#15 — demo data, 24h expiry, not a product tier).
+
+Full install + deployment guide: [`INSTALL.md`](../INSTALL.md). Architecture: [`docs/ARCHITECTURE.md`](ARCHITECTURE.md). Why each design choice: [`docs/V3_DESIGN_DECISIONS.md`](V3_DESIGN_DECISIONS.md).

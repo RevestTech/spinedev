@@ -1,356 +1,307 @@
-# Spine — Unified Architecture (v2.0)
+# Spine — Architecture (v3)
 
-| | |
-|---|---|
-| **Status** | **Approved** (locked 2026-05-16 by Khash) |
-| **Last updated** | 2026-05-16 |
-| **Sources** | `docs/research/COMPETITIVE_LANDSCAPE.md`, TRON evaluation (2026-05-16 session), 5-move protocol applied recursively |
-| **Supersedes (when approved)** | Single-project assumption implicit in pre-v2 backlog. INIT-1 narrows to "Plan"; new INIT-7/8/9 added for Build, Verify (TRON), Orchestrator. |
+> **Status:** v3 refresh per `docs/V3_BUILD_SEQUENCE.md` Part 1.1 (Wave 5 Squad G). The full v3 architecture is large enough that incremental rebuild continues across subsequent waves; this doc is the **authoritative v3 layout** anchor, with per-subsystem detail delegated to each subsystem's own README. The pre-v3 (v2) version of this file is archived at `docs/_archived/v2-ARCHITECTURE.md`.
+>
+> **Source of truth.** Where this doc says one thing and a subsystem README says another, the subsystem README wins for that subsystem's internals. Cross-cutting structure (placement, dependency graph, deployment shapes) — this doc wins.
+>
+> **Drivers:** [`docs/V3_DESIGN_DECISIONS.md`](V3_DESIGN_DECISIONS.md) — all 34 decisions inform the layout. The most architecturally consequential are #1, #2, #3, #4, #9, #10, #11, #15, #17, #19, #23, #25, #27, #31, #32, #34.
 
 ---
 
 ## 1. Executive summary
 
-Spine v2 is a **single product, three subsystems, one central orchestrator**, delivered as a **monorepo**. It unifies the Spine (orchestration / SDLC) and TRON (verification / audit) projects under one umbrella while preserving each subsystem's independent excellence. The product implements real-life SDLC: **Plan → Build → Verify**, coordinated by a central state machine that owns the lifecycle, gates, routing, cost, and audit. Authority is bounded by role; the pipeline is customizable by authorized roles via declarative manifests; standards / policy / budget are enforced by org bundles. Local-deploy. No SaaS lock-in. Costs controlled by tier-aware routing.
+Spine v3 is a **containerized product** (the Hub) plus **10 subsystems** at top level (5 cross-cutting `shared/*` libraries + 10 top-level subsystems with their own daemons/containers/runbooks). The Hub is the **primary management surface** (#3); the CLI is a power-user tool. The Hub runs in **4 deployment shapes** (#17) on **5+ clouds Day 1** (#20). Pricing is deferred (#23, #26); feature-flag licensing is a Day-1 architectural primitive that makes any pricing model mechanically supported. Closed-source v1.0 (#18) — trust via SOC 2 + pen tests + source escrow + audit chain.
 
-The five-corner moat from the competitive research remains: *local-deploy + multi-agent + role-bounded + SDLC-gated + requirements-first*. Spine v2 adds a sixth corner: *verification-as-first-class-phase* (TRON-grade), which none of Devin / Factory / Cursor / ruflo / MetaGPT match.
-
----
-
-## 2. Architecture
-
-```
-                    ┌───────────────────────────────────────────┐
-                    │         SPINE ORCHESTRATOR                │
-                    │                                           │
-                    │  Lifecycle state machine                  │
-                    │  Phase gates + user approvals             │
-                    │  Routing: dispatch to Plan / Build / Verify│
-                    │  Reroute on Verify failure                │
-                    │  Unified cost ledger + audit log          │
-                    │  Portfolio mgmt (many projects)           │
-                    │  Single user-facing UI + API              │
-                    └───┬───────────────┬───────────────┬───────┘
-                        │               │               │
-                  ┌─────▼────┐    ┌─────▼─────┐    ┌────▼────────┐
-                  │   PLAN   │    │   BUILD   │    │   VERIFY    │
-                  │          │    │           │    │             │
-                  │ intake   │    │ engineer  │    │ scanners +  │
-                  │ PRD      │    │ operator  │    │ ISO agents +│
-                  │ TRD swarm│    │ datawright│    │ sandbox +   │
-                  │ roadmap  │    │ + roles   │    │ cross-LLM + │
-                  │          │    │ + KG/MCP  │    │ calibration │
-                  └──────────┘    └───────────┘    └─────────────┘
-                  (Spine native)   (Spine native)   (TRON → integrated)
-
-                  ▲                  ▲                  ▲
-                  └──────────────────┼──────────────────┘
-                                     │
-                  ┌──────────────────▼──────────────────┐
-                  │     CROSS-CUTTING FOUNDATION         │
-                  │                                      │
-                  │  • Knowledge Graph (INIT-6)          │
-                  │  • Standards / Policy (INIT-2 +      │
-                  │    TRON Standards Hierarchy)         │
-                  │  • MCP server (shared)               │
-                  │  • Cost router (EPIC-1.5)            │
-                  │  • Audit log (INIT-3)                │
-                  │  • Memory & lessons                  │
-                  │  • Postgres backbone (db/)           │
-                  └──────────────────────────────────────┘
-```
-
-**Why this shape:**
-- **Plan / Build / Verify mirrors real SDLC** — same nouns enterprises use. Easy to map to org structures.
-- **Orchestrator is a thin coordinator**, not a smart agent — owns state, routing, gates, lifecycle. Subsystems remain independently testable and deployable.
-- **Cross-cutting foundation prevents duplication** — one MCP server, one cost ledger, one audit log, one KG, one standards hierarchy, one memory layer. Each lives in `shared/`.
-- **Subsystem isolation preserved** — `verify/` (TRON) can still run standalone for audit-only deployments. `plan/` and `build/` can be exercised without Verify for trusted contexts.
+The v3 layout was independently converged on by three triage agents (T1 + T5 + T6 in `docs/V3_TRIAGE.md`) and resolved structurally in `docs/V3_BUILD_SEQUENCE.md` Part 1.1.
 
 ---
 
-## 3. Locked decisions
+## 2. Top-level layout (LOCKED)
 
-| # | Decision | Choice | Rationale |
-|---|---|---|---|
-| 1 | Umbrella name | **Spine** (working) | Metaphor fits the orchestrator role; rename freely later once brand exploration matures |
-| 2 | Top-level shape | **Plan + Build + Verify + Orchestrator** | Maps to real-life SDLC; matches enterprise vocabulary |
-| 3 | Repository | **Monorepo** | Atomic cross-cutting changes, single CI/release, single docs hub — right for solo-dev product |
-| 4 | Orchestrator stack | **Hybrid: bash core + Postgres state + Python workers** | Bash for the orchestrator state machine (debuggability moat preserved); Python for heavy verification work where TRON already lives. Communicate via MCP/REST. No forced language consolidation. |
-| 5 | TRON integration | **`git subtree` into `verify/`** | Preserves TRON's git history; TRON keeps internal cohesion; no submodule complexity for a single-developer product |
-| 6 | Migration | **Phased / incremental** | No big-bang refactor; move code only when touching it; both halves keep working throughout |
-| 7 | TRON Standards Hierarchy | **Lift into `shared/standards/`** | TRON already shipped what Spine INIT-2 is designing. Don't reinvent. |
-| 8 | Postgres backbone | **Single instance, multiple schemas** | One `db/` Postgres serves recording layer + KG + orchestrator state + audit. No new infra. |
-
----
-
-## 4. Repository structure (target)
+Per Build Sequence §Part 1.1:
 
 ```
-spine/   (working repo name; rename later)
-├── README.md                    # umbrella product README
-├── CHANGELOG.md                 # unified releases
-├── Makefile                     # umbrella task runner — dispatches per-module
-├── pyproject.toml               # umbrella Python workspace
-├── docker-compose.yml           # umbrella deployment (orchestrator + verify + ui)
-│
-├── docs/                        # SINGLE docs hub
-│   ├── README.md
-│   ├── ARCHITECTURE.md          ← this file
-│   ├── PRD.md                   # all product requirements (REQ-INIT-N sections)
-│   ├── BACKLOG.md               # operational backlog
-│   ├── PRACTICES.md             # operating practices (drift / delivery / extensions)
-│   ├── IMPROVEMENT_CHECKLIST.md # maintenance checklist
-│   └── research/                # competitive landscape, future research
-│
-├── orchestrator/                # NEW — central lifecycle state machine
-│   ├── lib/                     # state machine logic (bash + minimal Python)
-│   ├── state/                   # Postgres schema for project lifecycle
-│   ├── api/                     # MCP + REST surface
-│   └── tests/
-│
-├── plan/                        # PLAN SUBSYSTEM (intake → PRD → TRD → Roadmap)
-│   ├── roles/                   # product, architect, planner, swarm roles
-│   ├── templates/               # intake templates per project type
-│   ├── artifacts/               # PRD/TRD/Roadmap schemas (Pydantic — lifted from TRON pattern)
-│   └── tests/
-│
-├── build/                       # BUILD SUBSYSTEM (existing Spine roles)
-│   ├── roles/                   # engineer, operator, datawright
-│   ├── daemons/                 # bash daemon infra
-│   ├── workers/                 # worker pool primitives
-│   ├── kg/                      # knowledge graph (INIT-6) — feeds Plan + Build + Verify
-│   └── tests/
-│
-├── verify/                      # VERIFY SUBSYSTEM (TRON → integrated via subtree)
-│   ├── agents/                  # ISO agents (SecurityISO, BuilderISO, QAISO, …)
-│   ├── pipeline/                # 7-layer verification
-│   ├── sandbox/                 # docker sandbox primitives
-│   ├── workflows/               # Temporal workflows (preserved)
-│   ├── calibration/             # Platt scaling
-│   ├── api/                     # FastAPI routes (verify-internal)
-│   └── tests/
-│
-├── shared/                      # CROSS-CUTTING (used by 2+ subsystems)
-│   ├── db/                      # ← move existing db/ here; Postgres schemas: recording, kg, lifecycle, audit
-│   │   ├── flyway/
-│   │   ├── docker-compose.yml
-│   │   └── watcher/
-│   ├── mcp/                     # unified MCP server
-│   ├── cost/                    # cost router + ledger
-│   ├── audit/                   # audit log
-│   ├── memory/                  # role memory + cross-project playbook
-│   ├── standards/               # org policy bundles (lifted from TRON Standards Hierarchy)
-│   └── ui/                      # dashboard / front-door UI (React, lifted from TRON frontend/ + admin-ui/)
-│
-├── lib/                         # legacy Spine bash — transitional, drains as we touch code
-├── scripts/                     # legacy Spine scripts — transitional
-├── recipes/                     # existing Spine recipes (stay)
-├── templates/                   # existing Spine templates (stay until migrated to per-subsystem templates)
-└── tools/                       # repo-level dev tooling
+hub/                 NEW    — containerized Hub product (#3)
+federation/          NEW    — Hub-to-Hub sync (#4, #10, #16)
+devops/              NEW    — devops role + 8 control planes (#11)
+vault/               NEW    — OpenBao container + init wizard + runbooks (#9)
+keycloak/            NEW    — Keycloak container + realm config + init wizard (#25)
+license/             NEW    — signed bundle authority + verifier + quota meters (#23)
+evidence/            NEW    — Evidence Store + Vanta/Drata/Secureframe push (#24)
+learning/            NEW    — Smart Spine 3-tier loop + telemetry pipeline (#27)
+recovery/            NEW    — DR backup/restore/auto-recovery (12 layers) (#31, #32)
+migration/           NEW    — onboarding + portability + version migration (#33)
+
+orchestrator/        KEEP+REFACTOR — lifecycle + routing + gate core
+plan/                KEEP+REFACTOR — intake + decomposer + pipeline + swarm + templates
+build/               KEEP+REFACTOR+BUILD-NEW — KG + runtime + bridge + new dispatcher
+verify/              KEEP+REFACTOR — TRON subtree (boundary refactors only)
+
+shared/llm/          NEW    — single LLM call surface, multi-provider (#2)
+shared/secrets/      NEW    — vault adapter library (#9)
+shared/identity/     NEW    — OIDC client library (#25)
+shared/runtime/      NEW    — substrate moved from lib/ (vitals/heartbeat/watchdog/notify/executor/usage-parsers/file-lock/updater/db-outbox)
+shared/charters/     NEW    — industry-anchored role charters (replaces lib/role-prompts/) (#7)
+shared/integrations/ NEW    — external connectors (GitHub/Linear/Jira/Slack/PagerDuty/Twilio/Teams/AWS/Azure/GCP/Railway/Fly/DO/Vanta/Drata/Secureframe)
+shared/{mcp,audit,standards,calibration,cost,eval,memory,notify,reproducibility,validation,schemas,skills,api,ui}
+                     KEEP+REFACTOR — existing substrate
+
+db/                  KEEP+REFACTOR+BUILD-NEW — Flyway migrations V1–V35
+docs/                MOSTLY REBUILD — landing docs per Hub-as-product framing + new operational guides
+tools/               KEEP+REFACTOR+BUILD-NEW — Hub container build, license signing, migration export/import, DR test runner
+
+lib/                 RETIRE entirely after migration to shared/runtime/ and shared/charters/
 ```
 
-**Notes:**
-- Existing `db/` directory moves under `shared/db/` in Phase 2.
-- Existing `lib/` and `scripts/` are *transitional*; they drain as feature work touches the files. No mass migration.
-- TRON's `frontend/` + `admin-ui/` merge into `shared/ui/` (frontend is current; admin-ui retires per TRON's own roadmap).
-- TRON's `docker-compose.yml` either moves into `verify/docker-compose.yml` (verify-only) or its services are pulled up into a root `docker-compose.yml` that composes orchestrator + verify + ui + db together. Decision in Phase 1.
+### Placement rule (hybrid by nature of artifact)
 
----
-
-## 5. TRON → Spine code mapping
-
-| TRON path (today) | Spine path (new) | Notes |
+| Artifact nature | Placement | Examples |
 |---|---|---|
-| `tron/agents/` | `verify/agents/` | ISO agents — core verify logic |
-| `tron/verification/` | `verify/pipeline/` | 7-layer verification pipeline |
-| `tron/sandbox/` | `verify/sandbox/` | Docker sandbox + seccomp |
-| `tron/workflows/` | `verify/workflows/` | Temporal workflows |
-| `tron/api/` | `verify/api/` | FastAPI routes |
-| `tron/schemas/` | `verify/schemas/` (or `shared/schemas/` for cross-used) | Pydantic models |
-| `tron/services/` | per-service split into `verify/` or `shared/` | E.g., `threat_intel.py` → `verify/services/`; `scan_handoff_export.py` → `shared/services/` |
-| `tron/standards/` | `shared/standards/` | Standards Hierarchy — cross-cutting |
-| `tron/mcp/` | `shared/mcp/` | Single MCP server for whole product |
-| `tron/memory/` | `shared/memory/` | Cross-cutting memory |
-| `tron/parsers/` | `build/kg/parsers/` | Tree-sitter parsers feed the KG |
-| `tron/infra/` | `shared/infra/` | Secrets, vault, db helpers |
-| `tron/realtime/` | `shared/realtime/` | Realtime infra (WebSocket / SSE) |
-| `tron/agent_handoff_templates/` | `verify/agent_handoff_templates/` | Verify-specific output templates |
-| `tron/cli.py` | `verify/cli.py` + integrate into umbrella CLI | Verify-specific subcommands surface through umbrella `spine verify ...` |
-| `frontend/` | `shared/ui/` | Active SPA |
-| `admin-ui/` | retire per TRON roadmap | Already scheduled for removal |
-| `alembic/` | `shared/db/alembic/` | Postgres migrations consolidate with Flyway story (decide one tool) |
-| `docs/` (TRON) | merge into `docs/` (Spine) under `docs/verify/` subdir | Preserve all TRON docs; namespace under verify |
-| `tests/` | distribute per module to `verify/tests/` etc. | Or keep root `tests/` for integration-level tests |
+| Cross-cutting library — callable API surface only, no daemon, no own schema, called from many subsystems | `shared/*` | `shared/llm/`, `shared/secrets/`, `shared/identity/` |
+| Subsystem — has own daemons/schemas/containers/runbooks/config; user-visible in Hub UI as distinct concern | top-level | `hub/`, `federation/`, `devops/`, `vault/`, `keycloak/`, `license/`, `evidence/`, `learning/`, `recovery/`, `migration/` |
+
+Note: `shared/secrets/` (cross-cutting lib) is distinct from `vault/` (OpenBao container). `shared/identity/` (OIDC client lib) is distinct from `keycloak/` (Keycloak container). `shared/llm/` has no top-level companion because providers are external services.
 
 ---
 
-## 6. Migration phases
+## 3. Architectural picture
 
-### Phase 0 — Structure scaffold (this week)
-**Risk: zero.** No code moves.
+```
+                   ┌─────────────────────────────────────────┐
+                   │            HUB (containerized)          │ ← #3
+                   │  9 enumerated surfaces in Hub web SPA   │
+                   │  Day-0 wizard (7 steps, all flaggable)  │
+                   │  OIDC via Keycloak; vault for secrets   │
+                   └───┬───────┬───────┬──────┬──────┬───────┘
+                       │       │       │      │      │
+                       ▼       ▼       ▼      ▼      ▼
+                   ┌──────┐ ┌──────┐ ┌──────┐ ┌─────┐ ┌─────────┐
+                   │ PLAN │ │BUILD │ │VERIFY│ │OPER-│ │FEDERATE │ ← top-level
+                   │      │ │      │ │      │ │ ATE │ │         │   subsystems
+                   │intake│ │KG+run│ │TRON  │ │8 ctl│ │parent/  │
+                   │PRD   │ │+disp │ │+Cite-│ │planes│ │child Hub│
+                   │TRD   │ │atcher│ │or-   │ │+dev-│ │cascade  │
+                   │swarm │ │      │ │Refuse│ │ops  │ │updates  │
+                   │roadmp│ │      │ │      │ │role │ │         │
+                   └──────┘ └──────┘ └──────┘ └─────┘ └─────────┘
+                       │      │       │       │        │
+                       └──────┴───┬───┴───────┴────────┘
+                                  ▼
+                  ┌──────────────────────────────────────────┐
+                  │      CROSS-CUTTING (shared/*)            │
+                  │                                          │
+                  │  shared/llm/         7 providers (#2)    │
+                  │  shared/secrets/     vault adapters (#9) │
+                  │  shared/identity/    OIDC client (#25)   │
+                  │  shared/runtime/     ex-lib/ substrate   │
+                  │  shared/charters/    industry-anchored   │
+                  │  shared/integrations/  GH/Linear/Slack…  │
+                  │  shared/{mcp,audit,standards,calibration,│
+                  │   cost,eval,memory,notify,validation,    │
+                  │   schemas,skills,api,ui}                 │
+                  └────────────┬─────────────────────────────┘
+                               ▼
+                  ┌──────────────────────────────────────────┐
+                  │   POSTGRES (db/flyway/sql V1–V35)        │
+                  │   spine_pg + spine_kg + spine_audit +    │
+                  │   spine_lifecycle + spine_cost +         │
+                  │   spine_memory + spine_eval +            │
+                  │   spine_verify_* + spine_license +       │
+                  │   spine_federation + spine_evidence +    │
+                  │   spine_devops + spine_learning + ...    │
+                  └──────────────────────────────────────────┘
 
-- Create empty top-level dirs (`orchestrator/`, `plan/`, `build/`, `verify/`, `shared/`).
-- Write this architecture plan + memory entries.
-- Update `docs/BACKLOG.md` to add INIT-7/8/9 and re-scope INIT-1.
-- Commit; everything still works.
+  Sibling containers in laptop shape (hub/docker-compose.yml):
+   - vault (OpenBao bundled, #9)
+   - keycloak (+ its own postgres, #25)
+   - spine_pg (Postgres for Hub data)
+   - flyway (one-shot migration runner)
+   - hub (FastAPI app)
 
-### Phase 1 — TRON in (next 1-2 sprints)
-**Risk: low.** TRON keeps working standalone.
+  External services Day 1 (out-of-process):
+   - LLM provider(s) per #2 (one of 7; customer chooses)
+   - GRC platform per #24 (Vanta / Drata / Secureframe)
+   - Integration endpoints per #19 (GitHub / Linear / Jira / Slack / PagerDuty / Twilio / Teams / clouds)
 
-- `git subtree add --prefix=verify/ <tron-repo> main` — preserves TRON's history.
-- Update TRON's internal paths if needed (most should be relative and survive the move).
-- Adjust TRON's Docker compose paths.
-- Run TRON's existing test suite from new location — verify everything passes.
-- Update umbrella Makefile to dispatch `make verify-*` targets to TRON's existing Makefile.
-
-### Phase 2 — Shared infrastructure (sprints 2-3)
-**Risk: medium.** Touches both halves.
-
-- Move `db/` → `shared/db/` (Spine recording layer).
-- TRON's Postgres schemas (`alembic/`) merge with Spine's Flyway migrations under `shared/db/` — pick one migration tool (recommend Flyway per Spine convention; Alembic migrations port to Flyway SQL).
-- TRON's `standards/` → `shared/standards/` — wire Spine roles to consume it.
-- TRON's `mcp/` → `shared/mcp/` — establish single MCP server.
-- TRON's `memory/` → `shared/memory/` (preserves Spine's role-memory pattern).
-
-### Phase 3 — Orchestrator + Plan subsystem (sprints 3-5)
-**Risk: medium.** New code, but in greenfield.
-
-- Build orchestrator state machine (bash + Postgres schema in `orchestrator/state/`).
-- Build Plan subsystem per `PRD.md#req-init-1` — 5-move dialogue protocol, PRD/TRD/Roadmap artifacts.
-- Wire Plan → Build → Verify happy-path end-to-end (each subsystem bare-bones; integration thread complete).
-
-### Phase 4 — Drain legacy + thicken subsystems (continuous)
-**Risk: low (incremental).**
-
-- Migrate Spine's `lib/` + `scripts/` into `plan/`, `build/`, `shared/` opportunistically as features touch them.
-- Build INIT-6 Knowledge Graph per its REQ.
-- Fill in Verify integration points (TRON ISO agents callable from Spine build flow).
-- Retire `lib/`, `scripts/` when drained.
+  Federated:
+   - Parent / child Hubs via federation/ subsystem (#4 #10)
+   - Vendor (root of update tree per #16)
+```
 
 ---
 
-## 7. Backlog restructure
+## 4. Subsystem responsibilities (one-paragraph each)
 
-### INITs after restructure
+### `hub/` (#3)
+The containerized product. Multi-arch Dockerfile, docker-compose for laptop, entrypoint (under tini), healthcheck, Day-0 wizard (`hub/wizard/init.sh` — 7 steps, all flaggable per #21). Hosts the FastAPI app (`shared/api/`) which serves the 9 Hub surfaces. `hub/main.py` is a thin wrapper over `shared.api.app.create_app`; routes + middleware live in `shared/api/`. Sibling containers (vault, keycloak, postgres, flyway) wire through the `spine` Docker bridge network. See `hub/README.md`.
 
-| INIT | Title | Scope | Status |
+### `federation/` (#4 #10 #16)
+Hub-to-Hub control plane. `hub_registry.py` owns the `spine_federation.hub` table (V23). `upstream_client.py` mTLS + bearer-token client (creds via vault per #9). `downstream_router.py` routes delegated tools to child Hubs with consent gating. `consent.py` ConsentEngine — peer-consent default + bounded mandatory upward flows. `update_cascade.py` distributes signed bundles vendor → parent → child with per-tier approval gate. 4 MCP tools (`federation_register_child`, `federation_grant_consent`, `federation_push_update`, `federation_pull_updates`). See `federation/README.md`.
+
+### `devops/` (#11)
+Customer-facing devops subsystem + 8 control planes (compute / network / data / identity / secrets / observability / incident / workspace-hygiene). `devops` role is **distinct from `operator`** (Spine-internal) — conflation is what every "AI DevOps" startup got wrong. Dispatcher + per-plane scaffolds in `devops/planes/`. 3 MCP tools. See `devops/README.md`.
+
+### `vault/` (#9 #32 layer 8)
+OpenBao container + Dockerfile + docker-compose (laptop shape) + Day-0 init wizard (`vault/init-wizard.sh` — Shamir 3-of-5 OR cloud-KMS auto-unseal, operator chooses). Least-privilege policies (`policies/spine-hub.hcl`, `spine-readonly.hcl`). Unseal-mode runbooks (`unseal/shamir-config.md` + `kms-config-{aws,azure,gcp}.md`). DR runbook. See `vault/README.md`.
+
+### `keycloak/` (#25)
+Keycloak container + Dockerfile + docker-compose + Day-0 bootstrap (`keycloak/init-bootstrap.sh` — realm + spine-hub OIDC client + groups). IdP brokering presets for Okta / Azure AD / Google Workspace / Ping / OneLogin. Per-tier feature matrix in `keycloak/tier-config.md` (5 tiers: free / founder / team / enterprise / airgapped). DR runbook. See `keycloak/README.md`.
+
+### `license/` (#23 #18)
+Feature-flag licensing — Day-1 architectural primitive. `bundle_verifier.py` Ed25519 signature verification + vault fetch + periodic re-verify (TRUSTED_VENDOR_FINGERPRINT trust anchor baked into Hub binary). `feature_flags.py` per-gate hot path. `quota_ledger.py` hash-chained usage. Vendor-side signing CLI: `tools/license-sign.sh` (vendor vault + Shamir 3-of-5 recovery per Part 4.3). 3 MCP tools. See `license/README.md`.
+
+### `evidence/` (#24)
+SOC 2 evidence pipeline. 5 collectors (`audit_chain` / `role_decision` / `vault_access` / `deploy` / `approval`) + 3 real exporters (Vanta / Drata / Secureframe) + 3 v1.1 stubs (Tugboat / StrikeGraph / Thoropass). Two-party SHA-256 attestation per V25 schema. 4 MCP tools. See `evidence/README.md`.
+
+### `learning/` (#27)
+Smart Spine 3-tier loop. `scope.py` resolver (project / within-Hub / cross-org). `contribute.py` 3-tier gates. `consent.py` cross-org opt-in registry. `anonymizer.py` k=5 telemetry pipeline. `vendor_self_improvement.py` Tier 3 hook for vendor's own Spine. 4 MCP tools. See `learning/README.md`.
+
+### `recovery/` (#31 #32)
+12-layer DR. `backup.py` (PG logical + KG + manifests + bundles + vault refs to S3-compat storage). `restore.py` (tested restore). `cross_region.py` (active-passive opt-in). `auto_recovery.py`. `health.py`. `runbook_generator.py` (auto-generated DR runbook per deployment). `tools/dr-test.sh` (weekly restore-to-throwaway validation). MCP tool surface. **Status:** Wave 5 Squad E — may be still landing when this doc is read. See `recovery/README.md` (forthcoming with Squad E delivery).
+
+### `migration/` (#33)
+4 concerns. `export.py` full Spine state export (signed tarball, integrity-verified, audit-chain hash-anchored). `import_.py` re-import. `onboarding.py` (GitHub + (Linear OR Jira) Day 1; others v1.1+ on demand). `spine_version.py` DB/bundle/charter/vault/KG schema migrator (N-2 cross-version compat). `version_registry.py`. MCP tool surface. C — software-migration-as-work-type — v1.1. See `migration/README.md` (forthcoming with Wave 5 Squad F delivery).
+
+### `orchestrator/` (KEEP+REFACTOR)
+Project lifecycle state machine, phase transitions, routing, gates. Bash core + Postgres state. The thin coordinator — owns state, not intelligence. Existing code largely KEEPs; REFACTORs are around vault wiring (#9) + audit-subsystem-enum extension for v3 subsystems.
+
+### `plan/` (KEEP+REFACTOR)
+Intake (5-move protocol), decomposer, pipeline-as-data, swarm (LangGraph subgraph inside architect daemon), per-work-item-type templates. REFACTORs: 7 intake templates (one per type per #19), decomposer recognizes per-type artifact shapes.
+
+### `build/` (KEEP+REFACTOR+BUILD-NEW)
+KG (tree-sitter parsers + indexer + 8 MCP tools), runtime (worker pool, daemon infra), bridge (interface to Verify subsystem), build dispatcher (per-type routing per #19). BUILD-NEW: KG indexer 3 entry points (commit hook / audit subscriber / sweep). REFACTORs: `implementer_kind ∈ {claude_code, cursor, aider, openhands, human}` + `autonomy_tier` fields (#13).
+
+### `verify/` (KEEP+REFACTOR)
+TRON via `git subtree`. Boundary refactors: route LLM through `shared/llm/`, capture calibration outcomes through `shared/calibration/`, enforce Cite-or-Refuse (#12) at wrapper middleware in `shared/mcp/tools/verify.py` + `iso.py`. Vault migration done in Wave 0 — `verify/.env` plaintext refs replaced with vault references. `docker-compose.override.yml` relocated to `tools/verify-overrides/` to avoid TRON subtree-pull conflicts.
+
+### `shared/llm/` (#2)
+Single LLM call surface. 7 provider adapters (Anthropic / OpenAI / Bedrock / Vertex / Ollama / Qwen / vLLM). Streaming + retry + structured-output schemas. Provider-specific traits (Anthropic prompt caching) live in `providers/anthropic.py`, not as core LLM code.
+
+### `shared/secrets/` (#9)
+Vault adapter library. 5 adapters: OpenBao / HashiCorp Vault / AWS Secrets Manager / Azure Key Vault / GCP Secret Manager (+ Infisical / 1Password). InMemoryAdapter for tests. `get_secret(path)` is the only public entry; rotation + caching + audit-log fingerprint logged on every fetch.
+
+### `shared/identity/` (#25)
+OIDC client library. Keycloak client + FastAPI middleware (`current_user` dep) + RBAC scopes + `feature_flag_lightening.py` (per-tier enforcement of the matrix in `keycloak/tier-config.md`). The Hub trusts only Keycloak; customer's IdPs broker into Keycloak.
+
+### `shared/runtime/`
+Substrate migrated from `lib/` in Wave 3: `vitals.sh`, `heartbeat.sh`, `watchdog.sh`, `notify.sh`, `executor.sh`, `usage-parsers.sh`, `file-lock.sh`, `updater.sh`, `db-outbox.sh`. Plus `hygiene.py` (#34 — workspace hygiene with Conductor gate).
+
+### `shared/charters/` (#7)
+Industry-anchored role charters replacing `lib/role-prompts/`. 19 charters: 13 REBUILDs (architect→TOGAF+arc42, auditor→NIST 800-53+Cite-or-Refuse, conductor→Scrum+SAFe, datawright→DAMA-DMBOK+Kimball, engineer→#13 tier-bifurcation+Clean Code, operator→SRE-internal+12-factor, planner→PMBOK 7+Scrum, product→Inspired+JTBD, qa→ISTQB, researcher→Cite-or-Refuse+IDEO+NN/g, ux→Nielsen+WCAG 2.2) + 6 NEW (devops, customer_support, compliance_officer, security_engineer, tech_writer, release_manager).
+
+### `shared/integrations/`
+External connectors. GitHub, Linear, Jira, Slack, PagerDuty, Twilio, Teams, AWS, Azure, GCP, Railway, Fly.io (Part 4.2 choice), DO, Vanta, Drata, Secureframe.
+
+### Other `shared/*`
+`mcp/` unified MCP server (42 tools across all subsystems as of Wave 4), `audit/` hash-chained ledger (writer + ALLOWED_SUBSYSTEMS extended for v3 subsystems), `standards/` org bundles + drift detector + validator + install_bundle.sh, `calibration/` Platt scaling, `cost/` cost router (per-user/org hard caps), `eval/` golden-suite eval harness, `memory/` 3-tier scope + playbook store + writer hooks (per #27), `notify/` 8+ event types incl. `decision_card`, `validation/` cross-LLM consensus, `schemas/` Pydantic v2 models, `skills/` skill auto-trigger, `api/` FastAPI routes + middleware (OIDC + feature-flag + RBAC), `ui/` dashboard SPA (Svelte chosen per Part 4.1 decision).
+
+---
+
+## 5. Cross-cutting tech stack (LOCKED)
+
+| Concern | Choice | Lives in | Driver |
 |---|---|---|---|
-| INIT-1 | **Plan Subsystem** (was: SDLC Front Door) | Intake, PRD, TRD swarm, Decomposition, approval gates, cost router, pipeline customization, front-door UI | Exists, narrow rename |
-| INIT-2 | **Enterprise Control & Standards** | Org policy bundles + MCP server + spend caps. **Absorbs TRON Standards Hierarchy.** | Exists, expanded |
-| INIT-3 | **Trust & Reproducibility** | Audit log, reproducible builds, eval harness (EPIC-3.4), **sandbox execution (from TRON), calibration (from TRON), cross-LLM validation (from TRON)** | Exists, expanded |
-| INIT-4 | **Best-Practice Absorption** | Auto-triggering skills, vector memory, lite install path | Exists, unchanged |
-| INIT-5 | **Positioning & GTM** | Public narrative, comparison page, naming, Jira export, research retention | Exists, unchanged |
-| INIT-6 | **Code & Document Knowledge Graph** | Cross-cutting graph foundation for all three subsystems | Exists, cross-cutting role formalized |
-| INIT-7 | **Build Subsystem** (NEW) | Formalize engineer / operator / datawright as a coordinated subsystem; integrate with KG + MCP + orchestrator | Add |
-| INIT-8 | **Verify Subsystem — TRON Integration** (NEW) | git-subtree TRON into `verify/`; wire ISO agents callable from Spine; map TRON's pipeline as Spine SDLC verify phase | Add |
-| INIT-9 | **Central Orchestrator** (NEW) | Lifecycle state machine, phase gates, routing, portfolio mgmt, unified cost+audit aggregation, user-facing surface | Add |
-
-### REQs (all sections in `docs/PRD.md`)
-
-| Section | Status |
-|---|---|
-| `PRD.md#req-init-1` | Draft v1 — awaiting sign-off; rename to reflect Plan-subsystem scope when restructure lands |
-| `PRD.md#req-init-6` | Draft v1 — awaiting sign-off |
-| `PRD.md#req-init-7` | To write (after this plan signs off) |
-| `PRD.md#req-init-8` | To write |
-| `PRD.md#req-init-9` | To write |
-
----
-
-## 8. Sprint sequencing — first three sprints
-
-Goal: working end-to-end skeleton in 3 sprints. Each subsystem bare-bones but the **thread** works.
-
-### Sprint 1 — Foundation (1-2 weeks)
-- [ ] Phase 0 + Phase 1 (TRON in via subtree)
-- [ ] `INIT-9` orchestrator skeleton: Postgres `lifecycle` schema, project state table, phase-transition table
-- [ ] Lift TRON Standards Hierarchy → `shared/standards/` (closes a duplicated INIT-2 design effort)
-- [ ] Umbrella Makefile dispatching to per-module targets
-- [ ] Smoke test: TRON's existing audit flow runs from new location
-
-### Sprint 2 — End-to-end happy path (2-3 weeks)
-- [ ] Orchestrator can create a project, transition through `intake → plan_done → build_done → verify_done`
-- [ ] Plan subsystem: minimal `product` role prompt walks a user through one project type (web-app) and outputs a stub PRD
-- [ ] Build subsystem: minimal `engineer` role takes the PRD, makes a trivial code change, writes a report
-- [ ] Verify subsystem: TRON's `AuditManager` runs on the code change, returns findings
-- [ ] Orchestrator routes Verify findings back to user; user approves → project marked `done`
-- [ ] Cost ledger aggregates spend across all three subsystems
-
-### Sprint 3 — Thicken Plan + start KG (2-3 weeks)
-- [ ] Plan: full 5-move dialogue protocol (`STORY-1.1.1`)
-- [ ] Plan: project-type templates for web-app, internal-tool, data-pipeline (`STORY-1.1.2`)
-- [ ] Plan: PRD/TRD/Roadmap Pydantic schemas (`STORY-1.1.3`, lifted patterns from TRON `FindingOutput`)
-- [ ] KG: `INIT-6` Phase 1 — schema (`STORY-6.1.1`) + tree-sitter parser scaffolding (`STORY-6.2.1`) + cold-start indexer (`STORY-6.4.3`)
-- [ ] KG: first MCP tool (`find_callers`, `STORY-6.5.2`)
-- [ ] Plan + KG: decomposer (`EPIC-1.3`) uses KG for story-dependency detection
-
-After Sprint 3 the product has a working spine (pun retained) end-to-end. Sprints 4+ thicken each subsystem in parallel against the backlog.
+| Orchestration core | Bash + Postgres | `orchestrator/lib/` + `db/` | KEEP — debuggability moat |
+| Verify pipeline | Python + FastAPI + Temporal (TRON inheritance) | `verify/` | KEEP — TRON existing |
+| Knowledge Graph | Postgres `spine_kg` schema + pgvector + tree-sitter parsers | `db/` + `build/kg/` | KEEP — Spine v2 inheritance |
+| LLM call surface | 7-provider library | `shared/llm/` | #2 |
+| Vault | OpenBao bundled + 5 adapters | `vault/` + `shared/secrets/` | #9 |
+| Identity | Keycloak embedded + OIDC client | `keycloak/` + `shared/identity/` | #25 |
+| Frontend framework | Svelte | `shared/ui/dashboard/` | Part 4.1 decision |
+| MCP server | Unified, 42+ tools | `shared/mcp/` | KEEP |
+| Audit log | Append-only hash-chained Postgres | `db/V15` + `shared/audit/` | #24 |
+| Standards / policy | Org bundles, signed, federation-distributed | `shared/standards/` | #7 #16 |
+| Memory & lessons | 3-tier scope + per-role MD + Postgres index | `shared/memory/` | #27 |
+| Sandbox execution | Docker ephemeral + seccomp (TRON existing) | `verify/sandbox/` | KEEP |
+| Confidence calibration | Platt scaling | `shared/calibration/` | KEEP |
+| Cross-LLM consensus | 7-provider validator | `shared/validation/cross_llm.py` | #2 + #27 |
+| Federation | mTLS + bearer via vault; signed bundle cascade | `federation/` | #4 #10 #16 |
+| Licensing | Ed25519 signed bundles; hash-chained quota; per-gate flag | `license/` | #23 |
+| Evidence | 5 collectors → Vanta/Drata/Secureframe push | `evidence/` | #24 |
+| Learning | 3-tier scope + cross-org consent + k=5 anonymizer | `learning/` | #27 |
+| Recovery | 12-layer DR + auto-generated runbook | `recovery/` | #31 #32 |
+| Migration | Export/import + version migrator + onboarding connectors | `migration/` | #33 |
 
 ---
 
-## 9. Cross-cutting tech decisions (locked)
+## 6. Deployment shapes (#17 + #20)
 
-| Concern | Decision | Lives in |
-|---|---|---|
-| Orchestration core | Bash + Postgres | `orchestrator/lib/` + `orchestrator/state/` |
-| Verify pipeline | Python + FastAPI + Temporal (TRON's existing stack) | `verify/` |
-| Knowledge graph | Postgres `spine_kg` schema + pgvector + tree-sitter parsers | `shared/db/` + `build/kg/` |
-| Hybrid graph+vector RAG | LangChain (`MultiVectorRetriever` + `GraphRetriever`) | `build/kg/` |
-| Tech-review swarm | LangGraph subgraph inside architect daemon | `plan/roles/architect/` |
-| Tier router | LangChain router primitives + Spine policy wrapper | `shared/cost/` |
-| Eval harness | LangSmith-style harness (lift from TRON's `tests/golden_suite/`) | `shared/eval/` |
-| MCP server | Unified server exposing tools from all subsystems | `shared/mcp/` |
-| Audit log | Append-only Postgres schema; every action across subsystems writes here | `shared/audit/` |
-| Standards / policy | Org bundles (lifted from TRON Standards Hierarchy) | `shared/standards/` |
-| Memory & lessons | Per-role markdown + Postgres index | `shared/memory/` |
-| UI | React (TRON's frontend), evolved into umbrella dashboard | `shared/ui/` |
-| Sandbox execution | Docker ephemeral + seccomp (TRON's existing) | `verify/sandbox/` |
-| Confidence calibration | Platt scaling + sklearn (TRON's existing) | `verify/calibration/` |
-| Cross-LLM validation | TRON's existing AuditManager logic; expose for Plan + Build phases too | `shared/validation/` (lifted from `verify/`) |
+| Shape | Operator | Where it runs | Tier |
+|---|---|---|---|
+| Laptop | Customer | Docker Desktop on macOS/Linux/Windows-WSL2 | Free |
+| Vendor-Managed (BYOC) | Spine vendor via delegated IAM role | Customer's AWS / Azure / GCP / Railway / Fly.io / DigitalOcean / Hostinger account | Founder |
+| Self-hosted customer-cloud | Customer | EKS / AKS / GKE | Team / Enterprise |
+| Self-hosted on-prem | Customer | Vanilla K8s / OpenShift / Rancher | Enterprise |
+| Air-gapped (v1.1) | Customer | Air-gapped infrastructure | Defense / classified |
+
+Operational detail: `docs/DEPLOYMENT_SHAPES.md`.
 
 ---
 
-## 10. Open questions / risks
+## 7. Critical path
 
-### Open
-- **OQ-1: Umbrella product name long-term.** Working name "Spine"; brand exploration deferred to a separate exercise once the architecture solidifies. No blocker.
-- **OQ-2: One vs two migration tools.** TRON uses Alembic; Spine `db/` uses Flyway. Recommend converging on Flyway in Phase 2. Confirm.
-- **OQ-3: Compose file consolidation.** Phase 2 decision — root-level compose (orchestrator + verify + ui + db) vs per-subsystem composes that wire together. Recommend root-level for production with per-subsystem composes for dev.
-- **OQ-4: Single CLI surface.** Long-term, one `spine` CLI with subcommands (`spine plan ...`, `spine verify audit`, `spine status`). TRON's `tron` CLI subcommands become `spine verify` subcommands. Confirm.
-- **OQ-5: TRON's "agent_handoff" model.** TRON writes findings into target apps' files. This is *exactly* the pattern Spine's Plan + Build could use to write artifacts back to a user's project. Worth promoting `agent_handoff` to a `shared/handoff/` module.
+Per Build Sequence §2.2:
 
-### Risks
-- **R-1: Stack split (bash + Python) confuses contributors.** Mitigation: clean per-module conventions; module-level READMEs; umbrella Makefile abstracts the language difference.
-- **R-2: Postgres schema sprawl.** Mitigation: one Postgres instance, but multiple schemas with clear ownership (`spine_recording`, `spine_kg`, `spine_lifecycle`, `spine_audit`, `spine_verify_*`).
-- **R-3: TRON's existing deployment patterns (Vault, MinIO, multiple Docker services).** Mitigation: keep TRON's existing compose unchanged in Phase 1; consolidate in Phase 2 only if it simplifies.
-- **R-4: Brand/naming churn if we rename later.** Mitigation: avoid hardcoding "spine" in user-facing strings; route brand via a single `BRAND_NAME` config var.
-- **R-5: We're carrying two test suites (Spine bash, TRON pytest) until we converge them.** Mitigation: don't try to converge — each module owns its tests in its native style.
+```
+shared/secrets/ → shared/identity/ → hub/ container → Hub web SPA → landing-docs rewrite → v1.0 ship
+```
+
+Off-critical-path (parallelizable but ship-blocking): license, federation, evidence, learning, recovery, migration, mobile, voice.
 
 ---
 
-## 11. Sign-off checklist
+## 8. Bundle inheritance model
 
-When you sign off on this plan, the following happens (in order):
+Per Build Sequence §1.3 (federation pipeline customization decision) + cross-cutting pattern §9:
 
-1. ✅ Memory: save unified architecture as durable decision
-2. ✅ Backlog: restructure `docs/BACKLOG.md` — rename INIT-1 to "Plan Subsystem", add INIT-7/8/9, note cross-cutting role of INIT-6 + INIT-2 + INIT-3
-3. ⏸ PRDs: write `PRD.md#req-init-7`, `PRD.md#req-init-8`, `PRD.md#req-init-9` (Draft v1 sections awaiting their own sign-off)
-4. ⏸ Code: Phase 0 dirs creation (`orchestrator/`, `plan/`, `build/`, `verify/`, `shared/`) — defer until you say "go"
-5. ⏸ Phase 1: `git subtree add` TRON — defer until you say "go" (also wants your call on whether to do it from current repo state or from a clean TRON branch)
+```
+parent Hub bundle  →  child Hub overrides  →  project bundle overrides
+```
 
-**Steps 1-3 are docs-only; safe to execute on sign-off.** Steps 4-5 touch code/git and wait for an explicit "execute Phase 0" / "execute Phase 1" command.
+Same mechanism for: federation, licensing, learning policy, comm prefs, DR policy, devops planes. Child can EXTEND but not CONTRACT phases unless parent declared `removable: true`. Consent-leaning federation (#10) — peer-consent default; bounded mandatory upward flows declared in bundle for compliance.
 
 ---
 
-## 12. Related artifacts
+## 9. What's archived
 
-- `docs/research/COMPETITIVE_LANDSCAPE.md` — the *why* (the five-corner moat + TRON eval that justified this restructure)
-- `docs/BACKLOG.md` — operational backlog (reflects this restructure)
-- `docs/PRD.md` — product requirements (each REQ-INIT-N as a section with stable anchor)
-- `docs/PRACTICES.md` — operating practices (drift, delivery, extensions)
-- `docs/IMPROVEMENT_CHECKLIST.md` — maintenance checklist (unchanged)
-- `PROTOCOL.md` (root) — full role/daemon protocol
-- `~/.claude/.../memory/spine_positioning.md` — positioning
-- `~/.claude/.../memory/spine_flexibility_principle.md` — pipeline-as-data
-- `~/.claude/.../memory/spine_tech_stack_decisions.md` — where LangChain fits
-- `~/.claude/.../memory/spine_unified_architecture.md` — pointer back to this file
+- v2 architecture (single-project assumption, INIT-1/6/7/8/9 framing): `docs/_archived/v2-ARCHITECTURE.md`
+- v2 PRD: `docs/_archived/v2-PRD.md`
+- v2 README / INSTALL / install.sh / positioning / db README: `docs/_archived/v2-*`
+
+---
+
+## 10. What's still incrementally landing (rebuild-in-progress)
+
+This v3 architecture is the **layout authority**. The following sections are deliberately deferred to per-subsystem READMEs OR forthcoming dedicated docs:
+
+- Per-subsystem internals → each subsystem's `README.md` is canonical for its module structure, file inventory, tests, contract with siblings.
+- Migration phases (v2 → v3 cutover) → `docs/V3_BUILD_SEQUENCE.md` §Part 3 Waves 0–6.
+- v1 → v1.1 + v1.1 → v2 migration plans → `migration/README.md` (Wave 5 Squad F).
+- DR architecture detail → `docs/DR_RUNBOOK.md`.
+- Security architecture → `docs/SECURITY_GUIDE.md`.
+- Federation operational detail → `docs/FEDERATION_GUIDE.md`.
+- License architecture detail → `docs/LICENSING_GUIDE.md`.
+- Hub operational detail → `docs/HUB_OPERATIONS_GUIDE.md`.
+
+**A full incremental rebuild of this doc is sequenced for Wave 6** — once all subsystem READMEs stabilize the file inventory + contract surface. Until then, this doc + per-subsystem READMEs are jointly authoritative.
+
+---
+
+## 11. Related artifacts
+
+- [`docs/V3_DESIGN_DECISIONS.md`](V3_DESIGN_DECISIONS.md) — 34 locked decisions
+- [`docs/V3_TRIAGE.md`](V3_TRIAGE.md) — ~383 files triaged
+- [`docs/V3_BUILD_SEQUENCE.md`](V3_BUILD_SEQUENCE.md) — 7-wave plan with critical path, dependency graph, per-wave acceptance
+- [`docs/STATUS.md`](STATUS.md) — wave-by-wave state of v3 rebuild
+- [`docs/PRD.md`](PRD.md) — 13 REQ-INIT-N sections
+- [`docs/positioning.md`](positioning.md) — strategic story
+- `hub/README.md`, `vault/README.md`, `keycloak/README.md`, `federation/README.md`, `license/README.md`, `evidence/README.md`, `learning/README.md`, `devops/README.md` — per-subsystem authoritative docs
+- [`db/README.md`](../db/README.md) — Postgres schema V1–V35
+
+---
+
+**Document control:**
+- v3 refresh: 2026-05-18 (Wave 5 Squad G, focused REFRESH per scope brief — full rebuild incremental in Wave 6)
+- Authority: v3 top-level layout per Build Sequence Part 1.1; v3 cross-cutting tech stack per §5 above
+- Supersedes: v2 framing (single-project umbrella, TRON-only verify boundary); archived at `docs/_archived/v2-ARCHITECTURE.md`
+- Next update trigger: any new top-level subsystem locked, OR Wave 6 incremental rebuild
