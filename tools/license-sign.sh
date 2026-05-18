@@ -29,7 +29,11 @@
 #                     (smoke-test for the signer; the Hub uses Python)
 #   bootstrap-keypair generate a fresh Ed25519 keypair and store the
 #                     private key in vault (vendor first-run / rotation)
-#   recover-shamir    reconstruct the signing key from 3 Shamir shards
+#   shamir-split      split a fresh / supplied 32-byte secret into 5
+#                     Shamir shares (3-of-5 threshold) writing each share
+#                     to a chmod-600 file
+#   recover-shamir    reconstruct the signing key from 3 Shamir share
+#                     files; posts to vault and zeroizes the share files
 #   --help            this message
 #
 # Exit codes:
@@ -69,8 +73,14 @@ USAGE
   tools/license-sign.sh bootstrap-keypair [--vault-path <path>]
                                           [--pubkey-vault-path <path>]
                                           [--rotate]
-  tools/license-sign.sh recover-shamir --shard <hex> [--shard <hex>] ...
+  tools/license-sign.sh shamir-split [--secret-hex <hex>] --out <dir>
+                                     [--parts N] [--threshold K]
+                                     [--prefix <name>]
+  tools/license-sign.sh recover-shamir --share-file <path>
+                                       [--share-file <path>] ...
                                        [--vault-path <path>]
+                                       [--keep-share-files]
+                                       [--dry-run]
 
 OPTIONS
   --payload <file>          JSON payload matching license-bundle-v1
@@ -83,7 +93,27 @@ OPTIONS
                             (default: $PUBKEY_VAULT_PATH).
   --rotate                  When bootstrapping, allow overwrite of an
                             existing private-key entry.
-  --shard <hex>             A Shamir shard (repeatable; need >= 3).
+  --share-file <path>       A Shamir share file (repeatable; need >= 3).
+                            Each file contains one hex share on a single
+                            line. Files are zeroized + unlinked after
+                            successful reconstruction (suppress with
+                            --keep-share-files).
+  --keep-share-files        Do NOT zeroize+unlink share files after a
+                            successful recover-shamir run. Intended for
+                            dry-run / rehearsal only — leaves shares on
+                            disk, which violates the trust model in prod.
+  --dry-run                 recover-shamir only: reconstruct + print
+                            fingerprint, but do NOT write to vault.
+  --secret-hex <hex>        shamir-split only: 32-byte secret in hex
+                            (64 chars). Default = generate fresh CSPRNG.
+  --out <dir>               shamir-split only: directory to write the
+                            share files into (must not contain prior
+                            shares with the same prefix).
+  --parts N                 shamir-split only: total shares (default 5).
+  --threshold K             shamir-split only: shares needed to combine
+                            (default 3).
+  --prefix <name>           shamir-split only: filename prefix
+                            (default 'vendor-signing-share').
 
 TRUST MODEL
   - Private signing key NEVER on disk. Loaded from vault, signed in
@@ -117,7 +147,9 @@ case "${1:-}" in -h|--help|help) usage; exit 0 ;; esac
 
 CMD="$1"; shift
 PAYLOAD=""; OUTPUT=""; SIGNED=""; ROTATE=0
-declare -a SHARDS=()
+SECRET_HEX=""; OUT_DIR=""; PARTS=5; THRESHOLD=3; PREFIX="vendor-signing-share"
+KEEP_SHARES=0; DRY_RUN=0
+declare -a SHARE_FILES=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --payload)            PAYLOAD="$2"; shift 2 ;;
@@ -126,7 +158,14 @@ while [[ $# -gt 0 ]]; do
     --vault-path)         VAULT_PATH="$2"; shift 2 ;;
     --pubkey-vault-path)  PUBKEY_VAULT_PATH="$2"; shift 2 ;;
     --rotate)             ROTATE=1; shift ;;
-    --shard)              SHARDS+=("$2"); shift 2 ;;
+    --share-file)         SHARE_FILES+=("$2"); shift 2 ;;
+    --keep-share-files)   KEEP_SHARES=1; shift ;;
+    --dry-run)            DRY_RUN=1; shift ;;
+    --secret-hex)         SECRET_HEX="$2"; shift 2 ;;
+    --out)                OUT_DIR="$2"; shift 2 ;;
+    --parts)              PARTS="$2"; shift 2 ;;
+    --threshold)          THRESHOLD="$2"; shift 2 ;;
+    --prefix)             PREFIX="$2"; shift 2 ;;
     -h|--help)            usage; exit 0 ;;
     *) _err "unknown flag: $1"; usage; exit 2 ;;
   esac
@@ -280,27 +319,228 @@ print("NEXT: also split <PRIVATE_HEX> with Shamir 3-of-5 (see Part 4.3).")
 PYEOF
 }
 
-# ─── recover-shamir ──────────────────────────────────────────────────
-cmd_recover_shamir() {
-  if [[ "${#SHARDS[@]}" -lt 3 ]]; then
-    _err "recover-shamir requires at least 3 --shard <hex> arguments"
+# ─── shamir-split ────────────────────────────────────────────────────
+cmd_shamir_split() {
+  if [[ -z "$OUT_DIR" ]]; then
+    _err "shamir-split requires --out <dir>"
     exit 2
   fi
-  # Wave-4 scope-boundary: ship the entry-point + arg validation now.
-  # Pulling in a Shamir implementation (`pyshamir` / `mnemonic-shamir`)
-  # is a dep decision deferred to the Wave-0 dependency audit; this
-  # placeholder makes the recovery flow visible without expanding deps.
+  if [[ ! -d "$OUT_DIR" ]]; then
+    _err "output dir does not exist: $OUT_DIR"
+    exit 2
+  fi
+  "$PYTHON" - "$OUT_DIR" "$PARTS" "$THRESHOLD" "$PREFIX" "$SECRET_HEX" <<'PYEOF'
+import hashlib, sys
+from pathlib import Path
+
+out_dir = Path(sys.argv[1])
+parts   = int(sys.argv[2])
+thresh  = int(sys.argv[3])
+prefix  = sys.argv[4]
+secret_hex_in = sys.argv[5].strip()
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # repo root
+from license import shamir  # noqa: E402
+
+if secret_hex_in:
+    try:
+        secret = bytes.fromhex(secret_hex_in)
+    except ValueError as exc:
+        raise SystemExit(f"--secret-hex is not valid hex: {exc}")
+    if len(secret) != shamir.SECRET_LEN_BYTES:
+        raise SystemExit(f"--secret-hex must decode to {shamir.SECRET_LEN_BYTES} "
+                         f"bytes, got {len(secret)}")
+    source = "operator-supplied"
+else:
+    secret = shamir.generate_ed25519_seed()
+    source = "csprng-fresh"
+
+# Derive the Ed25519 public-key fingerprint so the operator can sanity-
+# check this matches the key they intend to back up.
+try:
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from cryptography.hazmat.primitives import serialization
+    key = Ed25519PrivateKey.from_private_bytes(secret)
+    pub = key.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    fp = hashlib.sha256(pub).hexdigest()
+except Exception as exc:  # pragma: no cover — cryptography is documented dep
+    raise SystemExit(f"could not derive pubkey fingerprint: {exc}")
+
+try:
+    shares = shamir.split_secret(secret, parts=parts, threshold=thresh)
+except shamir.ShamirError as exc:
+    raise SystemExit(f"shamir_split_failed code={exc.code} msg={exc}")
+
+# Zeroize the local secret bytes ASAP — we never need them again past this point.
+secret = shamir.zeroize_bytes(secret)
+
+paths = [out_dir / f"{prefix}-{i + 1}-of-{parts}.hex" for i in range(parts)]
+try:
+    written = shamir.write_share_files(shares, paths)
+except shamir.ShamirError as exc:
+    raise SystemExit(f"shamir_write_failed code={exc.code} msg={exc}")
+
+# Zeroize the in-memory share strings (best-effort).
+shares = ["0" * len(s) for s in shares]
+
+print(f"shamir_split_ok source={source} parts={parts} threshold={thresh}")
+print(f"signing_key_fingerprint={fp}")
+print("share_files:")
+for p in written:
+    print(f"  {p}")
+print("")
+print("NEXT STEPS (vendor officer runbook — Part 4.3):")
+print("  1. Verify each share file exists and is chmod 600.")
+print(f"  2. Distribute the {parts} share files OFFLINE to {parts} trusted")
+print("     parties (Vault Enterprise recommendation: 2 founders + CFO +")
+print("     outside legal counsel + outside director).")
+print("  3. Each party stores their share in physically-separate custody")
+print("     (safe deposit box, HSM, Yubikey, sealed envelope).")
+print("  4. REHEARSE: collect any 3 shares back, run `recover-shamir")
+print("     --dry-run --share-file ...`, confirm the printed fingerprint")
+print(f"     matches: {fp}")
+print("  5. Once rehearsal passes: DELETE the original share files from")
+print(f"     {out_dir} (they've been distributed, the disk copies are toxic).")
+print("  6. Bake the fingerprint into the Hub binary as")
+print("     TRUSTED_VENDOR_FINGERPRINT and ship the release.")
+PYEOF
+}
+
+# ─── recover-shamir ──────────────────────────────────────────────────
+cmd_recover_shamir() {
+  if [[ "${#SHARE_FILES[@]}" -lt 3 ]]; then
+    _err "recover-shamir requires at least 3 --share-file <path> arguments"
+    exit 2
+  fi
+  # Validate that all share files exist BEFORE entering python — fail
+  # fast with a clear shell-level error.
+  local sf
+  for sf in "${SHARE_FILES[@]}"; do
+    if [[ ! -f "$sf" ]]; then
+      _err "share file not found: $sf"
+      exit 2
+    fi
+  done
+
+  # If we're going to write to vault, ensure a vault CLI (or local
+  # override) is available BEFORE we consume the share files.
+  if [[ "$DRY_RUN" -eq 0 ]]; then
+    if [[ -z "${SPINE_LICENSE_LOCAL_PRIV_HEX:-}" ]]; then
+      _vault_cli >/dev/null || { _err "no vault CLI (vault/bao) on PATH; refusing to consume share files without a write target. Use --dry-run to rehearse."; exit 3; }
+    fi
+  fi
+
+  # Hand the share files to python. Python handles: validate -> combine
+  # -> zeroize files -> print fingerprint. We then handle: write to
+  # vault from a tempfile-free pipe. The key never lands on disk.
+  #
+  # Avoid heredoc-inside-$(...) which is buggy under bash 3.2 (macOS
+  # default). Instead, pipe the script body through stdin and capture
+  # stdout into $py_out via a process-sub-free temp variable.
+  local py_out fp recovered_hex
+  local py_script
+  py_script="$(cat <<'PYEOF'
+import hashlib, sys
+from pathlib import Path
+
+keep_shares = sys.argv[1] == "1"
+dry_run     = sys.argv[2] == "1"
+share_paths = [Path(p) for p in sys.argv[3:]]
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # repo root
+from license import shamir  # noqa: E402
+
+try:
+    secret, wiped = shamir.reconstruct_from_files(
+        share_paths,
+        zeroize_files=not keep_shares,
+    )
+except shamir.ShamirError as exc:
+    print("FAIL code={} msg={}".format(exc.code, exc), file=sys.stderr)
+    if exc.code in ("too_few_shares", "bad_share_format",
+                    "duplicate_shares", "share_file_unreadable"):
+        sys.exit(2)
+    if exc.code == "combine_failed":
+        sys.exit(4)
+    sys.exit(3)
+
+try:
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from cryptography.hazmat.primitives import serialization
+    key = Ed25519PrivateKey.from_private_bytes(secret)
+    pub = key.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    fp = hashlib.sha256(pub).hexdigest()
+except Exception as exc:
+    secret = shamir.zeroize_bytes(secret)
+    print("FAIL code=fp_derive_failed msg={}".format(exc), file=sys.stderr)
+    sys.exit(1)
+
+print("FP={}".format(fp))
+if not dry_run:
+    print("HEX={}".format(secret.hex()))
+print("WIPED_COUNT={}".format(len(wiped)), file=sys.stderr)
+for p in wiped:
+    print("WIPED {}".format(p), file=sys.stderr)
+
+secret = shamir.zeroize_bytes(secret)
+PYEOF
+)"
+  py_out="$(printf '%s' "$py_script" | "$PYTHON" - "$KEEP_SHARES" "$DRY_RUN" "${SHARE_FILES[@]}")"
+  # If python failed it already printed FAIL=... on stderr; bubble up.
+  if [[ -z "$py_out" ]]; then
+    _err "reconstructor produced no output (see stderr)"
+    exit 1
+  fi
+  fp="$(printf '%s\n' "$py_out" | awk -F= '/^FP=/{print $2}')"
+  if [[ -z "$fp" ]]; then
+    _err "could not parse fingerprint from reconstructor output"
+    exit 1
+  fi
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    printf 'shamir_recover_dry_run_ok fingerprint=%s\n' "$fp"
+    printf 'Compare against the Hub binary'\''s TRUSTED_VENDOR_FINGERPRINT.\n'
+    printf 'No write to vault. Share files: %s\n' \
+      "$([[ "$KEEP_SHARES" -eq 1 ]] && echo 'kept on disk (rehearsal mode)' || echo 'zeroized + unlinked')"
+    return 0
+  fi
+  recovered_hex="$(printf '%s\n' "$py_out" | awk -F= '/^HEX=/{print $2}')"
+  if [[ -z "$recovered_hex" ]]; then
+    _err "reconstructor did not emit HEX (non-dry-run expected one)"
+    exit 1
+  fi
+  # Post to vault. Per #9 the key never lands on disk; it travels
+  # through environment / pipe only. Some vault CLIs accept value=@-
+  # for stdin; we use the simplest portable form (value=<hex> as arg).
+  if ! _vault_write "$VAULT_PATH" "$recovered_hex"; then
+    # Best-effort scrub of the variable holding the hex string.
+    recovered_hex="$(printf '0%.0s' $(seq 1 ${#recovered_hex}))"
+    _err "vault write to $VAULT_PATH failed; key NOT installed. Re-run with --dry-run to confirm reconstruction, then fix the vault adapter."
+    exit 3
+  fi
+  # Scrub the local variable holding the hex.
+  recovered_hex="$(printf '0%.0s' $(seq 1 ${#recovered_hex}))"
+  unset recovered_hex
   cat <<EOF
-WAVE-4 STUB: $(printf '%s' "${#SHARDS[@]}") shards received.
-Production recovery flow (per Part 4.3):
-  1. Collect 3 of 5 Shamir shards from vendor officers via secure channel.
-  2. Reconstruct the 32-byte Ed25519 private key with pyshamir / sslib.
-  3. \`tools/license-sign.sh bootstrap-keypair --rotate\` to derive the
-     new public key + fingerprint.
-  4. \`vault kv put $VAULT_PATH value=<reconstructed_priv_hex>\`
-  5. Re-release the Hub binary with the new TRUSTED_VENDOR_FINGERPRINT
-     baked in.
-  6. Notify federation tree (#16) so customers re-pull bundles.
+shamir_recover_ok fingerprint=$fp vault_path=$VAULT_PATH
+NEXT STEPS:
+  1. Compare fingerprint above against the Hub binary's
+     TRUSTED_VENDOR_FINGERPRINT (baked at build time).
+     - MATCH:  recovery succeeded; no Hub re-release needed.
+     - MISMATCH: the operator recovered the wrong key OR the Hub
+       binary was built against a different keypair. DO NOT proceed
+       to sign customer bundles until this is resolved.
+  2. Run \`tools/license-sign.sh verify --signed <a-prior-good-bundle>\`
+     to confirm signing works against the restored key.
+  3. Notify federation tree (per #16) of the recovery event (audit).
+  4. Audit each share custodian's environment — physical custody chain
+     and access logs — to determine whether the original loss event
+     compromised the scheme.
 EOF
 }
 
@@ -309,6 +549,7 @@ case "$CMD" in
   sign)              cmd_sign ;;
   verify)            cmd_verify ;;
   bootstrap-keypair) cmd_bootstrap_keypair ;;
+  shamir-split)      cmd_shamir_split ;;
   recover-shamir)    cmd_recover_shamir ;;
   *) _err "unknown subcommand: $CMD"; usage; exit 2 ;;
 esac

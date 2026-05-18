@@ -35,6 +35,17 @@ loads the Ed25519 private key on-demand from the vendor vault (per #9 +
 Part 4.3, recovered via Shamir 3-of-5 if needed), signs in memory, and
 exits. The private key is **never** written to disk and never enters
 this Python package.
+
+Runtime dependencies (declared here; installed in CI / Docker-build,
+NOT by this package):
+
+* ``cryptography`` — Ed25519, base64, SHA-256.
+* ``asyncpg`` — DB access.
+* ``pyshamir`` — Shamir 3-of-5 split/combine for vendor-key recovery
+  (Part 4.3 + #32 layer 8). Lazy-imported by :mod:`license.shamir` only
+  when the operator runs the recovery flow. Install with
+  ``pip install pyshamir`` — see ``license/README.md`` for the library
+  audit and the operator runbook.
 """
 
 from __future__ import annotations

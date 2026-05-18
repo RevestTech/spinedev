@@ -66,6 +66,46 @@ Operator picks at Day-0:
 
 Runbooks: `vault/unseal/shamir-config.md`, `vault/unseal/kms-config-{aws,azure,gcp}.md`. DR runbook: `vault/dr-runbook.md`.
 
+### Shamir share-custody best practices (#32 layer 8 + Part 4.3)
+
+The same Shamir 3-of-5 pattern protects TWO distinct secrets in Spine:
+
+| Secret | Lives | Recovery tool |
+|---|---|---|
+| **Vault unseal key** | (the customer's) Vault / OpenBao | `vault operator init -key-shares=5 -key-threshold=3` (HashiCorp native) |
+| **Vendor license signing key** | the vendor's vault under `license/vendor_signing_key` | `tools/license-sign.sh shamir-split` / `recover-shamir` (uses `pyshamir`, wire-compatible with Vault's scheme) |
+
+Both follow the same custody discipline. The five-party layout below is the recommendation we ship by default; customers and the vendor itself can tune the layout per their own governance.
+
+**Recommended 5-party layout (Vault Enterprise convention):**
+
+1. **Founder / CEO** — primary operational holder
+2. **Co-founder / CTO** — secondary operational holder, separate physical location
+3. **CFO** — finance custody (corporate safe, board-level oversight)
+4. **Outside legal counsel** — independent third party, lawyer-client privilege protects the share
+5. **Outside director** — independent board representative, governance backstop
+
+**Why this layout works:**
+- No single insider can recover (CEO + CTO + CFO is the smallest insider trio, and that's a board-level event)
+- No single party loss is catastrophic (any 3 of 5 still recovers)
+- Mixes operational + governance + outside-counsel custody → no single failure mode (insider attack / departure / subpoena / death) loses 3 shares
+
+**Custody requirements per share:**
+- Physical custody only (safe deposit box, sealed envelope in a corporate safe, dedicated Yubikey/Trezor, HSM token)
+- **Never email, never Slack, never password manager that other parties can access** — the share IS the key (modulo 2 other shares)
+- Each share file is a 66-char hex string (33 bytes); fits on paper, in a Yubikey static slot, or QR-code-printed
+- Custodian receives written acknowledgement that they hold a share AND knows the recovery escalation path (who convenes a quorum)
+
+**Recovery hygiene:**
+- The recovery workstation must be considered toxic for the duration — the reconstructed 32-byte secret has been in process memory. Wipe / reimage after each recovery event.
+- The `tools/license-sign.sh recover-shamir` flow **zeroizes the share files** after read (best-effort wipe + unlink). Re-distribute fresh shares from the operating-side after recovery completes.
+- Rehearse annually. Convene any 3 custodians, run `recover-shamir --dry-run --share-file ...`, confirm the printed fingerprint matches the Hub binary's `TRUSTED_VENDOR_FINGERPRINT`. The dry-run mode does NOT write to vault and does NOT wipe the share files (use `--keep-share-files`).
+
+**Post-event audit:**
+After any recovery event, audit each custodian's environment — physical custody chain, access logs, machine compromise indicators — to determine whether the original loss event also compromised the share-set. If yes, rotate: `bootstrap-keypair --rotate` → fresh split → re-distribute → re-release the Hub binary with the new fingerprint.
+
+**Library used (vendor signing key path):** `pyshamir` (PyPI). MPL-2.0 license. Pure-Python port of HashiCorp Vault's Shamir implementation. No CVE history against the primitive. Pinned in CI / Docker-build. See `license/README.md` for the full library audit.
+
 ### Vault audit
 
 Every `get_secret(path)` call logs to vault's own audit device + Spine's hash-chained audit ledger (`spine_audit` with `subsystem=secrets`). To review who accessed which secret when:
