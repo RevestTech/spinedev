@@ -1,0 +1,280 @@
+# Spine v1.0 — main per-PR + per-push-to-main pipeline.
+#
+# Source of truth: docs/V1_SHIP_CHECKLIST.md §1 (Vendor-side build pipeline).
+# All lint targets correspond to the Makefile entries that the human invokes
+# locally (`make lint`, `make hygiene`) so CI ≡ local.
+#
+# Required GitHub Secrets:
+#   (none — this workflow does not push images or sign anything)
+#
+# Required GitHub repo settings:
+#   Settings → Actions → General → "Allow GitHub Actions to create and approve
+#   pull requests" should be OFF (CI is read-only on this repo).
+#
+# Branch protection (Settings → Branches → main):
+#   Require these status checks to pass before merging:
+#     lint-py, lint-shell, lint-sql, lint-md, lint-spa,
+#     pytest-py (3.11), pytest-py (3.12), smoke-test, spa-build
+#   Require branches to be up to date before merging.
+
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint-py:
+    name: lint-py (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install ruff
+        run: pip install "ruff==0.7.0"
+      - name: ruff check
+        run: |
+          ruff check --no-fix \
+            shared/ \
+            hub/ \
+            plan/ \
+            build/ \
+            verify/tron/
+
+  lint-shell:
+    name: lint-shell (shellcheck)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: shellcheck
+        run: |
+          set -euo pipefail
+          shopt -s nullglob globstar
+          files=(
+            tools/*.sh
+            tools/byoc/**/*.sh
+            vault/*.sh
+            keycloak/*.sh
+            hub/*.sh
+          )
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "no shell files matched the glob — failing closed"
+            exit 1
+          fi
+          shellcheck --severity=error "${files[@]}"
+
+  lint-sql:
+    name: lint-sql (sqlfluff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install sqlfluff
+        run: pip install "sqlfluff==3.2.5"
+      - name: sqlfluff lint
+        run: sqlfluff lint --dialect postgres db/flyway/sql/
+
+  lint-md:
+    name: lint-md (markdownlint)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: markdownlint
+        run: |
+          npx -y markdownlint-cli@0.42.0 \
+            "*.md" \
+            "docs/**/*.md"
+
+  lint-spa:
+    name: lint-spa (svelte-check)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: shared/ui/spa/package.json
+      - name: npm install
+        working-directory: shared/ui/spa
+        run: npm install --no-audit --no-fund
+      - name: svelte-check
+        working-directory: shared/ui/spa
+        run: npm run check
+
+  pytest-py:
+    name: pytest-py (${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: spine
+          POSTGRES_PASSWORD: spine
+          POSTGRES_DB: spine
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U spine -d spine"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      SPINE_DB_URL: postgresql://spine:spine@127.0.0.1:5432/spine
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: pytest
+        run: |
+          pytest -q \
+            shared/ \
+            plan/ \
+            build/ \
+            verify/tron/tests/ \
+            migration/ \
+            evidence/ \
+            license/ \
+            recovery/ \
+            federation/ \
+            devops/ \
+            learning/ \
+            shared/integrations/
+
+  smoke-test:
+    name: smoke-test (tools/smoke-test.sh)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: spine
+          POSTGRES_PASSWORD: spine
+          POSTGRES_DB: spine
+        ports:
+          - 33000:5432
+        options: >-
+          --health-cmd "pg_isready -U spine -d spine"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      POSTGRES_HOST_PORT: "33000"
+      POSTGRES_USER: spine
+      POSTGRES_PASSWORD: spine
+      POSTGRES_DB: spine
+      SPINE_DB_URL: postgresql://spine:spine@127.0.0.1:33000/spine
+      FLYWAY_URL: jdbc:postgresql://127.0.0.1:33000/spine
+      FLYWAY_USER: spine
+      FLYWAY_PASSWORD: spine
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install Postgres client + jq + yq
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client jq
+          sudo curl -sSL -o /usr/local/bin/yq \
+            https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Run flyway migrate (V1-V36)
+        uses: docker://flyway/flyway:10.20.1-alpine
+        with:
+          args: >-
+            -url=jdbc:postgresql://postgres:5432/spine
+            -user=spine
+            -password=spine
+            -locations=filesystem:db/flyway/sql
+            -baselineOnMigrate=true
+            migrate
+      - name: Run smoke-test.sh (expect 99 PASS / 0 FAIL)
+        run: |
+          set -o pipefail
+          bash tools/smoke-test.sh | tee smoke.out
+          grep -qE "0 +FAIL" smoke.out
+      - name: Upload smoke output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-test-output
+          path: smoke.out
+          retention-days: 14
+
+  spa-build:
+    name: spa-build (vite)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: shared/ui/spa/package.json
+      - name: npm install
+        working-directory: shared/ui/spa
+        run: npm install --no-audit --no-fund
+      - name: npm run build
+        working-directory: shared/ui/spa
+        run: npm run build
+      - name: Verify dist/ populated
+        working-directory: shared/ui/spa
+        run: |
+          test -d dist
+          file_count=$(find dist -type f | wc -l | tr -d ' ')
+          if [ "$file_count" -lt 1 ]; then
+            echo "dist/ is empty — vite build produced nothing"
+            exit 1
+          fi
+          echo "dist/ contains $file_count files"
+      - name: Bundle size budget (<2 MB total)
+        working-directory: shared/ui/spa
+        run: |
+          # 2 MB = 2 * 1024 * 1024 = 2097152 bytes
+          total_bytes=$(du -sb dist | awk '{print $1}')
+          echo "dist/ total bytes: $total_bytes"
+          if [ "$total_bytes" -gt 2097152 ]; then
+            echo "FAIL: bundle exceeds 2 MB budget ($total_bytes bytes)"
+            exit 1
+          fi
+      - name: Upload dist/
+        uses: actions/upload-artifact@v4
+        with:
+          name: spa-dist
+          path: shared/ui/spa/dist
+          retention-days: 14

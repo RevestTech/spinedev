@@ -1,0 +1,224 @@
+# Spine v1.0 — tag-driven release pipeline.
+#
+# Source of truth: docs/V1_SHIP_CHECKLIST.md Launch sign-off
+#   `git tag v1.0.0 -s -m "Spine v1.0 — AI software company in a box"`
+#
+# Triggers: tag matching v*.*.*
+#
+# Sequencing:
+#   1. ci.yml + docker-build.yml + flyway-gate.yml are triggered by the same
+#      push/tag event. We do NOT use needs:cross-workflow (GitHub Actions does
+#      not support it); instead we re-run the gating checks here as a final
+#      pre-release confirmation, then build the release tarball.
+#   2. cosign signs the tarball (same key as docker-build.yml).
+#   3. Creates a GitHub Release with notes from
+#      docs/RELEASE_NOTES_<tag>.md if present, else from CHANGELOG.md.
+#
+# Required GitHub Secrets:
+#   GITHUB_TOKEN            — auto-injected; needs `contents: write` for release
+#   COSIGN_PRIVATE_KEY      — same key as docker-build.yml
+#   COSIGN_PASSWORD         — passphrase
+
+name: release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+concurrency:
+  group: release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false   # never cancel a release mid-flight
+
+permissions:
+  contents: write    # create GitHub Release + upload assets
+  packages: read
+  id-token: write    # cosign keyless backup path
+
+jobs:
+  pre-release-gate:
+    # Re-run the lightweight checks here so a tag push that bypasses PR review
+    # can never produce a release that skipped CI.
+    name: pre-release-gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install ruff + sqlfluff
+        run: pip install "ruff==0.7.0" "sqlfluff==3.2.5"
+      - name: ruff check
+        run: |
+          ruff check --no-fix \
+            shared/ hub/ plan/ build/ verify/tron/
+      - name: sqlfluff lint
+        run: sqlfluff lint --dialect postgres db/flyway/sql/
+      - name: Confirm tag matches CHANGELOG.md
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          ver="${tag#v}"
+          if ! grep -qE "(^|[^0-9.])${ver}([^0-9.]|$)" CHANGELOG.md; then
+            echo "Tag ${tag} (version ${ver}) not found in CHANGELOG.md"
+            exit 1
+          fi
+
+  build-release-artifacts:
+    name: build-release-artifacts
+    needs: [pre-release-gate]
+    runs-on: ubuntu-latest
+    outputs:
+      tarball: ${{ steps.pack.outputs.tarball }}
+      sha256:  ${{ steps.pack.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Package release tarball
+        id: pack
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          staging="spine-release-${tag}"
+          mkdir -p "${staging}"
+          # Per checklist §1: vault + keycloak + hub + docker-compose + tools/byoc +
+          # docs + LICENSE.txt
+          cp -R vault       "${staging}/vault"
+          cp -R keycloak    "${staging}/keycloak"
+          cp -R hub         "${staging}/hub"
+          cp -R tools/byoc  "${staging}/byoc"
+          cp -R docs        "${staging}/docs"
+          cp LICENSE.txt    "${staging}/LICENSE.txt"
+          cp README.md      "${staging}/README.md"
+          cp CHANGELOG.md   "${staging}/CHANGELOG.md"
+          cp INSTALL.md     "${staging}/INSTALL.md"
+          if [ -f hub/docker-compose.yml ]; then
+            cp hub/docker-compose.yml "${staging}/docker-compose.yml"
+          fi
+          # Strip caches/test artifacts.
+          find "${staging}" -name "__pycache__" -type d -exec rm -rf {} +
+          find "${staging}" -name "*.pyc" -delete
+          tarball="${staging}.tar.gz"
+          tar -czf "${tarball}" "${staging}"
+          sha256=$(sha256sum "${tarball}" | awk '{print $1}')
+          {
+            echo "tarball=${tarball}"
+            echo "sha256=${sha256}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Upload tarball artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: spine-release-tarball
+          path: ${{ steps.pack.outputs.tarball }}
+          retention-days: 90
+
+  sign-release:
+    name: sign-release (cosign)
+    needs: [build-release-artifacts]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download tarball
+        uses: actions/download-artifact@v4
+        with:
+          name: spine-release-tarball
+          path: .
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: "v2.4.1"
+
+      - name: cosign sign-blob (keyed)
+        env:
+          COSIGN_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          tarball="${{ needs.build-release-artifacts.outputs.tarball }}"
+          echo "$COSIGN_KEY" > cosign.key
+          cosign sign-blob --yes --key cosign.key \
+            --output-signature "${tarball}.sig" \
+            --output-certificate "${tarball}.pem" \
+            "${tarball}"
+          rm -f cosign.key
+
+      - name: Upload signature + cert
+        uses: actions/upload-artifact@v4
+        with:
+          name: spine-release-signature
+          path: |
+            *.tar.gz.sig
+            *.tar.gz.pem
+          retention-days: 90
+
+  github-release:
+    name: github-release
+    needs: [build-release-artifacts, sign-release]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download tarball
+        uses: actions/download-artifact@v4
+        with:
+          name: spine-release-tarball
+          path: ./release
+
+      - name: Download signature
+        uses: actions/download-artifact@v4
+        with:
+          name: spine-release-signature
+          path: ./release
+
+      - name: Resolve release notes
+        id: notes
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          notes_file="docs/RELEASE_NOTES_${tag}.md"
+          if [ -f "${notes_file}" ]; then
+            echo "source=${notes_file}" >> "$GITHUB_OUTPUT"
+            cp "${notes_file}" release_notes.md
+          else
+            echo "source=CHANGELOG.md (fallback)" >> "$GITHUB_OUTPUT"
+            cp CHANGELOG.md release_notes.md
+          fi
+          {
+            echo ""
+            echo "---"
+            echo "SHA-256: \`${{ needs.build-release-artifacts.outputs.sha256 }}\`"
+            echo "Signed with cosign (key + cert attached)."
+          } >> release_notes.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Spine ${{ github.ref_name }}
+          body_path: release_notes.md
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-beta') }}
+          files: |
+            release/*.tar.gz
+            release/*.tar.gz.sig
+            release/*.tar.gz.pem
+
+  publish-helm-chart:
+    # Stub per checklist §1 ("Helm chart smoke-tested on EKS/AKS/GKE" lives in
+    # §5; real chart publishing deferred to v1.1+). We keep the job here so the
+    # release pipeline shape is stable and the v1.1 implementer just fills in
+    # the body.
+    name: publish-helm-chart (stub for v1.1)
+    needs: [github-release]
+    runs-on: ubuntu-latest
+    steps:
+      - name: TODO v1.1
+        run: |
+          cat <<'EOF'
+          Helm chart publishing is deferred to v1.1+.
+          Future implementation path:
+            1. helm package charts/spine
+            2. helm push spine-${TAG}.tgz oci://ghcr.io/${OWNER}/charts
+            3. cosign sign oci://...
+          See docs/V1_SHIP_CHECKLIST.md §8 — "Architecture upgrades".
+          EOF

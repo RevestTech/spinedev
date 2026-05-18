@@ -1,0 +1,221 @@
+# Spine v1.0 — multi-arch container build + sign.
+#
+# Source of truth: docs/V1_SHIP_CHECKLIST.md §1
+#   - Multi-arch Docker images for hub/, vault/, keycloak/
+#   - docker buildx build --platform linux/amd64,linux/arm64
+#   - cosign sign (Sigstore) + SLSA L2 provenance attestation
+#
+# Triggers:
+#   - push to main           → build + push :sha-<sha>     + sign + scan
+#   - tag v*.*.*             → build + push :<tag> + :latest + sign + scan
+#   - pull_request           → build (no push, no sign) — proves Dockerfile changes compile
+#
+# Required GitHub Secrets:
+#   GITHUB_TOKEN              — auto-injected by GitHub; needs `packages: write`
+#                               permission (set per-job below) to push to ghcr.io
+#   COSIGN_PRIVATE_KEY        — the cosign signing key (offline-generated; per §2a
+#                               this is a CI-only signing identity, NOT the
+#                               Shamir-split license key)
+#   COSIGN_PASSWORD           — passphrase for the above key
+#
+# Notes:
+#   - We use GHCR (ghcr.io/<owner>/spine-*) over Docker Hub: same auth as
+#     GITHUB_TOKEN, no rate limits, and signing flow is identical.
+#   - SLSA L2 provenance is attached via the `buildx --provenance=true` flag
+#     plus the cosign attestation step. L3 requires hermetic builders and
+#     isolated keys — deferred to v1.1+ (see .github/README.md).
+#   - Trivy scan blocks on HIGH/CRITICAL CVEs; we let MEDIUM through to avoid
+#     flapping on upstream image churn.
+
+name: docker-build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*.*.*"]
+  pull_request:
+    paths:
+      - "hub/Dockerfile"
+      - "vault/Dockerfile"
+      - "keycloak/Dockerfile"
+      - "shared/**"
+      - "plan/**"
+      - "build/**"
+      - "verify/**"
+      - "orchestrator/**"
+      - "devops/**"
+      - "hub/**"
+      - "vault/**"
+      - "keycloak/**"
+      - ".github/workflows/docker-build.yml"
+
+concurrency:
+  group: docker-build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write       # push to ghcr.io
+  id-token: write       # cosign keyless + OIDC provenance
+  attestations: write   # SLSA provenance attestations
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_OWNER: ${{ github.repository_owner }}
+
+jobs:
+  buildx-setup:
+    name: buildx-setup
+    runs-on: ubuntu-latest
+    outputs:
+      push: ${{ steps.gate.outputs.push }}
+    steps:
+      - id: gate
+        name: Decide whether to push
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "push=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "push=true"  >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    name: build-${{ matrix.image }}
+    needs: [buildx-setup]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: hub
+            dockerfile: hub/Dockerfile
+            context: .
+          - image: vault
+            dockerfile: vault/Dockerfile
+            context: vault
+          - image: keycloak
+            dockerfile: keycloak/Dockerfile
+            context: keycloak
+    outputs:
+      hub-digest: ${{ steps.build-out.outputs.hub-digest }}
+      vault-digest: ${{ steps.build-out.outputs.vault-digest }}
+      keycloak-digest: ${{ steps.build-out.outputs.keycloak-digest }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU (multi-arch emulation)
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: needs.buildx-setup.outputs.push == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image tags
+        id: tags
+        run: |
+          base="${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/spine-${{ matrix.image }}"
+          tags="${base}:sha-${{ github.sha }}"
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            ver="${{ github.ref_name }}"
+            tags="${tags},${base}:${ver},${base}:latest"
+          elif [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            tags="${tags},${base}:main"
+          fi
+          {
+            echo "tags=${tags}"
+            echo "base=${base}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build (and push when authorised)
+        id: build-out
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64,linux/arm64
+          push: ${{ needs.buildx-setup.outputs.push == 'true' }}
+          tags: ${{ steps.tags.outputs.tags }}
+          cache-from: type=gha,scope=spine-${{ matrix.image }}
+          cache-to: type=gha,scope=spine-${{ matrix.image }},mode=max
+          provenance: true
+          sbom: true
+
+      - name: Emit digest output
+        if: needs.buildx-setup.outputs.push == 'true'
+        run: |
+          echo "${{ matrix.image }}-digest=${{ steps.build-out.outputs.digest }}" \
+            >> "$GITHUB_OUTPUT"
+
+      - name: Attach SLSA build provenance attestation
+        if: needs.buildx-setup.outputs.push == 'true'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ steps.tags.outputs.base }}
+          subject-digest: ${{ steps.build-out.outputs.digest }}
+          push-to-registry: true
+
+  sign-images:
+    name: cosign-sign
+    needs: [buildx-setup, build]
+    if: needs.buildx-setup.outputs.push == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [hub, vault, keycloak]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: "v2.4.1"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: cosign sign (keyed)
+        env:
+          COSIGN_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+        run: |
+          # Sign every published tag for this image.
+          base="${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/spine-${{ matrix.image }}"
+          echo "$COSIGN_KEY" > cosign.key
+          for tag in "sha-${{ github.sha }}" \
+                     $([[ "${{ github.ref }}" == refs/tags/v* ]] && echo "${{ github.ref_name }} latest") \
+                     $([[ "${{ github.ref }}" == "refs/heads/main" ]] && echo "main"); do
+            cosign sign --yes --key cosign.key "${base}:${tag}"
+          done
+          rm -f cosign.key
+
+  scan-images:
+    name: trivy-scan
+    needs: [buildx-setup, build]
+    if: needs.buildx-setup.outputs.push == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [hub, vault, keycloak]
+    steps:
+      - name: Trivy vulnerability scan (HIGH+CRITICAL block)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/spine-${{ matrix.image }}:sha-${{ github.sha }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+          vuln-type: os,library

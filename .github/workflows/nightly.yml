@@ -1,0 +1,264 @@
+# Spine v1.0 — nightly DR + integration tests.
+#
+# Source of truth: docs/V1_SHIP_CHECKLIST.md
+#   §5  DR drill — tools/dr-test.sh
+#   §5  BYOC dry-runs for all 6 clouds
+#   §2a Shamir-split → recover-shamir --dry-run fingerprint match
+#   #31 layer 5 vendor heartbeat
+#
+# Triggers:
+#   - cron 06:00 UTC daily
+#   - workflow_dispatch (manual)
+#
+# Required GitHub Secrets:
+#   STATUS_REGISTRY_URL       — POST endpoint for vendor heartbeat (per #31 L5)
+#   STATUS_REGISTRY_TOKEN     — bearer token for the above
+# All other tests run with synthetic data; no production secrets.
+
+name: nightly
+
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: nightly-${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  dr-test:
+    name: dr-test (tools/dr-test.sh)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: spine
+          POSTGRES_PASSWORD: spine
+          POSTGRES_DB: spine
+        ports:
+          - 33000:5432
+        options: >-
+          --health-cmd "pg_isready -U spine -d spine"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      POSTGRES_HOST_PORT: "33000"
+      POSTGRES_USER: spine
+      POSTGRES_PASSWORD: spine
+      POSTGRES_DB: spine
+      FLYWAY_URL: jdbc:postgresql://127.0.0.1:33000/spine
+      FLYWAY_USER: spine
+      FLYWAY_PASSWORD: spine
+      SPINE_DB_URL: postgresql://spine:spine@127.0.0.1:33000/spine
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install Postgres client + jq
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client jq
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: flyway migrate
+        uses: docker://flyway/flyway:10.20.1-alpine
+        with:
+          args: >-
+            -url=jdbc:postgresql://postgres:5432/spine
+            -user=spine
+            -password=spine
+            -locations=filesystem:db/flyway/sql
+            -baselineOnMigrate=true
+            migrate
+      - name: Run DR test (backup → restore-to-throwaway)
+        run: bash tools/dr-test.sh
+      - name: Upload DR artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dr-test-output
+          path: |
+            /tmp/spine-dr-*/**
+          retention-days: 30
+        continue-on-error: true
+
+  byoc-dry-runs:
+    name: byoc-dry-run (${{ matrix.cloud }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        cloud: [aws, azure, gcp, railway, fly, do]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install jq + curl
+        run: sudo apt-get update && sudo apt-get install -y jq curl
+      - name: BYOC provision --dry-run (${{ matrix.cloud }})
+        run: |
+          bash tools/byoc/provision.sh \
+            --cloud=${{ matrix.cloud }} \
+            --account=ci-dry-run \
+            --hub-version=nightly \
+            --bundle-id=nightly-bundle \
+            --admin-email=ci@spine.dev \
+            --non-interactive \
+            --dry-run
+
+  shamir-round-trip:
+    name: shamir-round-trip (3-of-5)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies (pyshamir activates 26 tests)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Run Shamir test suite
+        run: pytest -q license/tests/test_shamir.py
+      - name: shamir-split → recover-shamir --dry-run (fingerprint match)
+        run: |
+          set -euo pipefail
+          workdir="$(mktemp -d)"
+          # Split into 5 shares with 3-of-5 threshold.
+          bash tools/license-sign.sh shamir-split \
+            --out "${workdir}/shares" \
+            --threshold 3 \
+            --shares 5
+          # Take any 3 shares and run dry-run recovery.
+          shares=$(ls "${workdir}/shares"/share-*.txt | head -3 | paste -sd, -)
+          original_fp=$(cat "${workdir}/shares/fingerprint.txt")
+          recovered_fp=$(bash tools/license-sign.sh recover-shamir \
+            --dry-run --share-file "${shares}" \
+            | awk '/fingerprint:/ {print $2}')
+          if [ "${original_fp}" != "${recovered_fp}" ]; then
+            echo "FAIL: fingerprint mismatch (orig=${original_fp} recovered=${recovered_fp})"
+            exit 1
+          fi
+          echo "PASS: fingerprint match ${recovered_fp}"
+          rm -rf "${workdir}"
+
+  smoke-12h:
+    name: smoke-12h (long-running)
+    runs-on: ubuntu-latest
+    timeout-minutes: 720    # 12 hours
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: spine
+          POSTGRES_PASSWORD: spine
+          POSTGRES_DB: spine
+        ports:
+          - 33000:5432
+        options: >-
+          --health-cmd "pg_isready -U spine -d spine"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      POSTGRES_HOST_PORT: "33000"
+      POSTGRES_USER: spine
+      POSTGRES_PASSWORD: spine
+      POSTGRES_DB: spine
+      SPINE_DB_URL: postgresql://spine:spine@127.0.0.1:33000/spine
+      FLYWAY_URL: jdbc:postgresql://127.0.0.1:33000/spine
+      FLYWAY_USER: spine
+      FLYWAY_PASSWORD: spine
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install OS + Python deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client jq
+          sudo curl -sSL -o /usr/local/bin/yq \
+            https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: flyway migrate
+        uses: docker://flyway/flyway:10.20.1-alpine
+        with:
+          args: >-
+            -url=jdbc:postgresql://postgres:5432/spine
+            -user=spine
+            -password=spine
+            -locations=filesystem:db/flyway/sql
+            -baselineOnMigrate=true
+            migrate
+      - name: Long-running smoke loop (every 30 min for 12 h)
+        run: |
+          set -euo pipefail
+          end=$(( $(date +%s) + 12*60*60 ))
+          iter=0
+          while [ "$(date +%s)" -lt "${end}" ]; do
+            iter=$((iter+1))
+            echo "── iteration ${iter} at $(date -u +%FT%TZ) ──"
+            bash tools/smoke-test.sh | tee "smoke-${iter}.out"
+            if ! grep -qE "0 +FAIL" "smoke-${iter}.out"; then
+              echo "FAIL at iteration ${iter}"
+              exit 1
+            fi
+            sleep 1800
+          done
+          echo "smoke-12h completed ${iter} iterations cleanly"
+      - name: Upload smoke logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-12h-output
+          path: smoke-*.out
+          retention-days: 30
+
+  vendor-heartbeat:
+    # Reports the nightly result to the vendor's own status registry (#31 L5).
+    name: vendor-heartbeat
+    needs: [dr-test, byoc-dry-runs, shamir-round-trip]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: POST status to vendor registry
+        if: ${{ env.STATUS_REGISTRY_URL != '' }}
+        env:
+          STATUS_REGISTRY_URL:   ${{ secrets.STATUS_REGISTRY_URL }}
+          STATUS_REGISTRY_TOKEN: ${{ secrets.STATUS_REGISTRY_TOKEN }}
+          DR_RESULT:     ${{ needs.dr-test.result }}
+          BYOC_RESULT:   ${{ needs.byoc-dry-runs.result }}
+          SHAMIR_RESULT: ${{ needs.shamir-round-trip.result }}
+        run: |
+          set -euo pipefail
+          curl -sS -X POST \
+            -H "Authorization: Bearer ${STATUS_REGISTRY_TOKEN}" \
+            -H "Content-Type: application/json" \
+            "${STATUS_REGISTRY_URL}" \
+            --data "$(cat <<JSON
+          {
+            "source":   "github-actions/nightly",
+            "run_id":   "${{ github.run_id }}",
+            "sha":      "${{ github.sha }}",
+            "ts":       "$(date -u +%FT%TZ)",
+            "results": {
+              "dr_test":      "${DR_RESULT}",
+              "byoc_dry_run": "${BYOC_RESULT}",
+              "shamir":       "${SHAMIR_RESULT}"
+            }
+          }
+          JSON
+          )"
