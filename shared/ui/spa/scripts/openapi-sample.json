@@ -1,0 +1,160 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Spine Hub API",
+    "version": "v2",
+    "description": "Snapshot used by shared/ui/spa/scripts/codegen-types.sh for offline / CI builds. Wave 3 part 2 (Squad SPA3) committed this slice covering the routes the SPA panels consume today; refresh whenever a backend route adds/changes a field. The full live spec is at /api/v2/spec on a running Hub."
+  },
+  "paths": {
+    "/api/v2/decisions": {
+      "get": {
+        "operationId": "list_decisions",
+        "parameters": [
+          {"name": "status", "in": "query", "required": false, "schema": {"type": "string"}}
+        ],
+        "responses": {
+          "200": {
+            "description": "ok",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/DecisionList"}}}
+          }
+        }
+      }
+    },
+    "/api/v2/role-chat": {
+      "post": {
+        "operationId": "role_chat",
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/RoleChatRequest"}}}
+        },
+        "responses": {
+          "200": {
+            "description": "ok",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/RoleChatResponse"}}}
+          }
+        }
+      }
+    },
+    "/api/v2/kg/search": {
+      "get": {
+        "operationId": "kg_search",
+        "parameters": [
+          {"name": "q", "in": "query", "required": true, "schema": {"type": "string"}},
+          {"name": "project_id", "in": "query", "required": true, "schema": {"type": "string"}},
+          {"name": "repo", "in": "query", "required": true, "schema": {"type": "string"}}
+        ],
+        "responses": {
+          "200": {
+            "description": "ok",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/KgSearchResponse"}}}
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Citation": {
+        "type": "object",
+        "required": ["type", "ref"],
+        "properties": {
+          "type": {"type": "string", "enum": ["kg_node", "file_line", "audit_hash"]},
+          "ref": {"type": "string"},
+          "excerpt": {"type": "string", "nullable": true}
+        }
+      },
+      "DecisionCard": {
+        "type": "object",
+        "required": [
+          "decision_id", "decision_class", "title", "body", "severity",
+          "actions", "status", "created_at", "metadata"
+        ],
+        "properties": {
+          "decision_id": {"type": "string"},
+          "decision_class": {
+            "type": "string",
+            "enum": ["approval", "incident", "release", "briefing", "budget", "policy_change"]
+          },
+          "project_id": {"type": "string", "nullable": true},
+          "title": {"type": "string"},
+          "body": {"type": "string"},
+          "severity": {"type": "string", "enum": ["info", "warning", "critical"]},
+          "actions": {"type": "array", "items": {"type": "string"}},
+          "status": {
+            "type": "string",
+            "enum": ["pending", "acked", "rejected", "expired"]
+          },
+          "created_at": {"type": "number"},
+          "expires_at": {"type": "number", "nullable": true},
+          "metadata": {"type": "object", "additionalProperties": true}
+        }
+      },
+      "DecisionList": {
+        "type": "object",
+        "required": ["ok", "items", "total"],
+        "properties": {
+          "ok": {"type": "boolean"},
+          "items": {"type": "array", "items": {"$ref": "#/components/schemas/DecisionCard"}},
+          "total": {"type": "integer"}
+        }
+      },
+      "DecisionActionResponse": {
+        "type": "object",
+        "required": ["ok", "decision_id", "status", "actor", "audit_event_uuid"],
+        "properties": {
+          "ok": {"type": "boolean"},
+          "decision_id": {"type": "string"},
+          "status": {"type": "string", "enum": ["pending", "acked", "rejected", "expired"]},
+          "actor": {"type": "string"},
+          "audit_event_uuid": {"type": "string"}
+        }
+      },
+      "RoleChatRequest": {
+        "type": "object",
+        "required": ["role", "message"],
+        "properties": {
+          "role": {"type": "string"},
+          "message": {"type": "string"},
+          "project_id": {"type": "string", "nullable": true},
+          "correlation_id": {"type": "string", "nullable": true}
+        }
+      },
+      "RoleChatResponse": {
+        "type": "object",
+        "required": ["ok", "role", "reply", "actor", "audit_event_uuid", "metadata"],
+        "properties": {
+          "ok": {"type": "boolean"},
+          "role": {"type": "string"},
+          "reply": {"type": "string"},
+          "actor": {"type": "string"},
+          "audit_event_uuid": {"type": "string"},
+          "metadata": {"type": "object", "additionalProperties": true}
+        }
+      },
+      "KgResult": {
+        "type": "object",
+        "required": ["node_id", "name", "node_type", "path", "score"],
+        "properties": {
+          "node_id": {"type": "string"},
+          "name": {"type": "string"},
+          "node_type": {"type": "string"},
+          "path": {"type": "string"},
+          "score": {"type": "number"},
+          "rationale": {"type": "string", "nullable": true}
+        }
+      },
+      "KgSearchResponse": {
+        "type": "object",
+        "required": ["ok", "query", "results", "total", "query_latency_ms", "citations"],
+        "properties": {
+          "ok": {"type": "boolean"},
+          "query": {"type": "string"},
+          "results": {"type": "array", "items": {"$ref": "#/components/schemas/KgResult"}},
+          "total": {"type": "integer"},
+          "query_latency_ms": {"type": "integer"},
+          "citations": {"type": "array", "items": {"$ref": "#/components/schemas/Citation"}}
+        }
+      }
+    }
+  }
+}

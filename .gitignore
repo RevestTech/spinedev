@@ -8,6 +8,9 @@
 
 # Copies of lib/*.sh — created by install.sh into scripts/
 scripts/
+# SPA codegen scripts are tracked (per Wave 3 part 2 Squad SPA3)
+!shared/ui/spa/scripts/
+!shared/ui/spa/scripts/*
 
 # Python venv (per-machine; created during dogfood / dev)
 .venv/

@@ -165,6 +165,67 @@ Every new panel page MUST:
 
 ---
 
+## Type generation (OpenAPI → TypeScript) — Squad SPA3
+
+Hand-maintaining `src/lib/api/types.ts` against `shared/api/routes/*.py`
+is a drift hazard (Wave 3 part 2 drift audit Finding-3). Squad SPA3 wires
+`openapi-typescript` so the SPA types are generated from the FastAPI
+OpenAPI document at `/api/v2/spec`.
+
+### Dev workflow
+
+1. Start a Hub locally (`uvicorn shared.api.app:create_app --factory --port 8090`).
+2. Run the codegen script:
+
+   ```bash
+   cd shared/ui/spa
+   npm run codegen:types
+   # equivalent to:
+   bash scripts/codegen-types.sh
+   ```
+
+3. The script writes `src/lib/api/types.generated.ts`. The public
+   `src/lib/api/types.ts` façade re-exports named shapes (`Citation`,
+   `DecisionCard`, …) so panel imports never change.
+
+Environment overrides:
+
+| Variable                  | Effect                                                       |
+|---------------------------|--------------------------------------------------------------|
+| `SPINE_OPENAPI_URL`       | Source URL (default `http://localhost:8090/api/v2/spec`).    |
+| `SPINE_OPENAPI_SNAPSHOT=1`| Force using `scripts/openapi-sample.json` instead of live URL.|
+
+If the live URL is unreachable the script auto-falls back to the
+snapshot — so `npm run codegen:types` always succeeds, even offline.
+
+### CI / production strategy
+
+CI / Hub Docker build MUST source from the checked-in snapshot
+(`scripts/openapi-sample.json`) — production builds NEVER reach out to
+a live Hub. Wave 4 will add a `make refresh-openapi-snapshot` target
+that diffs the live spec against the snapshot and fails CI if they have
+drifted (forcing the dev who changed a route to commit the regenerated
+snapshot in the same PR).
+
+The snapshot is a JSON document, version-controlled, ~5 KB today.
+Refresh it whenever you add/change a backend response shape:
+
+```bash
+# from a running Hub:
+curl -s http://localhost:8090/api/v2/spec > shared/ui/spa/scripts/openapi-sample.json
+git add shared/ui/spa/scripts/openapi-sample.json
+```
+
+### Why the façade keeps the hand-rolled fallback
+
+Squad SPA3 ships under a strict no-`npm install` constraint, so the
+generated file does not exist on this branch. The façade keeps the
+hand-rolled types so the SPA still builds; once codegen runs (Wave 4
+build pipeline), the commented re-export block in `types.ts` becomes the
+canonical surface and the fallback is deleted.
+
+---
+
 ## Responsive testing (per design decision #28)
 
 Squad SPA1 verifies all panels at:

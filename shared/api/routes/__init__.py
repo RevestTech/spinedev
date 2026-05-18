@@ -16,6 +16,7 @@ from shared.api.routes.audit import router as audit_router
 from shared.api.routes.decisions import router as decisions_router
 from shared.api.routes.federation import router as federation_router
 from shared.api.routes.integrations import router as integrations_router
+from shared.api.routes.kg import router as kg_router
 from shared.api.routes.license import router as license_router
 from shared.api.routes.mobile import router as mobile_router
 from shared.api.routes.projects import router as projects_router
@@ -37,6 +38,8 @@ ALL_ROUTERS = [
     integrations_router,
     federation_router,
     license_router,
+    # Wave 3 part 2 — KG REST front-end (Squad SPA3, drift audit fix)
+    kg_router,
     # Wave 6 — mobile + voice scaffolds (#28, #29)
     mobile_router,
     voice_router,
@@ -53,6 +56,7 @@ __all__: list[str] = [
     "vault_config_router",
     "integrations_router",
     "federation_router",
+    "kg_router",
     "license_router",
     "mobile_router",
     "voice_router",

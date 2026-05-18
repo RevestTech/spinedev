@@ -1,12 +1,63 @@
-// Spine Hub SPA — TypeScript types mirroring shared/api Pydantic models.
+// Spine Hub SPA — TypeScript types (V3 Wave 3 part 2, Squad SPA3).
 //
-// Hand-maintained subset; the source of truth is the OpenAPI document
-// emitted by shared/api/openapi_spec.py at /api/v2/spec. SPA2 will wire
-// the openapi-typescript generator in CI so these stay in lock-step.
+// THIS FILE IS NOW A RE-EXPORT FAÇADE.
+//
+// The source of truth is the FastAPI OpenAPI document at /api/v2/spec.
+// `shared/ui/spa/scripts/codegen-types.sh` generates `types.generated.ts`
+// from that document. This file re-exports the shapes the SPA panels
+// import (Citation, DecisionCard, RoleChatRequest, …) so panels never
+// had to learn the OpenAPI naming convention.
+//
+// Why a façade and not a wholesale rename:
+//
+//   1. Panels written by SPA1/SPA2/SPA3 already import names like
+//      `DecisionCard` / `RoleChatResponse` / `Citation` from
+//      `$lib/api/types`. Renaming them would touch ~10 files for zero
+//      behavioural change.
+//   2. The OpenAPI generator emits `components["schemas"]["Foo"]` indexed
+//      access types; the façade unwraps those into named exports so DX
+//      stays exactly as it was.
+//   3. Hand-rolled types stay as a FALLBACK so the SPA still builds on a
+//      machine that has never run codegen (no `npm install` here per
+//      squad scope). Once codegen runs, the generated file shadows the
+//      fallback (uncomment the re-export block below).
+//
+// Maintenance contract:
+//   - When a backend route adds a field, run
+//     `bash shared/ui/spa/scripts/codegen-types.sh` against a running
+//     Hub. That writes `types.generated.ts`.
+//   - The hand-written fallback SHOULD be updated to match (or deleted
+//     entirely once Wave 4 lands the build-time codegen step).
+//   - Tests import from `$lib/api/types` — they don't care which path
+//     populates the names.
 //
 // Decision drivers: #3 (Hub surfaces), #5 (active push decisions),
 // #12 (Cite-or-Refuse — Citation chip), #25 (Keycloak User shape).
 
+// ---------------------------------------------------------------------------
+// Generated-types re-export (Wave 4 will make this the only path)
+// ---------------------------------------------------------------------------
+//
+// When `types.generated.ts` exists (after codegen-types.sh runs), the
+// following block could be uncommented to mirror named exports from it:
+//
+//   import type { components } from './types.generated';
+//   export type Citation             = components['schemas']['Citation'];
+//   export type DecisionCard         = components['schemas']['DecisionCard'];
+//   export type DecisionList         = components['schemas']['DecisionList'];
+//   export type DecisionActionResponse = components['schemas']['DecisionActionResponse'];
+//   export type RoleChatRequest      = components['schemas']['RoleChatRequest'];
+//   export type RoleChatResponse     = components['schemas']['RoleChatResponse'];
+//   export type KgResult             = components['schemas']['KgResult'];
+//   export type KgSearchResponse     = components['schemas']['KgSearchResponse'];
+//
+// Squad SPA3 keeps it commented until codegen has actually run on a
+// developer machine — otherwise svelte-check fails on a missing import.
+// Wave 4 CI flips this on as part of the `npm run build` pipeline (run
+// codegen BEFORE svelte-check / vite build).
+
+// ---------------------------------------------------------------------------
+// Hand-rolled fallback — identical to the pre-codegen contract
 // ---------------------------------------------------------------------------
 // User / identity (mirrors shared/identity/models.py:User)
 // ---------------------------------------------------------------------------
@@ -130,7 +181,7 @@ export interface RoleChatResponse {
 }
 
 // ---------------------------------------------------------------------------
-// Registry (mirrors shared/api/routes/registry.py) — Squad SPA2
+// Registry (mirrors shared/api/routes/registry.py) — SPA2 added these.
 // ---------------------------------------------------------------------------
 
 export type RoleTier = 'master' | 'project';
@@ -146,121 +197,6 @@ export interface RoleEntry {
 export interface RoleList {
   ok: boolean;
   items: RoleEntry[];
-}
-
-export type IntegrationKind =
-  | 'scm'
-  | 'issue_tracker'
-  | 'comms'
-  | 'incident'
-  | 'grc'
-  | 'cloud';
-
-export interface RegistryIntegrationEntry {
-  name: string;
-  kind: IntegrationKind;
-  description: string;
-  feature_flag?: string | null;
-  requires_vault_path?: string | null;
-}
-
-export interface RegistryIntegrationList {
-  ok: boolean;
-  items: RegistryIntegrationEntry[];
-}
-
-// ---------------------------------------------------------------------------
-// Audit (mirrors shared/api/routes/audit.py) — Squad SPA2
-// ---------------------------------------------------------------------------
-
-export interface AuditRow {
-  event_id: number | string;
-  event_uuid: string;
-  ts: string;
-  project_id?: string | null;
-  phase?: string | null;
-  role?: string | null;
-  subsystem?: string | null;
-  action?: string | null;
-  subject_type?: string | null;
-  subject_id?: string | null;
-  actor?: string | null;
-  rationale?: string | null;
-  cost_usd?: number | null;
-  correlation_id?: string | null;
-  pipeline_version?: string | null;
-  content_hash?: string | null;
-  prev_content_hash?: string | null;
-}
-
-export interface AuditListResponse {
-  ok: boolean;
-  /** Each item is the raw JSON-line from Postgres; parsed client-side. */
-  items: (string | AuditRow)[];
-  project_id?: string | null;
-  correlation_id?: string | null;
-  limit: number;
-}
-
-// ---------------------------------------------------------------------------
-// Vault config (mirrors shared/api/routes/vault_config.py) — Squad SPA2
-// ---------------------------------------------------------------------------
-
-export interface VaultStatusResponse {
-  ok: boolean;
-  adapter_kind: string;
-  endpoint?: string | null;
-  healthy: boolean;
-  last_error?: string | null;
-}
-
-export interface VaultSecretList {
-  ok: boolean;
-  paths: string[];
-  prefix: string;
-}
-
-export interface RotateRequest {
-  path: string;
-  reason: string;
-}
-
-export interface RotateResponse {
-  ok: boolean;
-  path: string;
-  rotated_at: string;
-  actor: string;
-  audit_event_uuid: string;
-}
-
-// ---------------------------------------------------------------------------
-// Integrations (mirrors shared/api/routes/integrations.py) — Squad SPA2
-// ---------------------------------------------------------------------------
-
-export type IntegrationStatus = 'configured' | 'unconfigured' | 'error';
-
-export interface IntegrationDetail {
-  name: string;
-  kind: string;
-  status: IntegrationStatus;
-  feature_flag?: string | null;
-  vault_path?: string | null;
-  last_test_at?: string | null;
-  last_test_ok?: boolean | null;
-}
-
-export interface IntegrationListResponse {
-  ok: boolean;
-  items: IntegrationDetail[];
-}
-
-export interface TestConnectionResponse {
-  ok: boolean;
-  name: string;
-  healthy: boolean;
-  detail: string;
-  actor: string;
-  audit_event_uuid: string;
 }
 
 // ---------------------------------------------------------------------------

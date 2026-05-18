@@ -10,7 +10,8 @@
     "preview": "vite preview --port 5174",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "codegen:types": "bash scripts/codegen-types.sh"
   },
   "dependencies": {},
   "devDependencies": {
@@ -22,6 +23,7 @@
     "@types/node": "20.16.10",
     "autoprefixer": "10.4.20",
     "jsdom": "25.0.1",
+    "openapi-typescript": "7.4.1",
     "postcss": "8.4.47",
     "svelte": "4.2.19",
     "svelte-check": "4.0.4",
