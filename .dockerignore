@@ -1,0 +1,48 @@
+# Root .dockerignore — applies to ALL docker build contexts that use
+# the repo root (currently: hub/Dockerfile builds from `.`).
+#
+# Exclude artifacts that would otherwise leak into the build context +
+# break cross-platform builds (e.g. macOS-built node_modules into a
+# linux/amd64 SPA build).
+
+# Local-machine SPA artifacts
+shared/ui/spa/node_modules/
+shared/ui/spa/dist/
+shared/ui/spa/.svelte-kit/
+shared/ui/spa/package-lock.json
+shared/ui/spa/coverage/
+shared/ui/spa/.vite/
+shared/ui/spa/*.log
+
+# Local Python venvs
+.venv/
+**/__pycache__/
+**/*.pyc
+
+# Local Spine dev install
+.planning/
+scripts/
+.spine/
+
+# Git + IDE + OS cruft
+.git/
+.github/
+.vscode/
+.idea/
+.DS_Store
+
+# Documentation that doesn't need to ship in the container
+docs/_archived/
+docs/research/
+
+# Test fixtures + agent transcripts
+chatsession.md
+*.bak
+
+# Vault / Keycloak local secrets (defense in depth — .gitignore covers
+# but dockerignore prevents accidental context leakage)
+**/.env
+**/.env.local
+**/.env.production
+!verify/.env.example
+!verify/.env.vault-refs

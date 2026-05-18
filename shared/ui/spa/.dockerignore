@@ -1,0 +1,14 @@
+# Exclude local-machine artifacts from Docker build context so the
+# hub/Dockerfile spa-builder stage installs deps + builds dist/ cleanly
+# on the build platform (avoids the rollup-native MODULE_NOT_FOUND bug
+# triggered by lockfile / node_modules from a different OS/arch).
+node_modules/
+dist/
+.svelte-kit/
+package-lock.json
+*.log
+.env
+.env.*
+!.env.example
+coverage/
+.vite/

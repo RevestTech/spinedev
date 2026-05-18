@@ -230,8 +230,11 @@ prompt_if_blank() {
 }
 
 # ─── validate cloud ────────────────────────────────────────────────
-case "${SPINE_BYOC_CLOUD,,}" in
-  aws|azure|gcp|railway|fly|do) SPINE_BYOC_CLOUD="${SPINE_BYOC_CLOUD,,}" ;;
+# `${VAR,,}` (bash-4+ lowercase expansion) breaks on macOS bash 3.2;
+# use `tr` for portability. Audit fix 2026-05-18.
+SPINE_BYOC_CLOUD_LC="$(printf '%s' "$SPINE_BYOC_CLOUD" | tr '[:upper:]' '[:lower:]')"
+case "$SPINE_BYOC_CLOUD_LC" in
+  aws|azure|gcp|railway|fly|do) SPINE_BYOC_CLOUD="$SPINE_BYOC_CLOUD_LC" ;;
   "")
     prompt_if_blank SPINE_BYOC_CLOUD "Cloud (aws|azure|gcp|railway|fly|do)"
     ;;

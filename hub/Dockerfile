@@ -75,20 +75,31 @@ RUN pip wheel --wheel-dir /wheels \
 #
 # Pin both Node + npm (corepack-managed) so the build is reproducible in
 # CI / customer infra without surprises from rolling node:lts.
-FROM --platform=${BUILDPLATFORM:-linux/amd64} node:20.18.0-slim AS spa-builder
+# node:20.18.0 (full, NOT -slim) — esbuild's Go runtime hits lfstack.push
+# fatal on slim images that strip libc bits it depends on. Full image
+# adds ~150 MB to BUILDER stage only (not runtime; final stage uses
+# python:3.11-slim). Audit fix 2026-05-18.
+FROM --platform=${BUILDPLATFORM:-linux/amd64} node:20.18.0 AS spa-builder
 
-ENV NODE_ENV=production \
-    NPM_CONFIG_PROGRESS=false \
+# DO NOT set NODE_ENV=production here — vite + svelte + tailwind are
+# devDependencies; production mode skips them and `vite build` fails
+# with "vite: not found". NODE_ENV applies only at runtime in the
+# final image (set later). Audit fix 2026-05-18.
+ENV NPM_CONFIG_PROGRESS=false \
     NPM_CONFIG_FUND=false \
     NPM_CONFIG_AUDIT=false
 
 WORKDIR /spa
 
-# Copy manifest first so dep-install layer caches across source edits.
-COPY shared/ui/spa/package.json shared/ui/spa/package-lock.json* ./
-# package-lock.json is committed by Squad SPA1 once npm install is run
-# locally; until then `npm install` falls back to the package.json pins.
-RUN if [ -f package-lock.json ]; then npm ci; else npm install --no-audit --no-fund; fi
+# Copy ONLY package.json (NOT the lockfile) so npm re-resolves
+# platform-specific optional native binaries on the build platform.
+# Copying a lockfile generated on macOS/arm64 into a linux/amd64 build
+# context triggers the rollup-native MODULE_NOT_FOUND bug (rollup pins
+# @rollup/rollup-darwin-arm64 in the lockfile; missing on linux/amd64).
+# Reproducibility: pin transitive deps in package.json directly, OR
+# generate the lockfile in CI on the build platform. Audit fix 2026-05-18.
+COPY shared/ui/spa/package.json ./
+RUN npm install --no-audit --no-fund
 
 # Copy the rest of the SPA source + build.
 COPY shared/ui/spa/ ./

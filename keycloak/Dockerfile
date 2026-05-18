@@ -24,7 +24,9 @@ FROM quay.io/keycloak/keycloak:${KC_VERSION} AS builder
 ENV KC_HEALTH_ENABLED=true \
     KC_METRICS_ENABLED=true \
     KC_DB=postgres \
-    KC_FEATURES=token-exchange,admin-fine-grained-authz,declarative-user-profile
+    # declarative-user-profile removed in Keycloak 26.x — built-in now;
+    # `kc.sh build` rejects as "unrecognized feature" on 26.0.7.
+    KC_FEATURES=token-exchange,admin-fine-grained-authz
 
 # Pre-build to a frozen, optimized image (cuts cold-start by ~5-10s).
 RUN /opt/keycloak/bin/kc.sh build

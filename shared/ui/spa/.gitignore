@@ -1,4 +1,12 @@
 node_modules/
+
+# package-lock.json deliberately NOT committed. The lockfile pins
+# platform-specific native optional deps (rollup, esbuild, etc.) to
+# whatever OS/arch ran `npm install` first. Committing a macOS/arm64-
+# generated lockfile breaks linux/amd64 Docker builds with rollup-
+# native MODULE_NOT_FOUND. CI generates a fresh lockfile per
+# build-platform. Audit-fix 2026-05-18.
+package-lock.json
 dist/
 .svelte-kit/
 *.log
