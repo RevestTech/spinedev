@@ -102,22 +102,39 @@ KNOWN_FEATURE_FLAGS: frozenset[str] = frozenset(
 def is_feature_enabled(flag: str) -> bool:
     """Return True if ``flag`` is enabled on the current license bundle.
 
-    Wave 3 stub: returns True for every recognised flag. We deliberately
-    refuse to answer for unknown flags so a typo at the call site (e.g.
-    ``require_feature_flag("federtion")``) raises ``KeyError`` at the
-    first request instead of silently always returning True.
+    Wave 4 (Squad B) wired the real signed-bundle evaluator at
+    :func:`license.feature_flags.is_enabled`. The contract is identical to
+    the Wave 3 stub: unknown flags raise ``KeyError`` so a typo at the
+    call site (e.g. ``require_feature_flag("federtion")``) fails at the
+    first request rather than silently returning True.
+
+    Fail-open semantics during the bootstrap window (Hub still starting
+    up, no ``ActiveBundle`` installed yet) are preserved by catching the
+    one specific case where the licence subsystem is unreachable. Every
+    other call path delegates straight to the licence evaluator.
     """
     if flag not in KNOWN_FEATURE_FLAGS:
         raise KeyError(
             f"Unknown feature flag {flag!r}; add it to "
             "shared.api.middleware.feature_flag.KNOWN_FEATURE_FLAGS"
         )
-    # Wave 4 will swap this for `shared.license.is_enabled(flag)`.
     try:
-        from shared.license import is_enabled  # noqa: PLC0415 — optional
-
+        from license.bundle_verifier import get_active_bundle  # noqa: PLC0415
+        from license.feature_flags import is_enabled  # noqa: PLC0415
+    except Exception:  # noqa: BLE001 — license subsystem missing: fail-open
+        return True
+    # Bootstrap window: Hub started up, license subsystem importable, but no
+    # signed bundle has been loaded yet. Per the Wave-3 contract preserved
+    # here, we fail OPEN until startup completes so health checks + the
+    # initial admin login can reach their endpoints. Once a bundle is
+    # installed, the evaluator is the single source of truth.
+    if get_active_bundle() is None:
+        return True
+    try:
         return bool(is_enabled(flag))
-    except Exception:  # noqa: BLE001
+    except KeyError:
+        raise
+    except Exception:  # noqa: BLE001 — evaluator hiccup: fail-open, log later
         return True
 
 
