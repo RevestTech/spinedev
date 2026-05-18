@@ -65,6 +65,36 @@ TRON deploy.
 
 ---
 
+### Wave 3 part 2 — Hub SPA + remote MCP: COMPLETE 2026-05-18
+
+7 commits:
+
+| Commit | Scope |
+|---|---|
+| `480c90b` | Drift fixes (4 stale deletes + recovery path + #34 hygiene Makefile target) |
+| `e8d83d2` | Squad SPA1 — SvelteKit 2 + Svelte 4 + Tailwind scaffold + 2 example panels (decision-queue + role-chat) + login UI + 9 reusable components + Hub Dockerfile + FastAPI mount. +2782 lines |
+| `e32e283` | Squad SPA4 — `shared/mcp/server_remote.py` remote MCP transport (mTLS + bearer via vault) + 30 new tests. Unlocks federation tool delegation. +1880 lines |
+| `f132103` | Squad SPA2 — 5 panels (master-roles / registry / audit / vault-config / integrations) + 12 new types. +1772 lines |
+| `6da82c9` | Squad SPA3 — 3 panels (federation / license / kg-search) + `shared/api/routes/kg.py` NEW REST backend (8 tests) + OpenAPI→TS codegen pipeline + types.ts façade. +2355 −121 lines |
+| (sidebar+STATUS) | Sidebar: all 10 panels flipped to `shipped: true`; STATUS update |
+
+**Total Wave 3 part 2:** +12780 net lines, 173+ new tests passing, all 10 Hub surfaces shipped, smoke test 99 PASS / 0 FAIL maintained.
+
+### 5 backend gaps surfaced by SPA squads (Wave 4 follow-ups)
+
+1. `registry.py` RoleEntry lacks runtime fields (status/last_decision_card_pushed/current_responsibility)
+2. `audit.py` requires project_id; lacks subsystem/role/action filters; no cursor pagination
+3. `vault_config.py` `/vault/status` lacks per-path last-rotation timestamps
+4. `integrations.py` IntegrationDetail.status lacks `disabled` enum value
+5. Decisions store + federation graph still in-process (Wave 3 Squad C deferral)
+
+### 2 high-severity drift findings still need dedicated work
+
+- **Finding 1 (HIGH):** TRON LLM bypasses `shared/llm/` — Part 1.4 #6 commitment never fulfilled across 40 commits. `verify/tron/infra/llm/client.py` defines own Provider enum
+- **Finding 2 (HIGH):** `shared/integrations/` package never created (layout violation). Twilio in `voice/`, GitHub/Linear inline in `migration/onboarding.py`, no central package
+
+---
+
 ## v3 BUILD COMPLETE 🎉 — 2026-05-18
 
 **All 7 waves shipped. v3 is ready for v1.0 ship pending the v1.1 follow-up backlog accumulated across each wave.**

@@ -23,16 +23,19 @@
   }
 
   // Order mirrors the enumeration in V3_DESIGN_DECISIONS.md #3.
+  // All 10 surfaces shipped 2026-05-18 across SPA1+SPA2+SPA3.
   const items: NavItem[] = [
     { label: 'Dashboard', href: '/', surface: 'dashboard', shipped: true },
     { label: 'Decision queue', href: '/panels/decision-queue', surface: 'decisions', shipped: true },
     { label: 'Talk to a role', href: '/panels/role-chat', surface: 'role_chat', shipped: true },
-    { label: 'Master roles', href: '/panels/master-roles', surface: 'master_roles', shipped: false },
-    { label: 'Registry', href: '/panels/registry', surface: 'registry', shipped: false },
-    { label: 'Audit', href: '/panels/audit', surface: 'audit', shipped: false },
-    { label: 'Vault config', href: '/panels/vault-config', surface: 'vault_config', shipped: false },
-    { label: 'Integrations', href: '/panels/integrations', surface: 'integrations', shipped: false },
-    { label: 'Federation', href: '/panels/federation', surface: 'federation', shipped: false }
+    { label: 'Master roles', href: '/panels/master-roles', surface: 'master_roles', shipped: true },
+    { label: 'Registry', href: '/panels/registry', surface: 'registry', shipped: true },
+    { label: 'Audit', href: '/panels/audit', surface: 'audit', shipped: true },
+    { label: 'Vault config', href: '/panels/vault-config', surface: 'vault_config', shipped: true },
+    { label: 'Integrations', href: '/panels/integrations', surface: 'integrations', shipped: true },
+    { label: 'Federation', href: '/panels/federation', surface: 'federation', shipped: true },
+    { label: 'License', href: '/panels/license', surface: 'license', shipped: true },
+    { label: 'KG search', href: '/panels/kg-search', surface: 'kg_search', shipped: true }
   ];
 </script>
 
