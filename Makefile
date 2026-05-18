@@ -132,3 +132,11 @@ lint-fix: ## Auto-fix what each linter can (sqlfluff fix, markdownlint --fix, ru
 	@command -v ruff >/dev/null && ruff check --fix $(PY_LINT_FILES) || true
 	@command -v npx >/dev/null && npx -y markdownlint-cli --fix $(MD_LINT_FILES) || true
 	@printf '%s\n' '✓ auto-fix pass complete (review diff before committing)'
+
+# Workspace hygiene per design decision #34 — Conductor gate
+.PHONY: hygiene hygiene-apply
+hygiene: ## Workspace hygiene sweep (dry-run) — lists cruft per #34
+	@PYTHONPATH=. python3 -m shared.runtime.hygiene sweep --dry-run
+
+hygiene-apply: ## Workspace hygiene sweep (apply) — actually deletes per #34
+	@PYTHONPATH=. python3 -m shared.runtime.hygiene sweep

@@ -166,10 +166,12 @@ class AutoRecoveryManager:
         """
         base = Path(".planning/orchestration/agent-handoff")
         targets: list[SupervisedTarget] = []
-        # Auxiliary supervised processes (heartbeat, watcher).
+        # Auxiliary supervised processes. lib/run-standalone-watcher.sh was
+        # deleted in Wave 0 Pass 2 (commit e6e54d2) per V3_TRIAGE T5 DELETE
+        # marking — federation join/leave moved to Wave 4 federation/ + Hub-
+        # backed status MCP. Only heartbeat remains as a supervised aux.
         for aux_name, pid_filename, launcher_rel in (
             ("heartbeat", "heartbeat.pid", "shared/runtime/heartbeat.sh"),
-            ("watcher", ".watcher.pid", "lib/run-standalone-watcher.sh"),
         ):
             targets.append(SupervisedTarget(
                 name=aux_name,
