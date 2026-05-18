@@ -1,0 +1,8 @@
+DEPRECATED
+==========
+This directory's role prompts have been REBUILT as v3 charters under
+`shared/charters/` per design decision #7 (industry-anchored charters).
+See `lib/role-prompts/README.md` for the per-file migration map.
+
+The legacy files remain readable until Wave 6 runs `git rm -rf lib/`.
+New code MUST import from `shared/charters/`, not here.
