@@ -76,12 +76,13 @@ Your AWS / Azure / GCP / Railway / Fly.io / DigitalOcean / Hostinger account. Sp
 1. Sign up at `https://spine.dev/byoc` (vendor portal — order form, NOT a SaaS Hub).
 2. Pick cloud + region.
 3. Grant the delegation mechanism above.
-4. Vendor runs `tools/byoc-provision.sh --cloud <c> --account <id> --region <r>` against your account.
+4. Vendor runs `tools/byoc/provision.sh --cloud=<c> --account=<id> --region=<r> --hub-version=<v> --bundle-id=<uuid> --admin-email=<addr> --credentials-ref=vault://<path>` against your account. See per-cloud runbooks in [`tools/byoc/runbooks/`](../tools/byoc/runbooks/).
 5. You receive: Hub URL + Keycloak admin email invite + signed bundle for your tier.
 
 ### Exit ramp (key feature for "no lock-in")
 ```text
-1. Vendor: tools/byoc-detach.sh --account <id>   (vendor detaches management role)
+1. Vendor: tools/byoc/provision.sh --destroy --cloud=<c> --account=<id> --force
+           (vendor detaches management role + tears down vendor-side state)
 2. You: revoke IAM role / DAP / service account / team invite / API token
 3. The Hub keeps running. You assume ops responsibility.
 4. Optionally migrate to customer-cloud shape:
