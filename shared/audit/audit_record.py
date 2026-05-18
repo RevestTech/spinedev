@@ -1,4 +1,10 @@
-"""Pydantic AuditRecord for spine_audit.audit_event (STORY-3.1.1 / 3.1.2)."""
+"""Pydantic AuditRecord for spine_audit.audit_event (STORY-3.1.1 / 3.1.2).
+
+Wave 1 (v3) extension: the ``subsystem`` enum now accepts ``hub``,
+``federation``, and ``integration`` alongside the original five
+(``plan/build/verify/orchestrator/shared``). See ``ALLOWED_SUBSYSTEMS``
+below for the rationale per value.
+"""
 from __future__ import annotations
 import hashlib, json, os, subprocess
 from datetime import datetime, timezone
@@ -7,7 +13,28 @@ from typing import Any, ClassVar, Optional
 from uuid import UUID, uuid4
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-ALLOWED_SUBSYSTEMS = {"plan", "build", "verify", "orchestrator", "shared"}
+#: Allowed subsystem identifiers for audit_event.subsystem.
+#:
+#: Wave 1 (v3 rebuild, 2026-05) added ``hub``, ``federation``, ``integration``
+#: in addition to the original five (``plan``, ``build``, ``verify``,
+#: ``orchestrator``, ``shared``):
+#:
+#:   * ``hub``         — Hub-as-product surfaces (#3): dashboard, master roles,
+#:                       registry, audit, vault config, integrations panel,
+#:                       decision queue, role-chat, federation switcher.
+#:   * ``federation``  — Hub-to-Hub control plane (#4, #10, #16): consent,
+#:                       upstream/downstream registry, update cascade.
+#:   * ``integration`` — external connectors (GitHub/Linear/Jira/Slack/
+#:                       PagerDuty/Twilio/Teams/Vanta/Drata/cloud providers).
+#:
+#: NOTE: when this set changes, the matching CHECK constraint on
+#: ``spine_audit.audit_event.subsystem`` must be updated in a follow-up
+#: Flyway migration (V21+). The Pydantic validator below is the in-process
+#: gate; the DB CHECK is the durability gate.
+ALLOWED_SUBSYSTEMS = {
+    "plan", "build", "verify", "orchestrator", "shared",
+    "hub", "federation", "integration",
+}
 
 def _sha256(text: str) -> str:
     """Hex SHA-256 of a UTF-8 string."""
@@ -152,11 +179,37 @@ def write_via_psql(record: AuditRecord, db_url: Optional[str] = None,
                           check=True, capture_output=True, text=True)
     # psql can emit a command tag ("INSERT 0 1") alongside RETURNING in some
     # configurations; grab the first numeric line which is the event_id.
+    event_id: Optional[int] = None
     for line in proc.stdout.strip().splitlines():
         s = line.strip()
         if s.isdigit():
-            return int(s)
-    raise RuntimeError(f"write_via_psql: no event_id in psql output: {proc.stdout!r}")
+            event_id = int(s); break
+    if event_id is None:
+        raise RuntimeError(f"write_via_psql: no event_id in psql output: {proc.stdout!r}")
+    # Wave 1 (#27): memory writer hooks fire AFTER the row is committed.
+    # Failures must never break the audit write path — hook subsystem
+    # isolates its own exceptions but we double-guard here.
+    _fire_memory_hooks(record, event_id)
+    return event_id
+
+
+def _fire_memory_hooks(record: "AuditRecord", event_id: int) -> None:
+    """Dispatch the record to ``shared.memory.writer_hooks`` if available.
+
+    Lazy import keeps the audit module importable in stripped-down test
+    envs (and avoids a cycle if memory ever imports audit). Any error is
+    swallowed: the audit row is already persisted.
+    """
+    try:
+        from shared.memory.writer_hooks import dispatch as _hook_dispatch
+    except Exception:  # pragma: no cover - memory pkg optional in some envs
+        return
+    try:
+        rec = record.model_dump(mode="python")
+        rec.setdefault("event_id", event_id)
+        _hook_dispatch(rec)
+    except Exception:  # pragma: no cover - defensive
+        pass
 
 
 # ─── Convenience constructors (monkey-patched onto AuditRecord) ──────────────

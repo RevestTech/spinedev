@@ -27,6 +27,7 @@ import sys
 from dataclasses import dataclass
 from typing import Any
 
+from shared.mcp.cite_or_refuse import enforce as _cite_or_refuse_enforce
 from shared.mcp.tools import TOOL_REGISTRY, ToolSpec, discover_tools
 
 logger = logging.getLogger(__name__)
@@ -141,9 +142,17 @@ class SpineMcpServer:
 
     @staticmethod
     def _register_one(app: Any, spec: ToolSpec) -> None:
-        """Wrap a single tool so FastMCP can call it with a validated payload."""
+        """Wrap a single tool so FastMCP can call it with a validated payload.
+
+        Verify-class tools (``requires_citation=True``) are additionally
+        wrapped in the Cite-or-Refuse middleware (V3 #12) so empty/missing
+        citation lists are rejected with a 422 refusal envelope and an
+        ``action='cite_or_refuse_refused'`` audit event.
+        """
         input_model = spec.input_model
         fn = spec.fn
+        if spec.requires_citation:
+            fn = _cite_or_refuse_enforce(spec.name, fn)
 
         def _adapter(**raw: Any) -> dict[str, Any]:
             payload = input_model.model_validate(raw)

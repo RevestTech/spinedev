@@ -11,8 +11,19 @@ from .lesson_store import (Lesson, LessonStore, RecallResult,
 from .lesson_indexer import IndexResult, LessonIndexer, index_role_memory
 from .playbook_store import (PlaybookStore, playbook_recall,
                              promote_to_playbook)
+from .writer_hooks import (EVENT_KEYS, LessonDraft, clear_hooks,
+                           dispatch as dispatch_audit_event,
+                           flush_pending as flush_pending_lessons,
+                           register_hook as register_memory_hook,
+                           _register_default_hooks)
 
-__all__ = ["IndexResult", "Lesson", "LessonIndexer", "LessonStore",
-           "PlaybookStore", "RecallResult", "format_for_prompt_injection",
-           "index_role_memory", "playbook_recall", "promote_to_playbook",
-           "recall_lessons"]
+# Wave 1 wiring (V3 #27): install the 7 canonical extractors at import.
+# Idempotent; safe in tests (call ``clear_hooks`` to reset).
+_register_default_hooks()
+
+__all__ = ["EVENT_KEYS", "IndexResult", "Lesson", "LessonDraft",
+           "LessonIndexer", "LessonStore", "PlaybookStore", "RecallResult",
+           "clear_hooks", "dispatch_audit_event", "flush_pending_lessons",
+           "format_for_prompt_injection", "index_role_memory",
+           "playbook_recall", "promote_to_playbook",
+           "recall_lessons", "register_memory_hook"]

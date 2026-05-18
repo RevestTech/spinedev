@@ -27,7 +27,7 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from shared.mcp.schemas import ToolError, ToolResponse
+from shared.mcp.schemas import Citation, ToolError, ToolResponse
 from shared.mcp.tools import register_tool
 
 logger = logging.getLogger(__name__)
@@ -301,13 +301,46 @@ def _build_iso_agent(agent_cls: type, agent_name: str,
 def _error(*, code: str, message: str, retryable: bool,
            audit_id: UUID) -> ToolResponse:
     err = ToolError(code=code, message=message, retryable=retryable)
-    return ToolResponse(status="error", audit_id=audit_id, error=err)
+    # Empty citation list — error responses don't carry Cite-or-Refuse
+    # evidence; the middleware passes them through unchanged.
+    return ToolResponse(status="error", audit_id=audit_id, error=err, citation=[])
+
+
+def _citations_from_iso(
+    region: "CodeRegion", findings: list[Finding], audit_id: UUID,
+) -> list[Citation]:
+    """Build Cite-or-Refuse citations for an ISO invocation (V3 #12).
+
+    Strategy: one ``audit_hash`` citation for the iso_invoke row, one
+    ``file_line`` citation per finding (or one for the scanned region
+    when no findings were produced).
+    """
+    cites: list[Citation] = [
+        Citation(type="audit_hash", ref=str(audit_id),
+                 excerpt=f"iso_invoke on {region.file_path}")
+    ]
+    if not findings:
+        cites.append(
+            Citation(
+                type="file_line",
+                ref=f"{region.file_path}:{region.line_start or 0}",
+                excerpt="iso_invoke scanned region (no findings)",
+            )
+        )
+        return cites
+    for f in findings:
+        cites.append(
+            Citation(type="file_line", ref=f"{f.file}:{f.line or 0}",
+                     excerpt=f.rule)
+        )
+    return cites
 
 
 @register_tool(
     name="iso_invoke", input_model=IsoInvokeInput, story="STORY-8.6.2",
     description="Invoke a specific TRON ISO agent on a code region (early-detect from Build).",
     tags=("verify", "iso", "early_detect"),
+    requires_citation=True,  # V3 #12 — ISO output is verify-class
 )
 def iso_invoke(payload: IsoInvokeInput) -> ToolResponse:
     """Dispatch a code region to one TRON ISO agent.
@@ -428,8 +461,9 @@ def iso_invoke(payload: IsoInvokeInput) -> ToolResponse:
         agent_invoked=payload.agent_name, cost_usd=cost_usd,
         duration_ms=duration_ms, confidence_band=None, audit_id=audit_id,
     )
+    citations = _citations_from_iso(payload.code_region, findings, audit_id)
     return ToolResponse(status="ok", data=result.model_dump(mode="json"),
-                        audit_id=audit_id)
+                        audit_id=audit_id, citation=citations)
 
 
 # ── Per-agent convenience tools (generated via factory) ────────────────
@@ -458,6 +492,7 @@ def _make_convenience(agent_name: AgentName, tool_name: str, tag: str):
         name=tool_name, input_model=_PerAgentInput, story="STORY-8.6.1",
         description=f"Run {agent_name} (early-detect convenience wrapper).",
         tags=("verify", "iso", tag),
+        requires_citation=True,  # V3 #12 — ISO output is verify-class
     )(_tool)
 
 

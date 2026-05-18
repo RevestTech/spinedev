@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from shared.mcp.schemas.envelopes import (
+    Citation,
+    CitationType,
     ToolError,
     ToolRequest,
     ToolResponse,
@@ -10,6 +12,8 @@ from shared.mcp.schemas.envelopes import (
 )
 
 __all__: list[str] = [
+    "Citation",
+    "CitationType",
     "ToolError",
     "ToolRequest",
     "ToolResponse",

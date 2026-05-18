@@ -21,6 +21,37 @@ from pydantic import BaseModel, ConfigDict, Field
 ToolStatus = Literal["ok", "error", "stub_implementation"]
 """Envelope-level outcome status used by every Spine MCP tool."""
 
+CitationType = Literal["kg_node", "file_line", "audit_hash"]
+"""Categories of supporting evidence recognised by Cite-or-Refuse (V3 #12)."""
+
+
+class Citation(BaseModel):
+    """One unit of supporting evidence for a verify-class tool response.
+
+    Per V3 design decision #12 (Cite-or-Refuse), any tool tagged
+    ``requires_citation=True`` MUST attach at least one ``Citation`` to
+    its response envelope or explicitly refuse to act. The three types
+    listed are the v1.0 surface; future extensions add to the Literal.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    type: CitationType = Field(
+        ..., description="Evidence class: kg_node | file_line | audit_hash.",
+    )
+    ref: str = Field(
+        ..., min_length=1,
+        description=(
+            "Stable reference. For kg_node: the spine_kg node_id. "
+            "For file_line: 'path:line[:col]'. For audit_hash: "
+            "spine_audit.event content_hash."
+        ),
+    )
+    excerpt: str | None = Field(
+        default=None,
+        description="Optional short verbatim excerpt for human review.",
+    )
+
 
 def _utcnow() -> datetime:
     """Return a timezone-aware UTC ``datetime``; used as a default factory."""
@@ -89,6 +120,9 @@ class ToolResponse(BaseModel):
     ``spine_audit`` (see REQ-INIT-9 FR-8). ``status='stub_implementation'`` is
     used during scaffolding so callers can detect un-wired tools without
     treating them as errors.
+    ``citation`` carries Cite-or-Refuse evidence (V3 #12) and is REQUIRED
+    for tools registered with ``requires_citation=True``; the MCP server
+    middleware rejects empty citation lists with a 422 refusal.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -113,9 +147,19 @@ class ToolResponse(BaseModel):
         default_factory=_utcnow,
         description="Wall-clock UTC time at which the server emitted the response.",
     )
+    citation: list[Citation] = Field(
+        default_factory=list,
+        description=(
+            "Supporting evidence for verify-class tool responses "
+            "(Cite-or-Refuse, V3 #12). MUST be non-empty for tools with "
+            "requires_citation=True; rejected with 422 otherwise."
+        ),
+    )
 
 
 __all__: list[str] = [
+    "Citation",
+    "CitationType",
     "ToolError",
     "ToolRequest",
     "ToolResponse",

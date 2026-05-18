@@ -75,6 +75,21 @@ shown = calibrate_architect_risk(raw_risk).calibrated_value   # show this
 record_outcome(pid, observed_value=1.0, source="user_approval")
 ```
 
+## Wave 1: the calibration sink (V3 #27 / decision 1.4 #10)
+
+`calibration_sink.capture()` is the async helper called from every
+audit-class invoke (`verify_audit`, `iso_invoke`, `auditor_*`). Until
+Wave 1 wired this, calibration outcomes from those invocations were
+discarded — corpus growth depended solely on backfill jobs. The sink
+funnels every `(role, output_type, predicted, outcome?)` tuple into
+`spine_calibration.prediction` (and `spine_calibration.outcome` when
+the outcome is known at call time), so the Platt/banded refit loop has
+real data. Roles allowed: `verify | iso | auditor`. Output types:
+`risk_band | estimate | severity | confidence`. String severities /
+risk-band names are coerced to ordinal floats internally. The helper
+is bullet-proof against partial DB outages — failures log + return
+`None` so the audit hot-path is never broken.
+
 ## Cross-refs
 
 - `STORY-3.6.1` -- TRON L6 lifted into `shared/calibration/` (this module).

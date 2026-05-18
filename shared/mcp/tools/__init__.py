@@ -45,6 +45,11 @@ class ToolSpec:
         story: Implementing story ID (e.g. ``"STORY-9.9.1"``) for traceability.
         description: One-line human description (defaults to the fn docstring).
         tags: Optional labels for grouping/filtering in catalogs.
+        requires_citation: When ``True`` the server's Cite-or-Refuse
+            middleware (V3 #12) enforces that responses carry a
+            non-empty ``citation`` field; missing → 422 refusal +
+            audit event. Verify-class tools (auditor, qa, verify, iso)
+            set this to ``True``.
     """
 
     name: str
@@ -54,6 +59,7 @@ class ToolSpec:
     story: str
     description: str = ""
     tags: tuple[str, ...] = field(default_factory=tuple)
+    requires_citation: bool = False
 
 
 TOOL_REGISTRY: dict[str, ToolSpec] = {}
@@ -67,6 +73,7 @@ def register_tool(
     story: str,
     description: str | None = None,
     tags: tuple[str, ...] = (),
+    requires_citation: bool = False,
 ) -> Callable[[ToolFn], ToolFn]:
     """Decorate a tool function so it is discoverable by the server.
 
@@ -103,6 +110,7 @@ def register_tool(
             if (description or fn.__doc__)
             else "",
             tags=tuple(tags),
+            requires_citation=requires_citation,
         )
         TOOL_REGISTRY[name] = spec
         return fn

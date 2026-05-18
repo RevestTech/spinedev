@@ -29,7 +29,7 @@ from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from shared.mcp.schemas import ToolError, ToolResponse, ToolStatus
+from shared.mcp.schemas import Citation, ToolError, ToolResponse, ToolStatus
 from shared.mcp.tools import register_tool
 from shared.mcp.tools.iso import Blueprint, Finding, Severity
 from shared.schemas.build.build_artifact import BuildArtifact
@@ -318,7 +318,14 @@ def _persist_findings(*, actor: str, artifact: BuildArtifact,
 
 def _error_envelope(*, code: str, message: str, retryable: bool,
                     audit_id: UUID, duration_ms: int) -> ToolResponse:
-    """``status='error'`` envelope (zero cost, zero findings)."""
+    """``status='error'`` envelope (zero cost, zero findings).
+
+    For Cite-or-Refuse (#12) compliance: when verify cannot run
+    (TRON unavailable, no source files, etc.), this is an explicit
+    *refusal to act*. Code prefix ``cite_or_refuse_`` would signal
+    contract refusal; here we use the existing TRON failure codes
+    which the middleware passes through unchanged.
+    """
     err = ToolError(code=code, message=message, retryable=retryable)
     out = VerifyFindings(
         status="error", pass_fail="needs_user_review", findings=[],
@@ -326,7 +333,33 @@ def _error_envelope(*, code: str, message: str, retryable: bool,
         calibration_band=None, duration_ms=duration_ms, cost_usd=Decimal("0"),
         audit_id=audit_id, error=err)
     return ToolResponse(status="error", data=out.model_dump(mode="json"),
-                        error=err, audit_id=audit_id)
+                        error=err, audit_id=audit_id, citation=[])
+
+
+def _citations_from_findings(
+    findings: list[Finding], artifact_uuid: UUID, summary_audit_id: UUID,
+) -> list[Citation]:
+    """Build a Cite-or-Refuse citation set from verify output.
+
+    Per V3 #12 the verify role MUST cite supporting evidence. Strategy:
+      * One ``audit_hash`` citation for the summary audit row (covers
+        the case of zero findings — the audit row itself is the
+        evidence the verify pipeline ran).
+      * One ``file_line`` citation per finding (path + line).
+    """
+    cites: list[Citation] = [
+        Citation(
+            type="audit_hash",
+            ref=str(summary_audit_id),
+            excerpt=f"verify summary for artifact {str(artifact_uuid)[:8]}",
+        ),
+    ]
+    for f in findings:
+        ref = f"{f.file}:{f.line or 0}"
+        cites.append(
+            Citation(type="file_line", ref=ref, excerpt=f.rule)
+        )
+    return cites
 
 
 # ── The tool ───────────────────────────────────────────────────────────
@@ -336,6 +369,7 @@ def _error_envelope(*, code: str, message: str, retryable: bool,
     name="verify_audit", input_model=VerifyAuditInput, story="STORY-8.5.1",
     description="Orchestrator invokes Verify on a BuildArtifact; returns VerifyFindings.",
     tags=("verify", "audit"),
+    requires_citation=True,  # V3 #12 — verify is strict-tier Cite-or-Refuse
 )
 def verify_audit(payload: VerifyAuditInput) -> ToolResponse:
     """Run TRON's ``AuditManager`` against a sealed ``BuildArtifact``.
@@ -476,8 +510,11 @@ def verify_audit(payload: VerifyAuditInput) -> ToolResponse:
         cross_llm_consensus=cross_llm_consensus,
         calibration_band=calibration_band, duration_ms=duration_ms,
         cost_usd=cost_usd, audit_id=persisted_audit_id, error=None)
+    citations = _citations_from_findings(
+        findings, payload.build_artifact.artifact_uuid, persisted_audit_id,
+    )
     return ToolResponse(status=status, data=result.model_dump(mode="json"),
-                        audit_id=persisted_audit_id)
+                        audit_id=persisted_audit_id, citation=citations)
 
 
 __all__: list[str] = [
