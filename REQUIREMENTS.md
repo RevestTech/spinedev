@@ -1,5 +1,13 @@
 # System Requirements
 
+> **Pre-v3 document — preserved for historical context.** This file describes the host
+> requirements for the v1/v2 file-bus orchestration framework (running bash daemons on
+> macOS/Linux/WSL2). The v3 product is a containerized **Hub** with a different deployment shape
+> (per [`docs/V3_DESIGN_DECISIONS.md`](docs/V3_DESIGN_DECISIONS.md) **#17**). For current
+> deployment requirements see [`docs/DEPLOYMENT_SHAPES.md`](docs/DEPLOYMENT_SHAPES.md) and
+> [`docs/HUB_OPERATIONS_GUIDE.md`](docs/HUB_OPERATIONS_GUIDE.md); for launch readiness see
+> [`docs/V1_SHIP_CHECKLIST.md`](docs/V1_SHIP_CHECKLIST.md).
+
 What your computer needs to run SpineDevelopment.
 
 > **TL;DR.** macOS or Linux: works out of the box if you have git + bash + curl + an AI CLI (Cursor, Claude Code, Aider, OpenCode). Windows: use WSL2. Run `bash scripts/preflight.sh` after install for a per-host report.
@@ -9,7 +17,7 @@ What your computer needs to run SpineDevelopment.
 ## Platforms
 
 | Platform | Status | Notes |
-|---|---|---|
+| --- | --- | --- |
 | **macOS** (12+) | **Fully supported** | Tested. Daemon, watchdog, scratch dirs, file locks, native notifications all work. Recommended: `brew install bash coreutils` for bash 4+ and gtimeout. |
 | **Linux** (any modern distro) | **Fully supported** | Tested on Ubuntu 22.04. Daemon and all helpers work natively. `notify-send` for desktop notifications optional. |
 | **Windows 10/11 via WSL2** | **Fully supported** | Recommended Windows path. Install WSL2 + Ubuntu, then run installer inside WSL like Linux. Phone notifications via ntfy.sh / Slack / Discord work the same. |
@@ -25,7 +33,7 @@ What your computer needs to run SpineDevelopment.
 Without these, the team cannot start. The installer's preflight will refuse to proceed if any are missing.
 
 | Tool | Why | Install (macOS) | Install (Linux) | Install (WSL/Windows) |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | `bash` 3.2+ | Shell. macOS ships 3.2; Linux ships 5+. Bash 4+ recommended. | `brew install bash` (optional upgrade) | preinstalled | preinstalled in Ubuntu |
 | `git` | Engineer rollback snapshots, repo state | `brew install git` | `apt install git` | `apt install git` |
 | `curl` | Webhook-based notifications | preinstalled | `apt install curl` | `apt install curl` |
@@ -38,12 +46,12 @@ Without these, the team cannot start. The installer's preflight will refuse to p
 **An AI CLI** — at least ONE of:
 
 | CLI | Install | Notes |
-|---|---|---|
-| **Cursor Agent** (`cursor-agent`) | Comes with Cursor IDE — https://cursor.com | What this template was originally built against. Recommended. |
+| --- | --- | --- |
+| **Cursor Agent** (`cursor-agent`) | Comes with Cursor IDE — <https://cursor.com> | What this template was originally built against. Recommended. |
 | **Claude Code** (`claude`) | `npm i -g @anthropic-ai/claude-code` | Anthropic's official CLI. |
 | **Aider** (`aider`) | `pip install aider-chat` | Strong git-aware refactoring CLI. |
-| **OpenCode** (`opencode`) | https://opencode.ai | Open-source. |
-| **Codex** (`codex`) | https://github.com/openai/codex-cli | OpenAI's CLI. |
+| **OpenCode** (`opencode`) | <https://opencode.ai> | Open-source. |
+| **Codex** (`codex`) | <https://github.com/openai/codex-cli> | OpenAI's CLI. |
 | **Custom** | set `EXECUTOR_CMD=/path/to/your-cli` | Any CLI that takes a prompt argument. |
 
 The daemon auto-detects the first one found in the order above. To force a specific one set `EXECUTOR_KIND=cursor|claude|aider|opencode|codex` or `EXECUTOR_CMD=...` in your shell.
@@ -55,7 +63,7 @@ The daemon auto-detects the first one found in the order above. To force a speci
 These produce a degraded experience when missing, but the team still runs.
 
 | Tool | What you lose without it | Install (macOS) | Install (Linux) |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `gtimeout` / `timeout` | Hard-timeout enforcement on agent invocations. Without this, a hung agent runs forever. | `brew install coreutils` (provides `gtimeout`) | `apt install coreutils` |
 | `osascript` (macOS) | macOS notification banners | preinstalled | n/a |
 | `notify-send` (Linux) | Linux desktop notifications | n/a | `apt install libnotify-bin` |
@@ -68,7 +76,7 @@ These produce a degraded experience when missing, but the team still runs.
 Set any of these env vars in your shell rc (`~/.zshrc` / `~/.bashrc`) to enable that notification channel. None are required, but at least ONE is strongly recommended for overnight/unattended runs.
 
 | Variable | Channel | Setup time |
-|---|---|---|
+| --- | --- | --- |
 | `NTFY_TOPIC` | ntfy.sh push to phone | ~60 seconds. Install ntfy app, pick a hard-to-guess topic, subscribe. No signup. |
 | `SLACK_WEBHOOK` | Slack channel | ~3 minutes. Slack → Apps → Incoming Webhooks → create. |
 | `DISCORD_WEBHOOK` | Discord channel | ~3 minutes. Server settings → Integrations → Webhooks → New. |
@@ -87,14 +95,14 @@ bash scripts/team.sh notify-test
 
 Every directive triggers one invocation of the AI CLI. The daemon writes the full prompt (role-prompt + memory + directive + tier guidance + hygiene block) to a temp file, then calls:
 
-```
+```bash
 bash lib/executor.sh /tmp/spine-prompt-XXXXXX
 ```
 
 `executor.sh` knows how to invoke each supported CLI:
 
 | CLI | Invocation pattern |
-|---|---|
+| --- | --- |
 | `cursor-agent` | `cursor-agent "<prompt>"` |
 | `cursor` | `cursor "<prompt>"` |
 | `claude` | `claude -p "<prompt>"` |

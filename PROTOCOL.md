@@ -1,5 +1,14 @@
 # Agent Team Protocol
 
+> **Pre-v3 document — preserved for historical context.** This protocol describes the v1/v2
+> "file-bus orchestration framework" (managers + workers under `.planning/orchestration/` with
+> `scripts/roles.sh`). The v3 product is a containerized **Hub** per
+> [`docs/V3_DESIGN_DECISIONS.md`](docs/V3_DESIGN_DECISIONS.md) **#3**, not a file-bus framework. For
+> current Spine v3 status see [`docs/STATUS.md`](docs/STATUS.md); for design decisions see
+> [`docs/V3_DESIGN_DECISIONS.md`](docs/V3_DESIGN_DECISIONS.md); for launch readiness see
+> [`docs/V1_SHIP_CHECKLIST.md`](docs/V1_SHIP_CHECKLIST.md); for the per-repo Claude Code primer see
+> [`CLAUDE.md`](CLAUDE.md).
+
 The contract every agent in the team follows. Drop this file at `.planning/orchestration/AGENT_TEAM_PROTOCOL.md` in any project that adopts the pattern. It is the source of truth — every agent reads it before participating.
 
 ---
@@ -19,12 +28,12 @@ Canonical role IDs ship with SpineDevelopment — **never invent new role direct
 Think in phases. Not every invocation runs every phase; gates prevent implementation work without normative artifacts.
 
 | Phase | Roles | Typical normative artifacts |
-|------|-------|------------------------------|
+| ------ | ------- | ------------------------------ |
 | **Discover / align** | `product`, `researcher`, `planner`, humans (COO/CPO/legal) | `program/REQ-<id>.md`, policy acknowledgements |
 | **Specify** | `product` | acceptance criteria, non-goals, success metrics |
 | **Technical architecture** | `architect`, `researcher`, `planner` | ADRs (`DECISIONS.md`), API/data milestones |
 | **Build orchestration** | `conductor` | Locked sprint/milestone directives to squads (**must cite approved REQ**) |
-| **Implementation** | `engineer`, `engineering-backend`, `engineering-frontend` | PR-sized changes, tests |
+| **Implementation** | `engineer` | PR-sized changes, tests (backend/frontend/ML scope via worker splits + directive text; see ADR-001 / `DECISIONS.md` for retired top-level `engineering-*` folders) |
 | **Experience** | `ux` | UX specs / reviews against design system (see role prompt for write scope) |
 | **Quality** | `qa`, `auditor`, CI | Test plans, evidence, reruns |
 | **Reliability / data** | `operator`, `datawright` | Environments, deploys, pipelines, ML workloads |
@@ -33,15 +42,15 @@ Think in phases. Not every invocation runs every phase; gates prevent implementa
 
 Humans approve phase transitions (`## Approved by:` lines, merges, CAB, etc.). AI agents accelerate drafting and execution inside those approvals.
 
-### Meta note on “nested teams”
+### Meta note on worker decomposition
 
-A squad such as `engineering-frontend` **orchestrates sub-work only through worker files** (`# Worker Directive` … `# Worker Report`) under itself — identical protocol to top-level managers. Do **not** create ad-hoc subdirectories expecting daemons unless a future protocol version adds tier-3 namespaces.
+Any manager (including **`engineer`**) **orchestrates parallel work only through worker files** (`# Worker Directive` … `# Worker Report`) under `workers/NN-directive.md` — same lifecycle as the manager’s own `directive.md`. Do **not** create ad-hoc subdirectories expecting daemons unless a future protocol version adds tier-3 namespaces.
 
 ---
 
 ## 2. File layout (per role)
 
-```
+```text
 .planning/orchestration/agent-handoff/teams/<role>/
 ├── directive.md          ← manager input/output (replaced with report when done)
 ├── role-prompt.md        ← system-style prompt loaded at agent invocation
@@ -68,6 +77,7 @@ A squad such as `engineering-frontend` **orchestrates sub-work only through work
 ## 3. Lifecycle of a directive
 
 ### 3a. Architect → manager
+
 Architect writes a file to `teams/<role>/directive.md`. The first line MUST start with `# Directive`. Required sections:
 
 - A clear goal statement
@@ -77,18 +87,22 @@ Architect writes a file to `teams/<role>/directive.md`. The first line MUST star
 - Optional: timeout guideline
 
 ### 3b. Manager picks up
+
 Within 8s of the file appearing, the manager's daemon detects the new hash and invokes `cursor-agent` with the directive + role-prompt loaded.
 
 The agent decides:
+
 - **Single-shot**: small enough to do in one cursor-agent invocation. Execute, replace `directive.md` with `# Report`. Done.
 - **Decompose**: split into N ≤ 10 worker tasks. Write each to `workers/NN-directive.md`. Then exit. Daemon will re-invoke when workers all finish.
 
 A decomposed manager invocation MUST:
+
 1. Write all worker directives in one batch
 2. Write a `# Plan` file at `directive.md` (NOT `# Directive`, NOT `# Report`) signaling "I've spawned workers, waiting"
 3. Exit cleanly. Do not poll inline.
 
 ### 3c. Workers execute
+
 Each worker has its own daemon polling `workers/NN-directive.md`. When a worker file appears starting with `# Worker Directive`, the worker daemon invokes cursor-agent with the worker's content and the same role's role-prompt.
 
 The worker executes its slice and replaces its file's content with `# Worker Report` followed by structured output. Then exits.
@@ -96,6 +110,7 @@ The worker executes its slice and replaces its file's content with `# Worker Rep
 If a worker times out or fails, its file should still get replaced with `# Worker Report` containing failure details — never leave the file as a directive.
 
 ### 3d. Manager aggregates
+
 The manager's daemon, while polling `directive.md`, also watches `workers/*.md`. When **all** worker files start with `# Worker Report`, the daemon re-invokes the manager's cursor-agent with a special "aggregate" prompt:
 
 > "Your workers have all reported. Read each worker file. Synthesize their findings into a single manager report. Replace `directive.md` with `# Report — <task>` containing the synthesis. Move worker files to `workers/archive/<timestamp>/`."
@@ -103,6 +118,7 @@ The manager's daemon, while polling `directive.md`, also watches `workers/*.md`.
 After aggregation, the manager is idle until the next directive lands.
 
 ### 3e. Failure modes
+
 - **Daemon wall-clock timeout / stall** (defaults in **§13**; overridable with **`## Long job:`** on that directive/worker — **extension only**, never shorter than **`INVOCATION_TIMEOUT_S`**): the daemon may kill `cursor-agent` while the Markdown file still shows `# Directive` or `# Worker Directive`. Rows in `costs.csv` record **`outcome`** (`completed`, `timeout`, `stall`, `killed`) — treat **`timeout`** / **`stall`** as incomplete work even when **`rc=0`**.
 - **Worker crashes** (**`rc≠0`**) from a normal agent exit: the human re-issues or edits the directive manually. *(Automatic multi-attempt retries are **not implemented** in the stock daemon.)*
 - **Manager itself crashes**: daemon survives (defensive bash); next directive picked up cleanly
@@ -115,24 +131,29 @@ After aggregation, the manager is idle until the next directive lands.
 These are enforced by each role's `role-prompt.md`. Crossing them = the agent should refuse and report a boundary violation.
 
 ### `planner`
+
 - Write directives to other managers' files
 - Run light status commands
 - May NOT directly edit code, run shell beyond status checks, or modify infrastructure
 
 ### `researcher`
+
 - READ-ONLY: filesystem, DB (SELECT only), logs, web
 - May NOT: edit files, INSERT/UPDATE/DELETE, restart anything
 
 ### `engineer`
+
 - May edit source code, run lint + test, build
 - Must run quality gates after non-trivial changes
 - May NOT edit immutable historical records, binary files, or change infra
 
 ### `operator`
+
 - May docker compose, edit env, restart containers, manage daemons
 - May NOT edit application source code
 
 ### `datawright`
+
 - May call inference endpoints at scale, run training scripts, bulk-update ML output tables
 - May NOT edit application source code, change compose, restart services
 
@@ -141,6 +162,7 @@ These are enforced by each role's `role-prompt.md`. Crossing them = the agent sh
 ## 5. Communication patterns
 
 ### Manager → manager
+
 Only **`planner`** and **`conductor`** may write directly to other managers' `directive.md` files (see roles list in `scripts/roles.sh`).
 
 - **`planner`** — lifecycle-wide orchestration (discovery, cross-domain plans, escalations).
@@ -149,12 +171,15 @@ Only **`planner`** and **`conductor`** may write directly to other managers' `di
 All other managers escalate through one of these two if they need multi-squad coordination unless a project ADR explicitly grants a narrower exception.
 
 ### Manager → architect
+
 Architect reads the manager's report when it lands. Architect is the only consumer of raw final reports — synthesis bubbles up.
 
 ### Worker → worker
+
 Workers within the same manager do NOT communicate directly. Dependencies are the manager's job to serialize.
 
 ### Inter-process safety
+
 - All file writes are atomic-via-rename (`write to .tmp, mv to final`) — daemons never see half-written files
 - Hash-based change detection (`shasum -a 256`) — daemons re-process only when content actually changes
 - `state/<role>-LAST_HASH` files are the source of truth for "what have I already processed"
@@ -164,6 +189,7 @@ Workers within the same manager do NOT communicate directly. Dependencies are th
 ## 6. Worker decomposition guidance
 
 When a manager fans out:
+
 - **Embarrassingly parallel** — each worker handles disjoint input
 - **Roughly balanced** — similar slice sizes
 - **Independently reportable** — each worker's output makes sense alone
@@ -177,14 +203,13 @@ Default cap: 10 workers. Override only with explicit architect approval.
 ## 7. Calling on the team — the architect's playbook
 
 | Task shape | First directive |
-|---|---|
+| --- | --- |
 | "What's the state of X?" | `researcher` |
 | "Draft or refine requirements / PRD slice" | `product` |
 | "Technical architecture / ADR set" | `architect` |
 | "Parallel build coordination with locked REQs" | `conductor` |
-| "Backend-only implementation" | `engineering-backend` |
-| "Frontend/UI code implementation" | `engineering-frontend` |
-| Full-stack when squads not split | `engineer` |
+| Backend- or frontend-heavy implementation | `engineer` (narrow scope per worker; optional `conductor` hand-off) |
+| Full-stack or mixed implementation | `engineer` |
 | UX / design-system review artefacts | `ux` |
 | QA plan + execution narrative | `qa` |
 | "Fix Y in code" (general) | `engineer` or split squads via `conductor` |
@@ -254,13 +279,15 @@ Use `--force` with that flag if you intentionally want to overwrite in-repo reci
 Every agent invocation has a tier hint. The daemon parses it from the directive's `## Tier hint` line and surfaces it to the agent so the agent self-selects the cheapest capable model. **This is mandatory** — runaway use of high-tier models is the most likely way for this system to blow your bill.
 
 ### Tiers
+
 - **`low`** — cheapest model that can do the job. Haiku-class, GPT-4o-mini-class, Qwen-7B locally. Use for: read-only file work, log greps, status checks, summaries, mechanical edits, batch dispatch, audits, observability, memory consolidation.
 - **`medium`** *(default if no hint)* — mid-tier. Sonnet-class, GPT-4o, Qwen-72B, etc. Use for: code edits with reasoning, prompt iteration, narrow architectural decisions, planner orchestration.
 - **`high`** — top tier. Opus, GPT-5, Claude 4.5+. Use for: cross-cutting refactors, novel architecture, untangling subtle bugs across modules.
 
 ### Per-role defaults (when no `## Tier hint` is provided)
+
 | Role | Default tier |
-|---|---|
+| --- | --- |
 | product | low |
 | ux | low |
 | seer | low |
@@ -273,14 +300,14 @@ Every agent invocation has a tier hint. The daemon parses it from the directive'
 | qa | medium |
 | conductor | medium |
 | engineer | medium |
-| engineering-backend | medium |
-| engineering-frontend | medium |
 | planner | medium |
 
 ### Architect's responsibility
+
 When you write a directive, set `## Tier hint: low/medium/high` explicitly if the work is non-default for the role. **Planners** and **conductors** must propagate or override tiers for every sub-directive they emit.
 
 ### Logging
+
 Every invocation appends to `teams/<role>/state/costs.csv`: timestamp, role, mode, slot, phase, tier, **`wall_seconds`**, **`exit_code`**, **`outcome`** (`completed` | `timeout` | `stall` | `killed`). **`outcome`** reflects how the daemon ended the run; **`exit_code`** is the process wait status and may be `0` even after a timeout if the agent masks signals — trust **`outcome`** for “did the daemon reap this?” Run `bash scripts/team.sh budget` / `status` / `doctor` to surface **`timeout`** / **`stall`** / **`killed`** rows. Eight-column **`costs.csv`** logs are rewritten **atomically** (`scripts/costs-csv.sh`, temp file next to the CSV + rename) on the daemon’s next append; historical rows receive **`outcome=unknown`**.
 
 ---
@@ -290,11 +317,13 @@ Every invocation appends to `teams/<role>/state/costs.csv`: timestamp, role, mod
 Three memory layers, in increasing scope:
 
 ### 12a. Per-role memory (`teams/<role>/memory.md`)
+
 Loaded into every invocation of that role. Lives in this project. Content: durable lessons specific to this codebase ("OLLAMA_URL=localhost is wrong inside containers", "schema.ts says serial but DB is uuid").
 
 Each agent appends to it before exit if it found something worth saving. The `memory` manager periodically prunes / consolidates.
 
 ### 12b. Spine docs (`.planning/orchestration/`)
+
 - `DECISIONS.md` — ADRs, architectural decisions
 - `MASTER_TODO.md` — task queue
 - `SESSION_HANDOFF.md` — current state preamble for fresh sessions
@@ -302,6 +331,7 @@ Each agent appends to it before exit if it found something worth saving. The `me
 The `memory` manager keeps these coherent across sessions by reading completed reports and updating the docs.
 
 ### 12c. Cross-project playbook (`~/.spine-development/playbook/<role>/lessons.md`)
+
 Shared across every project that uses this template. Use for: lessons that generalize ("when the model's prompt doesn't match the DB taxonomy, the model echoes the prompt's wrong vocabulary"). Append with `bash scripts/team.sh learn "..." --role <role>`.
 
 This is loaded INTO `teams/<role>/memory.md` on `team up` (the install hook concatenates if present).
@@ -387,7 +417,7 @@ If an agent creates one of these, it must delete it before reporting. The audito
 
 Every `# Report` and `# Worker Report` MUST include a `## Files touched` section listing every file the agent created or modified OUTSIDE of the role's own team dir. Format:
 
-```
+```text
 ## Files touched
 - src/api/foo.ts (modified — added new route)
 - tests/unit/foo.test.ts (created — covers new route)
@@ -409,7 +439,7 @@ Before writing `# Report`, an engineer agent MUST:
 The architect can run `bash scripts/team.sh clean <mode>` at any time:
 
 | Mode | Action |
-|---|---|
+| --- | --- |
 | `scratch` | Wipe per-role scratch dirs and `/tmp/spine-*` (always safe) |
 | `logs` | Truncate `.log` files larger than 5 MB |
 | `archive` | Prune `workers/archive/` to last 50 batches per role |
@@ -431,7 +461,6 @@ You don't have to remember any of this — the daemon does it for you:
 4. Worker archive grows by one timestamped dir per aggregate cycle, prune via `clean archive`
 
 In short: scratch is safe, logs are bounded, archive is pruneable, and every report must declare what it touched. Sloppy file behavior becomes detectable instead of accumulating silently.
-
 
 ---
 
@@ -501,7 +530,7 @@ A single `watchdog.sh` process supervises **every manager role** declared in `sc
 - Each manager `touch`es `teams/<role>/state/heartbeat` on every poll cycle (~ every 8 seconds).
 - The watchdog wakes every 60s and checks each heartbeat's mtime.
 - If `> 300s` old (5 min default, configurable via `HEARTBEAT_TIMEOUT_S`), the watchdog presumes the manager dead and re-spawns it.
-- A restart fires a notification ("[watchdog] <role> manager auto-restarted").
+- A restart fires a notification ("[watchdog] `<role>` manager auto-restarted").
 
 The watchdog is started automatically by `team up` and stopped by `team down`. Its pid lives at `.planning/orchestration/agent-handoff/watchdog.pid` and its log at `.../watchdog.log`.
 
@@ -539,6 +568,7 @@ bash scripts/team.sh doctor
 ```
 
 Verifies:
+
 1. `cursor-agent` (or `cursor`) on PATH
 2. Each manager role (per `scripts/roles.sh`): process alive AND heartbeat < 5 min old
 3. Watchdog process alive
@@ -556,7 +586,7 @@ SpineDevelopment supports **AI-accelerated SDLC** without discarding enterprise 
 
 1. **Policy + REQ files** carry hard guardrails.
 2. **Phase gates** pause implementation until humans (CPO/COO/legal/CTO delegates) mark artifacts approved.
-3. **Specialized roles** provide parallel expertise (product, architect, engineering squads, UX, QA).
+3. **Specialized roles** provide parallel expertise (product, architect, engineer + workers, UX, QA).
 4. **`conductor`** becomes the delivery orchestrator **after** approvals, issuing squad directives with explicit dependencies and tier controls.
 
 This section standardizes expectations for “Widgets-style” programs spanning business → build → verify.
@@ -573,7 +603,7 @@ Implementation directives **MUST** include:
 - revision: draft | approved
 ```
 
-- `conductor`, `engineer`, `engineering-backend`, `engineering-frontend` refuse to execute when linkage is missing or `revision: draft` **unless** an explicit **architect emergency override** line is present in the directive approved by a human (document the approver in-report).
+- `conductor`, `engineer` refuse to execute when linkage is missing or `revision: draft` **unless** an explicit **architect emergency override** line is present in the directive approved by a human (document the approver in-report).
 
 `product` drafts REQs under `.planning/orchestration/program/` (see templates). `memory` ensures links between REQ, ADRs, and rollout notes stay coherent.
 
@@ -584,15 +614,13 @@ Implementation directives **MUST** include:
 Authoritative list: **`scripts/roles.sh` → `SPINE_TEAM_ROLES`**. The table below summarizes intent; always trust the shell array for automation.
 
 | Role | Mandate |
-|------|---------|
+| ------ | --------- |
 | `product` | Requirements, KPIs, stakeholder alignment |
 | `planner` | Cross-domain orchestration (any phase) |
 | `architect` | ADRs, technical milestones, interface contracts |
 | `conductor` | Post-approval build coordination across squads |
 | `researcher` | Read-only evidence |
-| `engineer` | Full-stack delivery when squads not split |
-| `engineering-backend` | Backend services, schemas, server tests |
-| `engineering-frontend` | Client/UI code, visual regression targets |
+| `engineer` | Code delivery; parallel slices via **`workers/`** (legacy top-level `engineering-*` dirs retired — see ADR-001) |
 | `ux` | UX specs, heuristics vs design system |
 | `qa` | QA plans, executions, sign-off packs |
 | `operator` | Infra & deploy automation |
@@ -629,4 +657,3 @@ Name workers by scope inside the markdown (e.g., “Worker 03 — payments API i
 Use **`qa`** for planned coverage and exploratory passes. Use **`auditor`** to recompute results (CI, smoke, metrics) after another role claims readiness. Both may run in parallel on large releases with disjoint checklists.
 
 ---
-
