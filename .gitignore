@@ -13,3 +13,13 @@ scripts/
 .venv/
 */__pycache__/
 __pycache__/
+
+# Per v3 design decision #9 (vault-only secrets, no exceptions):
+# any local plaintext .env under verify/ is forbidden. The
+# vault-reference manifest (verify/.env.vault-refs) and the
+# non-secret example (verify/.env.example) are explicitly allowed.
+verify/.env
+verify/.env.local
+verify/.env.production
+!verify/.env.example
+!verify/.env.vault-refs

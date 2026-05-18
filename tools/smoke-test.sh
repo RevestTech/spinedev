@@ -376,16 +376,24 @@ phase8_mcp_tools() {
   _load_db_env
   _db_alive || { _skip mcp.runtime "DB unreachable"; return 0; }
   export PYTHONPATH="$REPO_ROOT${PYTHONPATH:+:$PYTHONPATH}"
-  # Use a throwaway key path so we don't disturb the dev install at ~/.spine.
-  local key_dir; key_dir="$(mktemp -d "${TMPDIR:-/tmp}/spine-mcp-smoke-XXXX")"
-  local key_path="$key_dir/hmac.key"
-  export SPINE_APPROVAL_KEY_PATH="$key_path"
+  # Per #9 vault-only — wire an InMemoryAdapter into the child python process
+  # before any approval code path runs. The adapter lives ONLY in that
+  # process's memory (process exits after the smoke script returns).
+  # SPINE_APPROVAL_VAULT_PATH steers approval.py + orchestrator.py to a
+  # per-run vault path so concurrent smoke runs cannot collide.
+  local vault_path; vault_path="spine/approval/hmac_key_smoke_$$_$RANDOM"
+  export SPINE_APPROVAL_VAULT_PATH="$vault_path"
 
   local name="${SMOKE_NAME_PREFIX}-mcp"
   local out script
   script="$(mktemp "${TMPDIR:-/tmp}/spine-mcp-smoke-script-XXXX.py")"
   cat >"$script" <<'PY'
 import json, os, sys
+# Per #9 — wire an in-memory secrets adapter BEFORE any approval/HMAC
+# code path runs. Production paths use the configured vault adapter; smoke
+# tests must not require a running OpenBao/Vault container.
+from shared.secrets import InMemoryAdapter, set_default_adapter
+set_default_adapter(InMemoryAdapter())
 from shared.mcp.tools import discover_tools, TOOL_REGISTRY
 discover_tools()
 def call(name, payload):
@@ -419,10 +427,10 @@ g = call("approval_grant", {"project_id": proj_uuid, "phase": "plan_approved",
 emit("mcp.approval_grant.ok", g["status"] == "ok", json.dumps(g)[:200])
 token = g["data"].get("token", "")
 emit("mcp.approval_grant.token_shape", "." in token and len(token) > 40, f"len={len(token)}")
-# Verify the token round-trips through verify_token.
-from pathlib import Path
+# Verify the token round-trips through verify_token via the shared in-memory vault.
 from orchestrator.lib.approval import verify_token
-vt = verify_token(token, Path(os.environ["SPINE_APPROVAL_KEY_PATH"]),
+vt = verify_token(token,
+                  vault_path=os.environ["SPINE_APPROVAL_VAULT_PATH"],
                   expected_project_id=str(proj_id), expected_phase="plan_approved")
 emit("mcp.approval_grant.verifies", vt["valid"], ",".join(vt.get("errors", [])))
 # 5) phase_advance to plan_approved with the token (gated path)
@@ -462,7 +470,7 @@ emit("mcp.audit.approval_granted", n_approved == "1", f"rows={n_approved}")
 n_phist = _q(f"SELECT count(*) FROM spine_lifecycle.phase_history WHERE project_id={proj_id};")
 emit("mcp.lifecycle.phase_history_rows", n_phist == "3", f"rows={n_phist}")
 PY
-  out="$(SPINE_DB_URL="$SPINE_DB_URL" SPINE_APPROVAL_KEY_PATH="$key_path" \
+  out="$(SPINE_DB_URL="$SPINE_DB_URL" SPINE_APPROVAL_VAULT_PATH="$vault_path" \
          SMOKE_NAME="$name" python3 "$script" 2>&1 || true)"
   rm -f "$script"
   local line cid st msg
@@ -474,9 +482,8 @@ PY
     elif [[ $VERBOSE -eq 1 ]]; then _info mcp.trace "$line"; fi
   done <<< "$out"
 
-  # Tidy: rm the throwaway key + dir; the project rows are removed by cleanup_fixtures.
-  rm -rf "$key_dir" 2>/dev/null || true
-  unset SPINE_APPROVAL_KEY_PATH
+  # Adapter + key live only in the child python process — nothing to clean.
+  unset SPINE_APPROVAL_VAULT_PATH
 }
 
 # ─── phase 9: plan_dispatch + intake_runner (D8 follow-up) ───────────

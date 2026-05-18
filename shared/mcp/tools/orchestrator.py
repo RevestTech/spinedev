@@ -172,31 +172,53 @@ def _resolve_project(project_id: str) -> dict[str, Any] | None:
 # ── HMAC key bootstrap ──────────────────────────────────────────────────
 
 
-def _approval_key_path() -> Path:
-    """Resolved key path; honours SPINE_APPROVAL_KEY_PATH, else approval.py default."""
-    override = os.environ.get("SPINE_APPROVAL_KEY_PATH")
+def _approval_vault_path() -> str:
+    """Canonical vault path for the HMAC approval key. Per #9 vault-only.
+
+    Honours SPINE_APPROVAL_VAULT_PATH override (e.g. for namespaced multi-tenant
+    Hubs); otherwise returns the approval.py default. SPINE_APPROVAL_KEY_PATH
+    (legacy on-disk path) is intentionally NOT honoured — its presence in env
+    would be a configuration error and is silently ignored.
+    """
+    override = os.environ.get("SPINE_APPROVAL_VAULT_PATH")
     if override:
-        return Path(override).expanduser()
-    # Match approval.py's default exactly so CLI + MCP share one key.
-    from orchestrator.lib.approval import DEFAULT_KEY_PATH
-    return DEFAULT_KEY_PATH
+        return override
+    from orchestrator.lib.approval import HMAC_KEY_VAULT_PATH
+    return HMAC_KEY_VAULT_PATH
 
 
-def _ensure_approval_key(path: Path) -> None:
-    """Create the HMAC key with 0600 perms if missing. No-op if present."""
-    if path.exists():
-        return
-    path.parent.mkdir(parents=True, exist_ok=True)
+def _ensure_approval_key(vault_path: str) -> None:
+    """Ensure an HMAC key exists at the given vault path; create if missing.
+
+    Reads from shared.secrets (vault adapter); writes a freshly generated
+    256-bit hex key if not present. Idempotent. Raises on vault errors so
+    the caller surfaces them as key_init_failed via _error().
+    """
+    import asyncio
+    import secrets as _stdlib_secrets
+
+    from shared.secrets import (
+        SecretBackendError,
+        SecretNotFound,
+        get_secret,
+        put_secret,
+    )
+
+    async def _check_and_create() -> None:
+        try:
+            await get_secret(vault_path)
+            return  # already present
+        except SecretNotFound:
+            pass
+        # Generate 32 bytes (256 bits), store as hex string (approval.py decodes)
+        await put_secret(vault_path, _stdlib_secrets.token_hex(32))
+
     try:
-        path.parent.chmod(0o700)
-    except PermissionError:
-        pass
-    import secrets as _secrets
-    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    try:
-        os.write(fd, _secrets.token_bytes(32))
-    finally:
-        os.close(fd)
+        asyncio.run(_check_and_create())
+    except SecretBackendError:
+        raise
+    except Exception as e:  # pragma: no cover — bubble up
+        raise SecretBackendError(f"_ensure_approval_key failed: {e}") from e
 
 
 # ── Phase-gate lookup from phases.yaml ──────────────────────────────────
@@ -553,7 +575,8 @@ def phase_advance(payload: PhaseAdvanceInput) -> ToolResponse:
         try:
             from orchestrator.lib.approval import verify_token
             result = verify_token(
-                payload.approval_token, _approval_key_path(),
+                payload.approval_token,
+                vault_path=_approval_vault_path(),
                 expected_project_id=str(proj["id"]),
                 expected_phase=payload.target_phase,
             )
@@ -636,18 +659,18 @@ def approval_grant(payload: ApprovalGrantInput) -> ToolResponse:
         return _error("project_not_found",
                       f"no active project for id/uuid/name={payload.project_id!r}")
 
-    key_path = _approval_key_path()
+    vault_path = _approval_vault_path()
     try:
-        _ensure_approval_key(key_path)
+        _ensure_approval_key(vault_path)
     except Exception as exc:
-        return _error("key_init_failed", f"could not create HMAC key at {key_path}: {exc}")
+        return _error("key_init_failed", f"could not initialize HMAC key at vault:{vault_path}: {exc}")
 
     try:
         from orchestrator.lib.approval import sign_token
         token, token_payload = sign_token(
             project_id=str(proj["id"]), phase=payload.phase,
             approver=payload.approver, ttl_hours=payload.ttl_hours,
-            key_path=key_path,
+            vault_path=vault_path,
         )
     except Exception as exc:
         return _error("sign_failed", f"sign_token raised: {exc}")
