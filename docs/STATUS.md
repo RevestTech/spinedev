@@ -128,7 +128,7 @@ Re-export shims keep ZERO public API breakage:
 | New shared libraries | 6 (shared/{secrets, llm, identity, runtime, charters, integrations}) |
 | New Flyway migrations | 14 (V22-V35) |
 | New MCP tools | **54 registered** (was 27 v2 → 54 v3) |
-| New role charters | 19 industry-anchored (6 new in Wave 2 + 13 REBUILT in Wave 3) |
+| New role charters | 18 industry-anchored (6 new in Wave 2 + 12 REBUILT in Wave 3; `memory.md` + `seer.md` intentionally deprecated to Hub features per #3/#27 — net is 18, not 19) |
 | New tests | 700+ (across all waves) |
 | Smoke test | **99 PASS / 0 FAIL** maintained throughout |
 | lib/ retirement | 34 files / ~8000 LOC → 17 files / 1095 LOC (all deprecated role-prompts) |

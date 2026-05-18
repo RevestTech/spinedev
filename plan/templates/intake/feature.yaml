@@ -1,0 +1,74 @@
+# Spine v3 intake template — FEATURE work-item type.
+# Seeded by db/flyway/sql/V28__work_item_types.sql; consumed by plan/runtime/intake_runner.py
+# and routed by build/runtime/build_dispatcher.py.
+#
+# Per design decision #19, feature is the default work-item type. Before this template
+# landed (Wave 3.5 audit fix), build_dispatcher routed feature via a hardcoded fallback.
+# Now feature uses the canonical intake flow like the other 6 types.
+
+type_id: feature
+description: A new capability shipped for users. Discovery-led (per product charter); validated against a clear job-to-be-done before TRD synthesis.
+
+default_pipeline: default_feature_pipeline
+default_role_set: [product, planner, architect, engineer, qa]
+
+required_fields:
+  - id: title
+    prompt: One-line name of the feature (user-facing language preferred).
+    why_asked: Becomes the work-item title; surfaces in roadmap + audit trail.
+    required: true
+  - id: target_users
+    prompt: Which user persona(s) need this? Be specific — "everyone" is a red flag.
+    why_asked: Maps to FeatureWorkItem.target_users; drives PRD positioning + acceptance criteria.
+    required: true
+  - id: jobs_to_be_done
+    prompt: What job is the user hiring this feature to do? Use JTBD framing (When ___, I want to ___, so I can ___).
+    why_asked: Per product.md charter (Continuous Discovery + JTBD). Forces problem-first thinking before solution.
+    required: true
+  - id: success_metric
+    prompt: What single quantitative metric tells you the feature succeeded? (e.g. "decision-card ack latency < 30s", "weekly active hubs +20%").
+    why_asked: Maps to FeatureWorkItem.success_metric; product role MUST NOT seal a PRD without this per #5.
+    required: true
+  - id: must_should_could
+    prompt: MoSCoW prioritization — what's MUST (cut scope to ship), what's SHOULD (ship if cheap), what's COULD (v1.1+)?
+    why_asked: Maps to FeatureWorkItem.must_should_could; forces explicit scope decisions before engineering starts.
+    type: multi
+    required: true
+  - id: existing_alternatives
+    prompt: How are users solving this today? (manual workarounds / competitor tools / not solving at all)
+    why_asked: Calibrates urgency + competitive positioning; surfaces "we don't actually need to build this" cases.
+    required: false
+  - id: dependencies
+    prompt: Which other work-items, integrations, or external systems does this depend on?
+    why_asked: Surfaces cross-team coordination + critical-path risk before TRD; planner uses for sequencing.
+    required: false
+  - id: out_of_scope
+    prompt: What is explicitly NOT part of this feature? (defends against scope creep)
+    why_asked: Locks down boundaries; gives engineer + qa clear "we don't have to handle X".
+    required: false
+
+validation_rules:
+  - id: jobs_to_be_done_format
+    field: jobs_to_be_done
+    rule: must_contain_substring
+    value: I want
+    error_message: JTBD must follow "When ___, I want to ___, so I can ___" structure (the "I want" anchor is required).
+  - id: success_metric_quantitative
+    field: success_metric
+    rule: must_not_match_pattern
+    value: "(make|improve|better|nicer|cleaner)"
+    error_message: Success metric must be quantitative (a number with a unit). Vague qualitative metrics are not measurable.
+
+# Example completed intake — guides AI scrum master + business user in their first session.
+example_completed_intake:
+  title: Decision card SSE auto-reconnect
+  target_users: Hub admins on flaky connections (mobile / WFH / coffee shop)
+  jobs_to_be_done: When my Wi-Fi briefly drops while reviewing decision cards, I want the card list to resync silently so I can keep working without manually refreshing.
+  success_metric: Decision-queue panel SSE reconnect rate ≥ 99% within 5s of network restoration (measured via Hub UI client telemetry).
+  must_should_could:
+    must: Auto-reconnect with exp backoff (1s, 2s, 4s, 8s, 30s cap)
+    should: User-visible "reconnecting…" indicator
+    could: Server-side replay of decisions missed during disconnect (via cursor)
+  existing_alternatives: User manually refreshes browser; loses scroll position + active filters.
+  dependencies: shared/api/routes/decisions.py SSE subscribe endpoint (Wave 3 part 1 — already shipped).
+  out_of_scope: Native mobile auto-reconnect (v1.1+ per #28); Postgres NOTIFY/LISTEN integration (Wave 4 follow-up).

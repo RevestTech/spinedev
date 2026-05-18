@@ -1,0 +1,65 @@
+Spine v1.0
+Copyright (c) 2026 Khash Sarrafi
+
+ALL RIGHTS RESERVED — PROPRIETARY AND CONFIDENTIAL
+
+This software and its accompanying documentation (collectively, the "Software")
+are the proprietary and confidential property of Khash Sarrafi (the "Owner").
+
+Per Spine v3 design decision #18 (closed-source v1.0), the Software is released
+under a closed-source, all-rights-reserved license. No license, express or
+implied, is granted by the publication, distribution, or availability of the
+Software in any repository, container registry, build artifact, or other
+medium, except as expressly stated in a separately executed written agreement
+between the Owner and the recipient.
+
+Note on file name: this file is named `LICENSE.txt` (not `LICENSE`) because
+the codebase already contains a `license/` Python package (the feature-flag
+licensing subsystem per design decision #23). On case-insensitive filesystems
+(macOS HFS+/APFS default; Windows NTFS) a `LICENSE` file would collide with the
+`license/` directory. `LICENSE.txt` is the GitHub/git convention for this case
+and is recognized identically by GitHub's repository UI, OSI tooling, and SPDX
+parsers.
+
+You may NOT, without prior written permission from the Owner:
+
+  1. Use, copy, modify, distribute, sublicense, sell, or create derivative
+     works of the Software, in whole or in part.
+  2. Reverse-engineer, decompile, or disassemble the Software except to the
+     extent expressly permitted by applicable law notwithstanding this
+     restriction.
+  3. Remove or alter any proprietary notices, labels, or marks on the Software.
+  4. Use the Software in any production or commercial setting.
+
+PERMITTED USES (no separate agreement required):
+
+  A. Source-code review by a recipient under a signed non-disclosure agreement
+     (NDA) with the Owner, solely for the purposes of:
+       (i)  due diligence in connection with a contemplated commercial
+            relationship (procurement, security review, source escrow);
+       (ii) interoperability assessment with the recipient's own systems.
+  B. Personal evaluation by a single individual on a non-production laptop for
+     the purpose of deciding whether to enter into a commercial license.
+  C. Use under a commercial license agreement separately executed with the
+     Owner (e.g., Founder tier, Team tier, Enterprise tier per the Spine
+     pricing model when published).
+
+ENTERPRISE SOURCE-ESCROW: top-tier enterprise customers may negotiate
+source-escrow access via Iron Mountain, NCC Group, or an equivalent third-party
+escrow agent, with release triggers (e.g., Owner bankruptcy, sustained breach)
+defined in the separately executed source-escrow agreement.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+OWNER BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY, WHETHER IN AN
+ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
+WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+For licensing inquiries: legal@spine.dev (per docs/V1_SHIP_CHECKLIST.md §3
+email infrastructure provisioning).
+
+This license may be re-licensed by the Owner at any time, including (without
+limitation) to a permissive open-source license for the project Spine engine
+after enterprise traction is established (per design decision #18 — "may
+reconsider open-sourcing pieces later").
