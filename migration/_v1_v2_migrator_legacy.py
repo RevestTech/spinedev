@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-# TRIAGE Wave 2 leftover; resolve in Wave 5 migration/ (V3_TRIAGE KEEP-as-historical for #33).
+# Historical v1 -> v2 migrator preserved per #33 as canonical example.
+# Imports may break (this file refers to legacy .planning/orchestration/schema/v2.sql
+# and lib/team-agent-daemon.sh paths that no longer exist in the v3 layout).
+# Kept verbatim under migration/ as documentation of the original migrator
+# shape that motivated the four-concern migration design (Wave 5 Squad F).
+# Do NOT call this file from new code; use migration.export / migration.import_
+# / migration.spine_version / migration.onboarding instead.
 """
 spine-migrate.py — v1 → v2 migration for Spine
 
