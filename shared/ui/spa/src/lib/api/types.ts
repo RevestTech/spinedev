@@ -130,6 +130,140 @@ export interface RoleChatResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Registry (mirrors shared/api/routes/registry.py) — Squad SPA2
+// ---------------------------------------------------------------------------
+
+export type RoleTier = 'master' | 'project';
+
+export interface RoleEntry {
+  name: string;
+  tier: RoleTier;
+  description: string;
+  charter_ref?: string | null;
+  feature_flag?: string | null;
+}
+
+export interface RoleList {
+  ok: boolean;
+  items: RoleEntry[];
+}
+
+export type IntegrationKind =
+  | 'scm'
+  | 'issue_tracker'
+  | 'comms'
+  | 'incident'
+  | 'grc'
+  | 'cloud';
+
+export interface RegistryIntegrationEntry {
+  name: string;
+  kind: IntegrationKind;
+  description: string;
+  feature_flag?: string | null;
+  requires_vault_path?: string | null;
+}
+
+export interface RegistryIntegrationList {
+  ok: boolean;
+  items: RegistryIntegrationEntry[];
+}
+
+// ---------------------------------------------------------------------------
+// Audit (mirrors shared/api/routes/audit.py) — Squad SPA2
+// ---------------------------------------------------------------------------
+
+export interface AuditRow {
+  event_id: number | string;
+  event_uuid: string;
+  ts: string;
+  project_id?: string | null;
+  phase?: string | null;
+  role?: string | null;
+  subsystem?: string | null;
+  action?: string | null;
+  subject_type?: string | null;
+  subject_id?: string | null;
+  actor?: string | null;
+  rationale?: string | null;
+  cost_usd?: number | null;
+  correlation_id?: string | null;
+  pipeline_version?: string | null;
+  content_hash?: string | null;
+  prev_content_hash?: string | null;
+}
+
+export interface AuditListResponse {
+  ok: boolean;
+  /** Each item is the raw JSON-line from Postgres; parsed client-side. */
+  items: (string | AuditRow)[];
+  project_id?: string | null;
+  correlation_id?: string | null;
+  limit: number;
+}
+
+// ---------------------------------------------------------------------------
+// Vault config (mirrors shared/api/routes/vault_config.py) — Squad SPA2
+// ---------------------------------------------------------------------------
+
+export interface VaultStatusResponse {
+  ok: boolean;
+  adapter_kind: string;
+  endpoint?: string | null;
+  healthy: boolean;
+  last_error?: string | null;
+}
+
+export interface VaultSecretList {
+  ok: boolean;
+  paths: string[];
+  prefix: string;
+}
+
+export interface RotateRequest {
+  path: string;
+  reason: string;
+}
+
+export interface RotateResponse {
+  ok: boolean;
+  path: string;
+  rotated_at: string;
+  actor: string;
+  audit_event_uuid: string;
+}
+
+// ---------------------------------------------------------------------------
+// Integrations (mirrors shared/api/routes/integrations.py) — Squad SPA2
+// ---------------------------------------------------------------------------
+
+export type IntegrationStatus = 'configured' | 'unconfigured' | 'error';
+
+export interface IntegrationDetail {
+  name: string;
+  kind: string;
+  status: IntegrationStatus;
+  feature_flag?: string | null;
+  vault_path?: string | null;
+  last_test_at?: string | null;
+  last_test_ok?: boolean | null;
+}
+
+export interface IntegrationListResponse {
+  ok: boolean;
+  items: IntegrationDetail[];
+}
+
+export interface TestConnectionResponse {
+  ok: boolean;
+  name: string;
+  healthy: boolean;
+  detail: string;
+  actor: string;
+  audit_event_uuid: string;
+}
+
+// ---------------------------------------------------------------------------
 // Error envelope (FastAPI HTTPException detail)
 // ---------------------------------------------------------------------------
 
