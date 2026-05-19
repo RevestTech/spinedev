@@ -66,8 +66,15 @@
   async function loadRecent() {
     recentLoading = true;
     try {
-      const res = await api.get<{ items: ProjectRow[] }>('/api/v2/projects?limit=5');
-      recent = res.items ?? [];
+      // Backend returns items as JSON-encoded strings (Postgres
+      // json_build_object()::text). Parse defensively so the cards
+      // render real fields not "undefined".
+      const res = await api.get<{ items: (string | ProjectRow)[] }>(
+        '/api/v2/projects?limit=5'
+      );
+      recent = (res.items ?? []).map((it) =>
+        typeof it === 'string' ? (JSON.parse(it) as ProjectRow) : it
+      );
     } catch {
       recent = [];
     } finally {
