@@ -128,6 +128,10 @@ async def list_projects(
     try:
         rows = await db.fetch(sql)
     except RuntimeError as exc:
+        # Pool absent (dev mode without vault-wired DB password) — return
+        # empty list rather than 502 so the SPA dashboard renders cleanly.
+        if "pool is not initialized" in str(exc):
+            return {"items": [], "limit": limit, "offset": offset, "db_unavailable": True}
         raise _err(502, "db_error", str(exc)) from exc
     return {"items": [r["_row"] for r in rows], "limit": limit, "offset": offset}
 
