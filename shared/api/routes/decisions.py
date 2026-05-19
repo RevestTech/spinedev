@@ -426,6 +426,17 @@ class _DecisionStore:
 _STORE = _DecisionStore()
 
 
+def publish_event(event: dict[str, Any]) -> None:
+    """Broadcast a non-card event onto the decisions SSE stream.
+
+    Used by the post-ack role dispatchers (`shared.api.routes._post_ack`)
+    to surface live activity — role_started / role_finished /
+    role_failed — so the workspace UI can render a progress feed
+    without waiting for the next approval card.
+    """
+    _STORE._publish(event)  # noqa: SLF001 — same module ownership
+
+
 def get_store() -> _DecisionStore:
     """Test seam — returns the process-local store."""
     return _STORE

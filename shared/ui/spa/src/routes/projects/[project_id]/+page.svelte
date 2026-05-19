@@ -13,7 +13,7 @@
   import PanelHeader from '$lib/components/PanelHeader.svelte';
   import ErrorBanner from '$lib/components/ErrorBanner.svelte';
   import LoadingSpinner from '$lib/components/LoadingSpinner.svelte';
-  import { api } from '$lib/api/client';
+  import { api, subscribeSse } from '$lib/api/client';
 
   $: projectId = $page.params.project_id;
 
@@ -51,6 +51,24 @@
   let chatScroller: HTMLDivElement;
 
   let pollHandle: number | null = null;
+
+  // Live activity feed — subscribes to /api/v2/decisions/subscribe and
+  // filters events scoped to this project (role_started, role_finished,
+  // role_failed, card_created, card_updated).
+  interface FeedEvent {
+    type: string;
+    role?: string;
+    message?: string;
+    ts: number;
+    artifact_chars?: number;
+    files_written?: number;
+    install_ok?: boolean;
+    error?: string;
+    title?: string;
+  }
+  let feed: FeedEvent[] = [];
+  let activeRole: string | null = null;
+  let sseSub: { close: () => void } | null = null;
 
   async function loadProject() {
     try {
@@ -121,17 +139,93 @@
     await sendIntake();
   }
 
+  function pushFeed(ev: FeedEvent) {
+    feed = [...feed, ev].slice(-50);
+    if (ev.type === 'role_started') activeRole = ev.role ?? null;
+    if (ev.type === 'role_finished' || ev.type === 'role_failed') {
+      // Card landing also implies role is idle until next dispatch.
+      if (activeRole === ev.role) activeRole = null;
+      // Re-fetch the project to pick up new artifacts immediately.
+      loadProject();
+    }
+    if (ev.type === 'card_created' || ev.type === 'card_updated') {
+      // New card → likely a phase advance — refresh.
+      loadProject();
+    }
+  }
+
+  function subscribeLiveFeed() {
+    if (sseSub) return;
+    sseSub = subscribeSse<FeedEvent & { card?: any }>(
+      '/api/v2/decisions/subscribe',
+      {
+        onMessage: (raw) => {
+          if (!raw) return;
+          // Card events include the full card under `card`; role events
+          // are flat. Filter to this project where possible.
+          const ev = raw as any;
+          const evProject = ev.project_uuid ?? ev.card?.project_id;
+          if (evProject && evProject !== projectId && evProject !== String(project?.id ?? '')) {
+            return; // belongs to a different project
+          }
+          pushFeed({
+            type: ev.type,
+            role: ev.role ?? ev.card?.metadata?.produced_by,
+            message: ev.message ?? ev.card?.title,
+            title: ev.card?.title,
+            ts: ev.ts ?? Date.now() / 1000,
+            artifact_chars: ev.artifact_chars,
+            files_written: ev.files_written,
+            install_ok: ev.install_ok,
+            error: ev.error
+          });
+        },
+        onError: () => {
+          // Auto-reconnect after a short delay.
+          sseSub = null;
+          setTimeout(() => subscribeLiveFeed(), 3000);
+        }
+      }
+    );
+  }
+
   onMount(async () => {
     await loadProject();
     if (project?.current_phase === 'intake') kickoff();
-    // Poll for phase / artifact updates so the user sees the system
-    // working without manual refresh. Lightweight read (single row).
-    pollHandle = window.setInterval(loadProject, 4000) as unknown as number;
+    pollHandle = window.setInterval(loadProject, 8000) as unknown as number;
+    subscribeLiveFeed();
   });
 
   onDestroy(() => {
     if (pollHandle !== null) window.clearInterval(pollHandle);
+    sseSub?.close();
+    sseSub = null;
   });
+
+  function feedLabel(ev: FeedEvent): string {
+    if (ev.type === 'role_started') return `${ev.role} role started${ev.message ? ' — ' + ev.message : ''}`;
+    if (ev.type === 'role_finished') {
+      if (ev.files_written !== undefined) return `${ev.role} produced ${ev.files_written} files`;
+      if (ev.install_ok !== undefined) return `${ev.role} install ${ev.install_ok ? 'OK' : 'FAILED'}`;
+      if (ev.artifact_chars !== undefined) return `${ev.role} produced ${ev.artifact_chars.toLocaleString()} chars`;
+      return `${ev.role} role finished`;
+    }
+    if (ev.type === 'role_failed') return `${ev.role} role FAILED: ${ev.error ?? 'unknown'}`;
+    if (ev.type === 'card_created') return `Decision card: ${ev.title ?? ev.message ?? '(no title)'}`;
+    if (ev.type === 'card_updated') return `Card update: ${ev.title ?? ev.message ?? ''}`;
+    return ev.type;
+  }
+  function feedTone(ev: FeedEvent): string {
+    if (ev.type === 'role_started') return 'bg-accent text-white';
+    if (ev.type === 'role_finished' && ev.install_ok === false) return 'bg-severity-warning text-white';
+    if (ev.type === 'role_finished') return 'bg-severity-info text-white';
+    if (ev.type === 'role_failed') return 'bg-severity-critical text-white';
+    if (ev.type === 'card_created') return 'bg-surface-700 text-white dark:bg-surface-200 dark:text-surface-900';
+    return 'bg-surface-200 text-surface-700 dark:bg-surface-700 dark:text-surface-200';
+  }
+  function feedTime(ts: number): string {
+    return new Date(ts * 1000).toLocaleTimeString();
+  }
 
   // Pre-computed artifact list per current state. Order matches the
   // dispatch chain so artifacts appear top-down in the order roles ran.
@@ -210,9 +304,17 @@
 {#if projectLoading}
   <div class="flex items-center justify-center py-10"><LoadingSpinner label="Loading project" /></div>
 {:else if project}
-  <!-- Phase pipeline -->
+  <!-- Phase pipeline + active-role banner -->
   <section class="panel-card mb-6">
-    <h2 class="mb-3 text-sm font-semibold text-surface-900 dark:text-surface-50">SDLC pipeline</h2>
+    <div class="mb-3 flex items-center justify-between">
+      <h2 class="text-sm font-semibold text-surface-900 dark:text-surface-50">SDLC pipeline</h2>
+      {#if activeRole}
+        <span class="flex items-center gap-2 rounded-full bg-accent px-3 py-1 text-xs font-medium text-white">
+          <span class="inline-block h-2 w-2 animate-pulse rounded-full bg-white"></span>
+          {activeRole} role working…
+        </span>
+      {/if}
+    </div>
     <ol class="flex flex-wrap items-center gap-2 text-xs">
       {#each PHASES as ph, i (ph)}
         {@const state = (() => {
@@ -236,6 +338,36 @@
         {/if}
       {/each}
     </ol>
+  </section>
+
+  <!-- Live activity feed -->
+  <section class="panel-card mb-6">
+    <header class="mb-3 flex items-center justify-between">
+      <h2 class="text-sm font-semibold text-surface-900 dark:text-surface-50">
+        Live activity
+      </h2>
+      <span class="text-xs text-surface-700/60 dark:text-surface-200/60">
+        {feed.length} event{feed.length === 1 ? '' : 's'}
+      </span>
+    </header>
+    {#if feed.length === 0}
+      <p class="text-sm text-surface-700/70 dark:text-surface-200/70">
+        No activity yet. Events appear here as roles work, artifacts
+        get written, and decision cards land.
+      </p>
+    {:else}
+      <ol class="space-y-1 text-xs">
+        {#each [...feed].reverse() as ev, i (i)}
+          <li class="flex items-start gap-2">
+            <span class="shrink-0 rounded-full px-2 py-0.5 font-medium {feedTone(ev)}">
+              {ev.type.replace('_', ' ')}
+            </span>
+            <span class="grow text-surface-900 dark:text-surface-50">{feedLabel(ev)}</span>
+            <span class="shrink-0 text-surface-700/50 dark:text-surface-200/50">{feedTime(ev.ts)}</span>
+          </li>
+        {/each}
+      </ol>
+    {/if}
   </section>
 
   {#if project.current_phase === 'intake'}

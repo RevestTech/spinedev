@@ -126,6 +126,23 @@ def _enqueue(card_kwargs: dict[str, Any]) -> None:
     })
 
 
+def _emit(event_type: str, *, project_uuid: str, role: str, **extra: Any) -> None:
+    """Broadcast a role-activity event onto the decisions SSE stream
+    so the workspace's live-feed sees real-time progress."""
+    try:
+        from shared.api.routes.decisions import publish_event
+        import time as _time
+        publish_event({
+            "type": event_type,
+            "role": role,
+            "project_uuid": project_uuid,
+            "ts": _time.time(),
+            **extra,
+        })
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("emit_failed", extra={"event": event_type, "error": str(exc)})
+
+
 # ---------------------------------------------------------------------------
 # Role dispatchers
 # ---------------------------------------------------------------------------
@@ -374,6 +391,8 @@ async def _dispatch_role(
     project_id = project["project_uuid"]
     project_name = project["name"]
     prior = project.get("metadata", {})
+    _emit("role_started", project_uuid=project_id, role=role,
+          artifact_key=artifact_key, message=f"{role} role thinking…")
     try:
         charter = _load_charter(role)
         context_blocks = []
@@ -402,9 +421,13 @@ async def _dispatch_role(
             temperature=0.3,
         ))
         artifact_md = resp.content.strip()
+        _emit("role_finished", project_uuid=project_id, role=role,
+              artifact_key=artifact_key, artifact_chars=len(artifact_md))
     except Exception as exc:  # noqa: BLE001
         logger.exception("role_dispatch_failed",
                          extra={"project_id": project_id, "role": role})
+        _emit("role_failed", project_uuid=project_id, role=role,
+              error=f"{type(exc).__name__}: {exc}")
         artifact_md = (
             f"# {role.title()} output — {project_name}\n\n"
             f"_Role dispatch failed: {type(exc).__name__}_\n\n"
@@ -480,6 +503,8 @@ def _classify_run_block(run_block: str) -> tuple[list[str], list[str]]:
 async def _dispatch_devops_install(*, project: dict[str, Any]) -> None:
     project_id = project["project_uuid"]
     project_name = project["name"]
+    _emit("role_started", project_uuid=project_id, role="devops",
+          message="devops running install commands…")
     workspace = (_WORKSPACE_ROOT / project_id).resolve()
     if not workspace.exists():
         logger.warning("devops_no_workspace", extra={"project_id": project_id})
@@ -534,6 +559,8 @@ async def _dispatch_devops_install(*, project: dict[str, Any]) -> None:
         "devops_install_ok": bool(all_ok),
         "devops_start_cmds": start,
     })
+    _emit("role_finished", project_uuid=project_id, role="devops",
+          install_ok=bool(all_ok), commands=len(install))
 
     status_line = "✅ install completed cleanly" if all_ok else "❌ install FAILED — reject to send back to engineer"
     body = (
@@ -579,6 +606,8 @@ async def _dispatch_engineer_codegen(*, project: dict[str, Any]) -> None:
     project_id = project["project_uuid"]
     project_name = project["name"]
     prior = project.get("metadata", {})
+    _emit("role_started", project_uuid=project_id, role="engineer",
+          message="engineer role generating code…")
     try:
         charter = _load_charter("engineer")
         context_blocks = []
@@ -619,6 +648,8 @@ async def _dispatch_engineer_codegen(*, project: dict[str, Any]) -> None:
 
     intro_md, files, run_block = _parse_engineer_output(raw)
     written = _write_workspace_files(project_id, files)
+    _emit("role_finished", project_uuid=project_id, role="engineer",
+          files_written=written, total_chars=sum(len(c) for _, c in files))
 
     # Persist artifact metadata.
     await _persist_metadata_patch(project_id, {
