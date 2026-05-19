@@ -118,11 +118,21 @@ case "${action}" in
     docker ps --format '{{.Names}}\t{{.Status}}' | grep -E '^spine-hub' || true
     ;;
   --rebuild|rebuild)
+    # NOTE: only stops + removes containers; volumes survive so projects
+    # persist across image rebuilds. Use `--reset` if you actually want
+    # to wipe the DB + start fresh.
+    write_env_file
+    docker compose -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" down
+    build_image
+    docker compose -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" up -d
+    echo "[hub-up] Hub coming up — give it ~30s; then browse http://localhost:8090/spa/"
+    ;;
+  --reset|reset)
     write_env_file
     docker compose -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" down -v
     build_image
     docker compose -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" up -d
-    echo "[hub-up] Hub coming up — give it ~30s; then browse http://localhost:8090/spa/"
+    echo "[hub-up] Hub coming up FRESH (volumes wiped) — ~30s; browse http://localhost:8090/spa/"
     ;;
   --up|up|"")
     write_env_file

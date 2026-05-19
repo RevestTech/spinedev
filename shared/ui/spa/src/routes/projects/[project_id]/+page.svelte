@@ -58,7 +58,18 @@
       project = res;
       projectError = null;
     } catch (e) {
-      projectError = (e as Error).message || 'failed to load project';
+      const msg = (e as Error).message || 'failed to load project';
+      // Project not found = likely the Hub volume was wiped (--rebuild) since
+      // the URL was minted. Stop polling + offer a way back.
+      if (/project.*not.*found|404/i.test(msg)) {
+        projectError = `Project ${projectId} no longer exists (Hub data may have been wiped by --rebuild). Use the dashboard to create a fresh project.`;
+        if (pollHandle !== null) {
+          window.clearInterval(pollHandle);
+          pollHandle = null;
+        }
+      } else {
+        projectError = msg;
+      }
     } finally {
       projectLoading = false;
     }
