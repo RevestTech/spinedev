@@ -7,6 +7,7 @@ detail stay cheap and don't need an MCP round-trip.
 
 from __future__ import annotations
 
+import logging
 from typing import Annotated, Any, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -22,6 +23,7 @@ from shared.api.dependencies import (
 )
 from shared.identity.models import User
 
+logger = logging.getLogger("spine.api.projects")
 router = APIRouter(prefix="/api/v2/projects", tags=["projects"])
 
 # Wave-2 (Design Decision #19): 7 canonical work-item types Day 1.
@@ -93,7 +95,13 @@ async def create_project(
     mcp: Annotated[McpClient, Depends(get_mcp_client)],
     user: Annotated[User, Depends(current_user)],
 ) -> dict[str, Any]:
-    """Create a project in ``intake`` via MCP ``project_create``."""
+    """Create a project in ``intake`` via MCP ``project_create``.
+
+    Also seeds an initial "intake briefing" decision card so the SPA's
+    decision queue is non-empty immediately after submit — the user has
+    something to act on while the intake role (which lands in a future
+    wave with real LLM-backed PRD drafting) ramps up.
+    """
     actor = actor_label(user)
     try:
         resp = mcp.call("project_create", {
@@ -103,6 +111,49 @@ async def create_project(
         raise _err(503, "mcp_tool_missing", str(exc)) from exc
     except ValueError as exc:
         raise _err(400, "invalid_input", str(exc)) from exc
+
+    # Seed the intake briefing decision so the queue isn't empty when the
+    # user lands. Best-effort — never blocks project creation.
+    try:
+        import uuid as _uuid
+
+        from shared.api.routes.decisions import DecisionCard, enqueue_decision
+
+        data = (resp or {}).get("data") or resp or {}
+        project_id = data.get("project_id") or data.get("project_uuid") or ""
+        kind_label = "greenfield project" if body.greenfield else f"{body.project_type} work"
+        desc_block = (
+            f"\n\nYour brief:\n> {body.description.strip()}\n"
+            if body.description else ""
+        )
+        card_body = (
+            f"You started a new {kind_label}: **{body.name}**.{desc_block}\n"
+            f"Before I dispatch the intake role I want to confirm:\n"
+            f"  1. Scope is captured above (edit by replying).\n"
+            f"  2. Default stack + workspace conventions are OK for v1.\n"
+            f"  3. You want the intake role to draft a PRD now and bring "
+            f"back a follow-up card with the open questions.\n\n"
+            f"Approve to begin, or Reject to take a different direction."
+        )
+        card = DecisionCard(
+            decision_id=str(_uuid.uuid4()),
+            decision_class="briefing",
+            project_id=str(project_id) if project_id else None,
+            title=f"Intake — {body.name}",
+            body=card_body,
+            severity="info",
+            actions=["ack", "reject"],
+            metadata={
+                "kind": "intake_briefing",
+                "project_type": body.project_type,
+                "greenfield": bool(body.greenfield),
+            },
+        )
+        enqueue_decision(card)
+    except Exception as exc:  # noqa: BLE001
+        # Card seeding is non-critical; log + carry on.
+        logger.warning("intake_card_seed_failed", extra={"error": str(exc)})
+
     return {"actor": actor, **resp}
 
 
