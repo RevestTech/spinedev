@@ -220,6 +220,21 @@ services:
       SPINE_KEYCLOAK_CLIENT_ID: spine-hub
       SPINE_DB_URL: postgres://spine@postgres:5432/spine     # password fetched via vault
       SPINE_DB_PASSWORD_VAULT_PATH: ${SPINE_DB_PASSWORD_VAULT_PATH:-spine/data/db/spine-app-password}
+      # Dev-only DB password passthrough. Hub reads this ONLY when
+      # SPINE_HUB_DEV=1 (see shared/api/app.py:create_app dev-mode
+      # bootstrap, which seeds the InMemoryAdapter with the real DSN
+      # so the laptop loop actually persists). Prod paths NEVER read
+      # this — vault is the only source. Per #9, env-var-secret reads
+      # are dev-mode escape-hatch only.
+      SPINE_DB_PASSWORD: ${SPINE_DB_PASSWORD:-}
+      SPINE_DB_HOST: postgres
+      SPINE_DB_PORT: "5432"
+      SPINE_DB_USER: spine
+      SPINE_DB_NAME: spine
+      # psql subprocess sites (orchestrator + kg + embedder) read PGPASSWORD
+      # from env when the URL has no password. Dev-only convenience; prod
+      # vault rewrites SPINE_DB_URL to include the password at bootstrap.
+      PGPASSWORD: ${SPINE_DB_PASSWORD:-}
       SPINE_FEDERATION_PARENT_HUB: ${SPINE_FEDERATION_PARENT_HUB:-}
       SPINE_HUB_ID: ${SPINE_HUB_ID:-}
       # --- Vault AppRole login (NON-SECRET hints; the wrapped secret-id is

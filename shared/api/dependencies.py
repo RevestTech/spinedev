@@ -400,8 +400,10 @@ class McpClient:
             )
         from shared.mcp.tools import TOOL_REGISTRY, discover_tools  # noqa: PLC0415
 
-        if not TOOL_REGISTRY:
-            discover_tools("shared.mcp.tools")
+        # Always discover; idempotent. A "not empty" short-circuit would
+        # miss tools added by modules that haven't been transitively
+        # imported yet (see shared/api/app.py mcp_loaded note).
+        discover_tools("shared.mcp.tools")
         spec = TOOL_REGISTRY.get(name)
         if spec is None:
             raise KeyError(f"MCP tool not registered: {name!r}")

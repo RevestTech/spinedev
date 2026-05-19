@@ -202,8 +202,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         from shared.mcp.tools import TOOL_REGISTRY, discover_tools
 
-        if not TOOL_REGISTRY:
-            discover_tools("shared.mcp.tools")
+        # Always discover — the registry may be partially populated by
+        # transitive imports (e.g. shared.api.routes.kg imports
+        # shared.mcp.tools.kg which auto-registers 9 tools). A "not empty"
+        # check would short-circuit and the other 45 tools would never load.
+        # discover_tools is idempotent (importlib.import_module is a no-op
+        # on already-loaded modules).
+        discover_tools("shared.mcp.tools")
         logger.info("mcp_loaded", extra={"tool_count": len(TOOL_REGISTRY)})
     except Exception as exc:  # noqa: BLE001
         logger.warning("mcp_load_failed", extra={"error": str(exc)})
@@ -410,6 +415,13 @@ def create_app() -> FastAPI:
     # in this uvicorn process see a registered adapter. Per #9, this is
     # ONLY in dev mode; prod still goes through the entrypoint VaultAdapter
     # branch + the in-process module-level singleton it sets.
+    #
+    # We also seed the adapter with the bare-minimum secrets the laptop
+    # loop needs to do real work: the Postgres DSN. Compose passes
+    # SPINE_DB_PASSWORD as an env var; we synthesize the DSN from it +
+    # the well-known compose hostname/db. Vault paths match the prod
+    # contract (DSN_VAULT_PATH default 'spine/postgres/dsn' +
+    # 'spine/postgres/password').
     if os.environ.get("SPINE_HUB_DEV") == "1":
         try:
             from shared.secrets import (
@@ -417,11 +429,29 @@ def create_app() -> FastAPI:
                 get_default_adapter,
                 set_default_adapter,
             )
+            initial: dict[str, str] = {}
+            db_pw = os.environ.get("SPINE_DB_PASSWORD")
+            if db_pw:
+                db_host = os.environ.get("SPINE_DB_HOST", "postgres")
+                db_port = os.environ.get("SPINE_DB_PORT", "5432")
+                db_user = os.environ.get("SPINE_DB_USER", "spine")
+                db_name = os.environ.get("SPINE_DB_NAME", "spine")
+                initial["spine/postgres/password"] = db_pw
+                initial["spine/postgres/dsn"] = (
+                    f"postgresql://{db_user}:{db_pw}@{db_host}:{db_port}/{db_name}"
+                )
             try:
-                get_default_adapter()
+                adapter = get_default_adapter()
+                # Adapter already installed (rare in dev) — seed missing keys.
+                if isinstance(adapter, InMemoryAdapter):
+                    for k, v in initial.items():
+                        adapter._store.setdefault(k, v)  # noqa: SLF001
             except Exception:  # noqa: BLE001
-                set_default_adapter(InMemoryAdapter())
-                logger.info("dev_mode_secrets_adapter_installed", extra={"adapter": "InMemoryAdapter"})
+                adapter = InMemoryAdapter(initial=initial)
+                set_default_adapter(adapter)
+                logger.info("dev_mode_secrets_adapter_installed",
+                            extra={"adapter": "InMemoryAdapter",
+                                   "seeded_db_secrets": bool(db_pw)})
         except Exception as exc:  # noqa: BLE001
             logger.warning("dev_mode_secrets_adapter_install_failed", extra={"error": str(exc)})
 

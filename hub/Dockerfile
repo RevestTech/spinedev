@@ -190,6 +190,14 @@ COPY --chown=spine:spine build/        /app/build/
 COPY --chown=spine:spine verify/tron/  /app/verify/tron/
 COPY --chown=spine:spine orchestrator/ /app/orchestrator/
 COPY --chown=spine:spine devops/       /app/devops/
+COPY --chown=spine:spine learning/     /app/learning/
+COPY --chown=spine:spine federation/   /app/federation/
+COPY --chown=spine:spine license/      /app/license/
+COPY --chown=spine:spine evidence/     /app/evidence/
+COPY --chown=spine:spine recovery/     /app/recovery/
+COPY --chown=spine:spine migration/    /app/migration/
+COPY --chown=spine:spine mobile/       /app/mobile/
+COPY --chown=spine:spine voice/        /app/voice/
 
 # Finally copy hub/ (this subsystem). Done last so most rebuilds during Hub
 # development only invalidate this layer.

@@ -247,6 +247,11 @@ PY
 exec_uvicorn() {
   log "Starting uvicorn shared.api.app:create_app on ${SPINE_HUB_HOST}:${SPINE_HUB_PORT}"
   cd /app
+  # PYTHONPATH=/app so MCP tool discovery can import sibling top-level
+  # packages (learning.consent, federation.*, license.*, etc.); CWD-on-
+  # sys.path semantics only fire for `python script.py`, not for the
+  # uvicorn launcher.
+  export PYTHONPATH="/app${PYTHONPATH:+:$PYTHONPATH}"
   # --factory: shared.api.app.create_app is a callable that builds the app
   # at start time, picking up the just-bootstrapped secrets adapter.
   exec uvicorn shared.api.app:create_app \

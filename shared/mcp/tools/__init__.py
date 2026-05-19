@@ -123,12 +123,28 @@ def discover_tools(package: str = __name__) -> dict[str, ToolSpec]:
 
     Idempotent: re-importing already-loaded modules is a no-op. Returns the
     full registry (callers usually just read :data:`TOOL_REGISTRY` directly).
+
+    Per-module errors are logged + skipped so a single broken tool module
+    doesn't truncate the rest of the registry (the old behavior caused the
+    Hub to silently load only the first ~9 tools when one mid-list module
+    blew up at import time — `project_create` and other downstream tools
+    went missing without trace).
     """
+    import logging as _logging
+
+    _log = _logging.getLogger(__name__)
     pkg = importlib.import_module(package)
     for mod_info in pkgutil.iter_modules(pkg.__path__):
         if mod_info.name.startswith("_"):
             continue
-        importlib.import_module(f"{package}.{mod_info.name}")
+        try:
+            importlib.import_module(f"{package}.{mod_info.name}")
+        except Exception as exc:  # noqa: BLE001
+            _log.warning(
+                "discover_tools_module_skipped",
+                extra={"module": f"{package}.{mod_info.name}",
+                       "error": f"{type(exc).__name__}: {exc}"[:200]},
+            )
     return dict(TOOL_REGISTRY)
 
 
