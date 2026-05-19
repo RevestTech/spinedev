@@ -323,6 +323,13 @@ async def intake_chat(
     if done:
         # Strip the sentinel from the user-visible reply.
         reply = reply.replace(_INTAKE_COMPLETE_SENTINEL, "").strip()
+        # If the role returned ONLY the sentinel (no prose) the strip
+        # leaves an empty string — Pydantic min_length=1 then rejects
+        # TranscriptTurn(content=""). Substitute a sensible closing line.
+        if not reply:
+            reply = ("Got it. I have enough to draft the PRD now — "
+                     "you'll see an approval card in the decision queue "
+                     "shortly.")
         # Fire-and-forget PRD synthesis + approval card; non-blocking so
         # the chat reply lands fast even when PRD generation is slow.
         import asyncio as _asyncio
