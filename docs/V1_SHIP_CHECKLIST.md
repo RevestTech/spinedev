@@ -83,13 +83,7 @@
 - [ ] **Bug bounty** program established (or scoped) — even small bounty + responsible-disclosure email
 - [ ] **Vulnerability disclosure policy** published at `security.spine.dev/.well-known/security.txt`
 - [ ] **TRUSTED_VENDOR_FINGERPRINT** matches the actual Shamir-reconstructable key (manual verification post-distribution)
-- [ ] **No env-var secret VALUES** anywhere in committed code (final grep audit per #9):
-  ```
-  grep -rnE "ANTHROPIC_API_KEY|OPENAI_API_KEY|SPINE_[A-Z_]+_KEY|SPINE_[A-Z_]+_PASSWORD|SPINE_[A-Z_]+_SECRET|SPINE_[A-Z_]+_TOKEN" \
-    --include="*.py" --include="*.sh" --include="*.yaml" --include="*.yml" \
-    | grep -v -E "vault-refs|TRIAGE|BUILD_SEQUENCE|DESIGN_DECISIONS|SECURITY_GUIDE|README"
-  ```
-  Must return ZERO hits for SECRET VALUES (vault-path references are OK).
+- [x] **No env-var secret VALUES** anywhere in committed code (final grep audit per #9): `bash tools/audit-secrets.sh` (classifier-aware: distinguishes env-var NAMES, vault paths, obviously-fake test placeholders, and confirmed value leaks). Last run 2026-05-18: zero confirmed value leaks. The raw grep pattern + path-exclude list live inside the audit script; update them there rather than inlining here.
 - [x] **TRON dev password rotation (code-side)** — Literal `tron_dev_only` rotated to loud sentinel `tron_LOCAL_DEV_ONLY_2026` across 4 code-default sites (`orchestrator/bin/spine`, `tools/_smoke_phase11_tron.py`, `tools/_tron_alembic_upgrade.py`, `tools/verify-overrides/docker-compose.override.yml`). New helper `tools/_tron_local_default.py` adds a fail-closed guard that refuses sentinel-on-non-loopback connections. Local dev: `cd verify && docker compose down -v postgres && docker compose up -d postgres` to pick up the new password.
 - [ ] **TRON prod password population (vault-side)** — Operator must set real values at:
   - TRON Postgres password (vault path `tron/postgres/password`)
