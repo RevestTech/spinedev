@@ -81,6 +81,7 @@
     architect:       { label: 'Architect',       what: 'designing the system + picking your stack (TOGAF)',    typical: '~45-90s' },
     conductor:       { label: 'Conductor',       what: 'breaking the TRD into sprint tasks (Scrum)',           typical: '~30-60s' },
     engineer:        { label: 'Engineer',        what: 'generating real code files for the project',           typical: '~60-180s' },
+    security_engineer: { label: 'Security review', what: 'auditing the code for OWASP / NIST vulnerabilities (SQL injection, auth bypass, privesc, race conditions)', typical: '~45-120s' },
     devops:          { label: 'DevOps',          what: 'running install commands in the workspace',            typical: '~30-90s' },
     qa:              { label: 'QA',              what: 'writing the test plan (ISTQB traceability)',            typical: '~30-60s' },
     release_manager: { label: 'Release manager', what: 'preparing the ship gate + cloud-deploy options',       typical: '~30-60s' },
@@ -273,6 +274,7 @@
     if (md.trd_md) out.push({ label: 'TRD (architect role)', key: 'trd_md', md: md.trd_md });
     if (md.sprint_plan_md) out.push({ label: 'Sprint plan (conductor role)', key: 'sprint_plan_md', md: md.sprint_plan_md });
     if (md.code_intro_md) out.push({ label: 'Engineer intro', key: 'code_intro_md', md: md.code_intro_md });
+    if (md.code_review_md) out.push({ label: `Security review (security_engineer) ${md.code_review_blocked ? '⛔ BLOCKED' : '✅ PASS'}`, key: 'code_review_md', md: md.code_review_md });
     if (md.qa_md) out.push({ label: 'Test plan (qa role)', key: 'qa_md', md: md.qa_md });
     if (md.release_gate_md) out.push({ label: 'Ship gate (release_manager)', key: 'release_gate_md', md: md.release_gate_md });
     return out;

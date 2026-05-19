@@ -192,6 +192,60 @@ Output ONLY the markdown.
 """.strip()
 
 
+_CODE_REVIEW_PROMPT = """
+You are the Spine **security_engineer** + **auditor** role performing
+a real OWASP-style code review on what the engineer just produced.
+Anchor your findings in: OWASP Top 10, CWE catalog, NIST 800-53
+control families, language-specific best practices (Clean Code,
+secure-by-default).
+
+You will receive every generated file (path + contents) plus the PRD,
+TRD, and sprint plan as context.
+
+Required output — strict markdown structure starting with
+`# Code review — <Project Name>`:
+
+  ## Summary
+    One-paragraph posture + counts: N critical / N high / N medium / N low.
+    State explicitly: **REVIEW PASS** or **REVIEW BLOCK**.
+    Rule: any CRITICAL or HIGH finding → REVIEW BLOCK.
+
+  ## Critical findings
+    For each:
+      - **Title** — short imperative summary.
+      - **File:line** — `path/to/file.ext:NN-NN`
+      - **What** — what the code does (1-2 lines).
+      - **Why bad** — concrete attack scenario or compliance violation.
+      - **Fix** — exact patch (allowlist, parameterize, etc).
+      - **CWE / OWASP ref** — e.g. CWE-89 SQLi, OWASP A03.
+    If none, write "_None._"
+
+  ## High findings (same per-item shape)
+
+  ## Medium findings (same)
+
+  ## Low findings (same)
+
+  ## Recommended fix order
+    Numbered list — fix critical first, in dependency order.
+
+Be ruthless. Look specifically for:
+  - Mass assignment / privilege escalation in update endpoints
+  - SQL string interpolation (Object.keys → SQL, parameterized vs raw)
+  - Auth-bypass / weak middleware (token presence vs verification)
+  - Race conditions (SELECT-then-INSERT, non-atomic uniqueness)
+  - HTML/email injection (unescaped DB strings in templates)
+  - Rate-limit spoofing (trusting X-Forwarded-For without proxy chain)
+  - Unbounded fetch (no AbortSignal/timeout)
+  - Env-var assertions at module load vs startup validation
+  - Stripe/payment + DB orphans (PaymentIntent outside transaction)
+  - Missing CSRF on state-changing endpoints
+  - Cookie/SameSite/Secure flags
+
+Output ONLY the markdown.
+""".strip()
+
+
 _RELEASE_MANAGER_PROMPT = """
 You are the Spine **release_manager** role (ITIL change-management
 anchored). QA signed off. Produce a ship gate + concrete cloud-deploy
@@ -507,6 +561,117 @@ async def _dispatch_role(
             "produced_by": role,
         },
     })
+
+
+# ---------------------------------------------------------------------------
+# Code review — security_engineer/auditor inspects engineer output.
+# Critical/High findings BLOCK the chain and trigger engineer fix-loop;
+# medium/low findings flow through as advisory.
+# ---------------------------------------------------------------------------
+
+
+async def _dispatch_code_review(*, project: dict[str, Any]) -> None:
+    project_id = project["project_uuid"]
+    project_name = project["name"]
+    prior = project.get("metadata", {}) or {}
+    _emit("role_started", project_uuid=project_id, role="security_engineer",
+          message="security_engineer reviewing generated code…")
+    workspace = (_WORKSPACE_ROOT / project_id).resolve()
+    code_blocks: list[str] = []
+    if workspace.exists():
+        for f in sorted(workspace.rglob("*")):
+            if f.is_file() and f.stat().st_size <= 80_000:
+                try:
+                    content = f.read_text(encoding="utf-8", errors="replace")
+                    rel = f.relative_to(workspace)
+                    code_blocks.append(f"### `{rel}`\n```\n{content}\n```")
+                except Exception:  # noqa: BLE001
+                    continue
+    code_dump = "\n\n".join(code_blocks)
+    # Trim to a reasonable LLM input ceiling (~120 KB of code text).
+    if len(code_dump) > 120_000:
+        code_dump = code_dump[:120_000] + "\n\n[truncated — review focuses on shown files]"
+
+    try:
+        sec_charter = _load_charter("security_engineer")
+        aud_charter = _load_charter("auditor")
+        context_blocks = []
+        if prior.get("prd_md"):
+            context_blocks.append("## Approved PRD\n\n" + prior["prd_md"])
+        if prior.get("trd_md"):
+            context_blocks.append("## Approved TRD\n\n" + prior["trd_md"])
+        if prior.get("sprint_plan_md"):
+            context_blocks.append("## Approved sprint plan\n\n" + prior["sprint_plan_md"])
+        context_blocks.append("## Generated code files\n\n" + code_dump)
+        system = (
+            _CODE_REVIEW_PROMPT
+            + "\n\n---\n\n## Project metadata\n"
+            + f"- Name: **{project_name}**\n- Type: **{project['project_type']}**\n\n"
+            + "---\n\n## security_engineer charter\n\n" + sec_charter
+            + "\n\n---\n\n## auditor charter\n\n" + aud_charter
+            + "\n\n---\n\n" + "\n\n---\n\n".join(context_blocks)
+        )
+        resp = await call_async(LLMRequest(
+            model=_DEFAULT_MODEL,
+            messages=[Message(role="user", content=f"Review {project_name} now.")],
+            system=system, max_tokens=12000, temperature=0.1,
+        ))
+        review_md = resp.content.strip()
+        _emit("role_finished", project_uuid=project_id, role="security_engineer",
+              artifact_chars=len(review_md))
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("code_review_failed", extra={"project_id": project_id})
+        _emit("role_failed", project_uuid=project_id, role="security_engineer",
+              error=f"{type(exc).__name__}: {exc}")
+        review_md = f"# Code review — {project_name}\n\n_Dispatch failed: {type(exc).__name__}_"
+
+    blocked = "REVIEW BLOCK" in review_md.upper() or "## Critical findings" in review_md and "_None._" not in review_md.split("## Critical findings", 1)[1].split("##", 1)[0]
+
+    await _persist_metadata_patch(project_id, {
+        "code_review_md": review_md,
+        "code_review_blocked": bool(blocked),
+    })
+
+    if blocked:
+        # Auto-trigger engineer fix-loop with the review findings as feedback.
+        _enqueue({
+            "decision_class": "approval",
+            "project_id": project_id,
+            "title": f"Code review BLOCKED — {project_name}",
+            "body": (
+                f"The **security_engineer** role flagged critical or high "
+                f"findings. The engineer will re-code with these findings as "
+                f"feedback as soon as you approve this card.\n\n"
+                f"Reject to skip the fix-loop and proceed anyway (NOT "
+                f"recommended).\n\n---\n\n" + review_md
+            ),
+            "severity": "critical",
+            "actions": ["ack", "reject"],
+            "metadata": {
+                "kind": "code_review_blocked",
+                "project_uuid": project_id,
+                "project_name": project_name,
+                "produced_by": "security_engineer",
+            },
+        })
+    else:
+        _enqueue({
+            "decision_class": "approval",
+            "project_id": project_id,
+            "title": f"Code review PASS — {project_name}",
+            "body": (
+                f"No critical/high findings. Approve to advance to "
+                f"**devops install + smoke**.\n\n---\n\n" + review_md
+            ),
+            "severity": "info",
+            "actions": ["ack", "reject"],
+            "metadata": {
+                "kind": "code_review_pass",
+                "project_uuid": project_id,
+                "project_name": project_name,
+                "produced_by": "security_engineer",
+            },
+        })
 
 
 # ---------------------------------------------------------------------------
@@ -1043,10 +1208,29 @@ async def on_decision_acked(card: Any, *, actor: str) -> None:
         return
 
     if kind == "code_approval":
-        # DevOps role exec's the install commands inside the project
-        # workspace + pushes a stand-up card. User then runs locally
-        # (download zip) + approves once verified.
+        # Insert security_engineer + auditor code-review BEFORE devops.
+        # Critical/High findings block the chain + trigger engineer
+        # fix-loop. Clean review → user acks pass card → devops runs.
+        await _dispatch_code_review(project=project)
+        return
+
+    if kind == "code_review_pass":
+        # User confirmed the review's recommendation to proceed.
         await _dispatch_devops_install(project=project)
+        return
+
+    if kind == "code_review_blocked":
+        # User acked the block → fire engineer fix-loop with the review
+        # findings as feedback. Engineer re-codes addressing each one.
+        review_md = (project.get("metadata") or {}).get("code_review_md", "")
+        project["_fix_loop_context"] = (
+            "## Code review found CRITICAL/HIGH issues\n\n"
+            "The security_engineer role found problems with the engineer's "
+            "prior code. Address each finding in this revision; the same "
+            "review will run again on the new code.\n\n"
+            + review_md
+        )
+        await _dispatch_engineer_codegen_with_feedback(project=project)
         return
 
     if kind == "devops_approval":
