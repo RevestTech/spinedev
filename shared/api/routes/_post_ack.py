@@ -558,10 +558,39 @@ async def _dispatch_local_deploy(*, project: dict[str, Any]) -> None:
         })
         return
 
-    # Compose env passes PORT (Node convention) + HOST=0.0.0.0 (so the
-    # subprocess listens on the published interface, not just loopback).
-    env = {**_os.environ, "PORT": str(port), "HOST": "0.0.0.0", "BIND_ADDR": "0.0.0.0"}
-    full_cmd = " && ".join(start_cmds)
+    # Force-bind to 0.0.0.0 inside the container so the subprocess is
+    # reachable through the published port mapping. Most frameworks
+    # default to 127.0.0.1 which would 404 from the host.
+    env = {
+        **_os.environ,
+        "PORT": str(port),
+        "HOST": "0.0.0.0",          # Next.js, Astro, Vite
+        "HOSTNAME": "0.0.0.0",      # Next.js standalone
+        "BIND_ADDR": "0.0.0.0",
+        "FLASK_RUN_HOST": "0.0.0.0",
+        "FASTAPI_HOST": "0.0.0.0",
+        "UVICORN_HOST": "0.0.0.0",
+        # Tighten common npm scripts that hardcode --port or
+        # --hostname=localhost. We can't rewrite arbitrary commands,
+        # but env-driven frameworks above cover ~90% of the stacks
+        # Spine generates.
+    }
+
+    def _harden(cmd: str) -> str:
+        """Append `--host 0.0.0.0` / `--hostname 0.0.0.0` where the
+        framework's CLI wants it. Best-effort string mutation."""
+        lower = cmd.lower()
+        if "npm run dev" in lower or "vite" in lower or "astro dev" in lower:
+            if "--host" not in lower:
+                cmd = cmd + " -- --host 0.0.0.0"
+        elif "flask run" in lower and "--host" not in lower:
+            cmd = cmd + " --host 0.0.0.0"
+        elif "uvicorn" in lower and "--host" not in lower:
+            cmd = cmd + f" --host 0.0.0.0 --port {port}"
+        return cmd
+
+    hardened = [_harden(c) for c in start_cmds]
+    full_cmd = " && ".join(hardened)
     try:
         proc = await asyncio.create_subprocess_shell(
             full_cmd,
