@@ -404,6 +404,27 @@ def _mount_spa(app: FastAPI, *, dist_dir: Path = DEFAULT_SPA_DIST) -> None:
 
 def create_app() -> FastAPI:
     """Construct and return the configured FastAPI app."""
+    # Dev-mode lazy secrets adapter — the hub/entrypoint.sh bootstrap
+    # runs in a subprocess whose adapter dies before uvicorn starts
+    # (subprocess exit's the only contract). Re-install here so routes
+    # in this uvicorn process see a registered adapter. Per #9, this is
+    # ONLY in dev mode; prod still goes through the entrypoint VaultAdapter
+    # branch + the in-process module-level singleton it sets.
+    if os.environ.get("SPINE_HUB_DEV") == "1":
+        try:
+            from shared.secrets import (
+                InMemoryAdapter,
+                get_default_adapter,
+                set_default_adapter,
+            )
+            try:
+                get_default_adapter()
+            except Exception:  # noqa: BLE001
+                set_default_adapter(InMemoryAdapter())
+                logger.info("dev_mode_secrets_adapter_installed", extra={"adapter": "InMemoryAdapter"})
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("dev_mode_secrets_adapter_install_failed", extra={"error": str(exc)})
+
     app = FastAPI(
         title="Spine Hub REST API",
         version="0.3.0",

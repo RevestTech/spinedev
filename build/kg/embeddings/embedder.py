@@ -167,9 +167,15 @@ class EmbedderRunner:
             raise RuntimeError("EmbedderRunner: SPINE_DB_URL / DATABASE_URL not set")
 
     def _psql(self, sql: str) -> str:
-        r = subprocess.run(["psql", self._db_url, "-At", "-F", "\x1f",
-                            "-v", "ON_ERROR_STOP=1", "-c", sql],
-                           capture_output=True, text=True, timeout=30)
+        try:
+            r = subprocess.run(["psql", self._db_url, "-At", "-F", "\x1f",
+                                "-v", "ON_ERROR_STOP=1", "-c", sql],
+                               capture_output=True, text=True, timeout=30)
+        except FileNotFoundError as e:
+            # psql binary not on PATH; route layer maps RuntimeError → 503.
+            raise RuntimeError("psql binary not available in this environment "
+                               "(install postgresql-client or wire embedder "
+                               "to asyncpg per Wave 4 backlog)") from e
         if r.returncode != 0:
             raise RuntimeError(f"psql failed: {r.stderr.strip()}")
         return r.stdout

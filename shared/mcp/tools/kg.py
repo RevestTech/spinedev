@@ -484,6 +484,13 @@ def _run_psql_query(sql: str, params: dict[str, Any]) -> list[dict[str, str]]:
     try:
         proc = subprocess.run(cmd, input=sql, capture_output=True, text=True,
                               timeout=10, check=True)
+    except FileNotFoundError as e:
+        # psql binary not installed (Hub runtime image is intentionally
+        # minimal; see hub/Dockerfile). Route maps RuntimeError → 503
+        # "kg_unavailable" which the SPA renders as a friendly empty state.
+        raise RuntimeError("psql binary not available in this environment "
+                           "(install postgresql-client or wire kg to asyncpg "
+                           "per Wave 4 backlog)") from e
     except subprocess.CalledProcessError as e:
         raise RuntimeError(f"psql query failed: {e.stderr.strip()}") from e
     lines = [ln for ln in proc.stdout.splitlines() if ln]
