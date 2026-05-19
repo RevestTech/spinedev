@@ -52,7 +52,7 @@
 {/if}
 
 <aside
-  class="fixed inset-y-0 left-0 z-40 w-64 transform border-r border-surface-200 bg-white p-3 transition-transform dark:border-surface-700 dark:bg-surface-800 md:static md:translate-x-0"
+  class="fixed inset-y-0 left-0 z-40 w-64 transform border-r border-surface-700/60 bg-surface-900/70 p-3 backdrop-blur-md transition-transform md:static md:translate-x-0"
   class:translate-x-0={open}
   class:-translate-x-full={!open}
   aria-label="Hub surfaces"
@@ -62,9 +62,10 @@
       {#if it.shipped}
         <a
           href={base + it.href}
-          class="flex items-center justify-between rounded-md px-3 py-2 text-sm hover:bg-surface-100 dark:hover:bg-surface-700"
-          class:bg-accent={$page.url.pathname === base + it.href}
-          class:text-white={$page.url.pathname === base + it.href}
+          class="group flex items-center justify-between rounded-lg px-3 py-2 text-sm text-surface-300 transition-all hover:bg-surface-800/80 hover:text-white"
+          class:!bg-gradient-brand={$page.url.pathname === base + it.href}
+          class:!text-white={$page.url.pathname === base + it.href}
+          class:shadow-glow-sm={$page.url.pathname === base + it.href}
           on:click={() => onClose?.()}
         >
           <span>{it.label}</span>

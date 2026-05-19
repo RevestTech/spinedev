@@ -1,5 +1,5 @@
 /*
- * Spine Hub SPA — global stylesheet (V3 Wave 3 part 2, Squad SPA1).
+ * Spine Hub SPA — global stylesheet (modernized dark-first).
  *
  * Loaded by src/routes/+layout.svelte. Tailwind layers come first;
  * minimal hand-written overrides live in src/lib/responsive.css.
@@ -14,33 +14,75 @@
 /* Reset focus rings to a Spine-branded accent — accessibility (WCAG 2.4.7). */
 @layer base {
   :focus-visible {
-    @apply outline-none ring-2 ring-accent ring-offset-2 ring-offset-surface-50 dark:ring-offset-surface-900;
+    @apply outline-none ring-2 ring-accent/70 ring-offset-2 ring-offset-surface-950;
   }
   html {
     -webkit-tap-highlight-color: transparent;
     text-rendering: optimizeLegibility;
+    color-scheme: dark;
   }
+  body { background-attachment: fixed; }
+  h1, h2, h3 { letter-spacing: -0.01em; }
+
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(139, 92, 246, 0.18);
+    border-radius: 9999px;
+  }
+  ::-webkit-scrollbar-thumb:hover { background: rgba(139, 92, 246, 0.32); }
 }
 
 /* Convenience component classes used across panels. */
 @layer components {
+  /* Glass-style card. */
   .panel-card {
-    @apply rounded-lg border border-surface-200 bg-white p-4 shadow-sm
-           dark:border-surface-700 dark:bg-surface-800;
+    @apply relative rounded-xl border border-surface-700/60 bg-surface-900/70
+           p-5 shadow-card backdrop-blur-sm;
   }
+  .panel-card-elevated { @apply panel-card shadow-glow-sm; }
+
+  /* Buttons. */
   .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-md px-3 py-2
-           text-sm font-medium transition focus-visible:outline-none
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-3.5 py-2
+           text-sm font-medium transition-all focus-visible:outline-none
            disabled:cursor-not-allowed disabled:opacity-50;
   }
   .btn-primary {
-    @apply btn bg-accent text-white hover:bg-accent/90 active:bg-accent/80;
+    @apply btn bg-gradient-brand text-white shadow-glow-sm
+           hover:shadow-glow hover:brightness-110 active:brightness-95;
+  }
+  .btn-secondary {
+    @apply btn border border-surface-600 bg-surface-800/70 text-surface-100
+           hover:border-accent/60 hover:bg-surface-800 hover:text-white;
   }
   .btn-ghost {
-    @apply btn bg-transparent text-surface-700 hover:bg-surface-100
-           dark:text-surface-100 dark:hover:bg-surface-700;
+    @apply btn bg-transparent text-surface-300
+           hover:bg-surface-800/70 hover:text-white;
   }
   .btn-danger {
-    @apply btn bg-severity-critical text-white hover:bg-red-600;
+    @apply btn bg-severity-critical/90 text-white hover:bg-severity-critical;
+  }
+
+  .input-field {
+    @apply w-full rounded-lg border border-surface-700 bg-surface-900/70 px-3.5 py-2.5
+           text-sm text-surface-100 placeholder-surface-500
+           transition focus:border-accent focus:bg-surface-900
+           focus:shadow-glow-sm focus:outline-none;
+  }
+
+  .text-gradient {
+    @apply bg-gradient-brand bg-clip-text text-transparent;
+  }
+
+  .shimmer {
+    background-image: linear-gradient(
+      90deg,
+      transparent 0%,
+      rgba(139, 92, 246, 0.12) 50%,
+      transparent 100%
+    );
+    background-size: 200% 100%;
+    @apply animate-shimmer;
   }
 }

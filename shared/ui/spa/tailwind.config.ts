@@ -1,4 +1,4 @@
-// Spine Hub SPA — Tailwind config (V3 Wave 3 part 2, Squad SPA1)
+// Spine Hub SPA — Tailwind config (modernized, dark-first).
 //
 // Per design decision #28: mobile-responsive Day 1. Mobile-first
 // breakpoints are Tailwind defaults (sm 640 / md 768 / lg 1024 / xl 1280),
@@ -33,24 +33,39 @@ export default {
     },
     extend: {
       colors: {
-        // Spine brand neutral surface stack (light + dark).
         surface: {
           50:  '#fafafa',
           100: '#f4f4f5',
           200: '#e4e4e7',
+          300: '#d4d4d8',
+          400: '#a1a1aa',
+          500: '#71717a',
+          600: '#52525b',
           700: '#3f3f46',
           800: '#27272a',
-          900: '#18181b'
+          900: '#18181b',
+          950: '#09090b'
         },
-        // Decision-card severity palette (per shared/api/routes/decisions.py).
         severity: {
           info: '#3b82f6',
           warning: '#f59e0b',
-          critical: '#ef4444'
+          critical: '#ef4444',
+          success: '#10b981'
         },
         accent: {
-          DEFAULT: '#6366f1',
-          muted: '#a5b4fc'
+          DEFAULT: '#8b5cf6',
+          muted: '#a78bfa',
+          dim: '#6d28d9',
+          glow: 'rgba(139,92,246,0.45)'
+        },
+        accent2: {
+          DEFAULT: '#06b6d4',
+          muted: '#67e8f9'
+        },
+        brand: {
+          from: '#8b5cf6',
+          via:  '#6366f1',
+          to:   '#06b6d4'
         }
       },
       fontFamily: {
@@ -60,6 +75,30 @@ export default {
       maxWidth: {
         panel: '64rem',
         chat: '48rem'
+      },
+      backgroundImage: {
+        'gradient-brand':
+          'linear-gradient(135deg, #8b5cf6 0%, #6366f1 50%, #06b6d4 100%)',
+        'gradient-brand-soft':
+          'linear-gradient(135deg, rgba(139,92,246,0.14) 0%, rgba(6,182,212,0.06) 100%)',
+        'gradient-mesh':
+          'radial-gradient(at 0% 0%, rgba(139,92,246,0.18), transparent 50%), ' +
+          'radial-gradient(at 100% 0%, rgba(6,182,212,0.12), transparent 50%), ' +
+          'radial-gradient(at 100% 100%, rgba(99,102,241,0.10), transparent 50%)'
+      },
+      boxShadow: {
+        glow:     '0 0 28px 0 rgba(139, 92, 246, 0.32)',
+        'glow-sm':'0 0 14px 0 rgba(139, 92, 246, 0.22)',
+        card:     '0 1px 0 0 rgba(255,255,255,0.04) inset, 0 10px 30px -16px rgba(0,0,0,0.55)'
+      },
+      keyframes: {
+        shimmer: {
+          '0%':   { backgroundPosition: '-200% 0' },
+          '100%': { backgroundPosition: '200% 0' }
+        }
+      },
+      animation: {
+        shimmer: 'shimmer 2.4s linear infinite'
       }
     }
   },
