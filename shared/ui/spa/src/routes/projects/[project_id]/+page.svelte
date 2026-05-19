@@ -95,7 +95,7 @@
         transcript: transcript.slice(0, -1),
         project_name: project.name,
         project_type: project.project_type,
-        greenfield: false
+        greenfield: Boolean(project.metadata?.greenfield)
       });
       transcript = res.transcript;
       intakeDone = res.done;
@@ -112,7 +112,12 @@
 
   async function kickoff() {
     if (!project || transcript.length > 0) return;
-    userInput = `Start the intake for project "${project.name}" (${project.project_type}).`;
+    const greenfield = Boolean(project.metadata?.greenfield);
+    const desc = project.metadata?.description;
+    const descBlock = desc ? `\n\nMy brief: ${desc}` : '';
+    userInput = greenfield
+      ? `Start the intake for "${project.name}" — a brand-new greenfield ${project.project_type} I want to build from scratch.${descBlock}`
+      : `Start the intake for "${project.name}" — a ${project.project_type} against existing code.${descBlock}`;
     await sendIntake();
   }
 

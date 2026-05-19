@@ -112,15 +112,40 @@ async def create_project(
     except ValueError as exc:
         raise _err(400, "invalid_input", str(exc)) from exc
 
+    data = (resp or {}).get("data") or resp or {}
+    project_id = data.get("project_id") or data.get("project_uuid") or ""
+
+    # Persist the SPA-side metadata (greenfield flag + user's free-text
+    # description) onto the project row so downstream consumers — the
+    # workspace page, the intake role — can read it.
+    if project_id:
+        try:
+            import json as _json
+            from shared.api.dependencies import get_db_pool_raw
+            pool = get_db_pool_raw()
+            if pool is not None:
+                patch: dict[str, Any] = {
+                    "greenfield": bool(body.greenfield),
+                }
+                if body.description:
+                    patch["description"] = body.description
+                async with pool.acquire() as conn:
+                    await conn.execute(
+                        "UPDATE spine_lifecycle.project SET metadata = "
+                        "COALESCE(metadata, '{}'::jsonb) || $1::jsonb "
+                        "WHERE project_uuid::text = $2",
+                        _json.dumps(patch), project_id,
+                    )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("project_meta_persist_failed",
+                           extra={"project_id": project_id, "error": str(exc)})
+
     # Seed the intake briefing decision so the queue isn't empty when the
     # user lands. Best-effort — never blocks project creation.
     try:
         import uuid as _uuid
 
         from shared.api.routes.decisions import DecisionCard, enqueue_decision
-
-        data = (resp or {}).get("data") or resp or {}
-        project_id = data.get("project_id") or data.get("project_uuid") or ""
         kind_label = "greenfield project" if body.greenfield else f"{body.project_type} work"
         desc_block = (
             f"\n\nYour brief:\n> {body.description.strip()}\n"
