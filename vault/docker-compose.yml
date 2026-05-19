@@ -39,9 +39,11 @@ services:
       # without mounting a file. Non-secret single-node Raft storage.
       BAO_LOCAL_CONFIG: |
         ui = true
-        disable_mlock = false
+        # OpenBao dropped support for the `disable_mlock` directive (>=2.x);
+        # the upstream guidance is to disable swap or encrypt it instead.
+        # The directive simply being absent is correct now.
         storage "raft" {
-          path    = "/openbao/data"
+          path    = "/openbao/file"
           node_id = "spine-vault-laptop-1"
         }
         listener "tcp" {
@@ -51,7 +53,7 @@ services:
         api_addr = "http://0.0.0.0:8200"
         cluster_addr = "http://0.0.0.0:8201"
     volumes:
-      - vault_data:/openbao/data
+      - vault_data:/openbao/file
       - vault_logs:/openbao/logs
       - ./policies:/openbao/policies:ro
     command: ["server"]

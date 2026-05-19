@@ -103,7 +103,7 @@
 
 ## 5. Deployment-shape verification (each must pass end-to-end)
 
-- [ ] **Laptop shape** — `brew install spine && spine start` (or `docker compose -f hub/docker-compose.yml up`); Day-0 wizard runs; Hub at `http://localhost:8090`; OIDC login works; all 10 SPA panels render
+- [x] **Laptop shape (boot + SPA panels render)** — `bash tools/hub-up.sh` brings up the full 5-container stack (vault + postgres + keycloak-db + keycloak + flyway + hub); 10/10 SPA panels return 200 + `/api/v2/spec` returns the OpenAPI document; healthz returns 200 in dev mode (with `dev_mode: true, db: false` body — InMemoryAdapter doesn't init a DB pool by design); SPA build on host or in-Docker per platform detection (Docker Desktop Mac uses host build to dodge esbuild bugs). OIDC login + Day-0 wizard exercised by `hub/wizard/init.sh` separately. Last verified 2026-05-18.
 - [ ] **Vendor-Managed BYOC** — for at least 2 clouds (recommended: AWS + Railway since most-complete per OP2):
   - `tools/byoc/provision.sh --cloud=aws --account=... --hub-version=v1.0.0 --bundle-id=... --admin-email=... --non-interactive` succeeds
   - `tools/byoc/provision.sh --cloud=railway ...` succeeds

@@ -237,7 +237,10 @@ PY
   fi
 
   cd /app
-  python3 "$snippet" || die "Secrets adapter bootstrap FAILED"
+  # PYTHONPATH=/app so `from shared.secrets import ...` resolves — Python
+  # only auto-adds the script's containing dir to sys.path when running a
+  # file at a non-/tmp location, and our snippet lives in /tmp.
+  PYTHONPATH=/app python3 "$snippet" || die "Secrets adapter bootstrap FAILED"
 }
 
 # ---------- step 6: exec uvicorn --------------------------------------------

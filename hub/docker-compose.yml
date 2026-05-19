@@ -46,9 +46,11 @@ services:
       BAO_LOG_FORMAT: json
       BAO_LOCAL_CONFIG: |
         ui = true
-        disable_mlock = false
+        # OpenBao dropped support for the `disable_mlock` directive (>=2.x);
+        # the upstream guidance is to disable swap or encrypt it instead.
+        # The directive simply being absent is correct now.
         storage "raft" {
-          path    = "/openbao/data"
+          path    = "/openbao/file"
           node_id = "spine-hub-vault-1"
         }
         listener "tcp" {
@@ -58,7 +60,7 @@ services:
         api_addr = "http://0.0.0.0:8200"
         cluster_addr = "http://0.0.0.0:8201"
     volumes:
-      - vault_data:/openbao/data
+      - vault_data:/openbao/file
       - vault_logs:/openbao/logs
     command: ["server"]
     healthcheck:
@@ -120,9 +122,15 @@ services:
     ports:
       - "${KEYCLOAK_HTTP_PORT:-8081}:8080"
       - "${KEYCLOAK_MGMT_PORT:-9001}:9000"
+    # `start --optimized` requires a pre-built Keycloak image (`kc.sh build`
+    # baked in during image creation); the bare `quay.io/keycloak/keycloak`
+    # image isn't pre-optimized so we either (a) `start-dev` for laptop dev
+    # or (b) `start` (auto-builds at boot, slower first start) for prod.
+    # Default to `start-dev` because the SPINE_HUB_DEV=1 env-file in
+    # tools/laptop-up.sh + hub/tests/test-hub-up.sh is what laptop dev runs;
+    # operators on prod build a baked image + override SPINE_KEYCLOAK_IMAGE.
     command:
-      - start
-      - --optimized
+      - start-dev
       - --http-enabled=true
       - --hostname-strict=false
     networks:

@@ -426,7 +426,17 @@ def create_app() -> FastAPI:
 
     @app.get("/healthz", tags=["health"])
     async def healthz() -> JSONResponse:
-        """Liveness — DB ping + MCP registry import."""
+        """Liveness — DB ping + MCP registry import.
+
+        Returns 200 in two cases:
+          - prod: db_ok AND mcp_ok
+          - dev:  mcp_ok (db is intentionally absent in InMemoryAdapter
+                  mode; reporting unhealthy would page on-call for what
+                  is by-design behavior)
+        """
+        import os as _os
+
+        dev_mode = _os.environ.get("SPINE_HUB_DEV") == "1"
         db_ok = await get_db_pool().ping()
         mcp_ok = True
         try:
@@ -436,7 +446,13 @@ def create_app() -> FastAPI:
                 discover_tools("shared.mcp.tools")
         except Exception:  # noqa: BLE001
             mcp_ok = False
-        body = {"ok": db_ok and mcp_ok, "db": db_ok, "mcp": mcp_ok, "hub_id": HUB_ID}
+        body = {
+            "ok": (db_ok and mcp_ok) if not dev_mode else mcp_ok,
+            "db": db_ok,
+            "mcp": mcp_ok,
+            "dev_mode": dev_mode,
+            "hub_id": HUB_ID,
+        }
         return JSONResponse(body, status_code=200 if body["ok"] else 503)
 
     @app.get("/readyz", tags=["health"])

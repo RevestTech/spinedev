@@ -31,6 +31,18 @@
 ARG BUILDPLATFORM
 ARG TARGETPLATFORM
 ARG PYTHON_VERSION=3.11
+# SPA source: the runtime stage does `COPY --from=spa-dist`. By default
+# spa-dist resolves to the in-Docker spa-dist stage below (builds SPA
+# inside Docker; correct for Linux CI runners + customer clouds).
+# Operators on Docker Desktop Mac (which hits upstream esbuild bugs)
+# can override with buildx --build-context:
+#
+#   cd shared/ui/spa && npm install && npm run build && cd ../../..
+#   docker buildx build \
+#     --build-context spa-dist=shared/ui/spa/dist \
+#     -t spine/hub -f hub/Dockerfile .
+#
+# Wrapper at tools/hub-build.sh picks the right path automatically.
 
 # --- Stage 1: builder (compiles wheels for the target arch) ------------------
 # Using BUILDPLATFORM here ensures cross-arch builds compile native deps in a
@@ -79,7 +91,7 @@ RUN pip wheel --wheel-dir /wheels \
 # fatal on slim images that strip libc bits it depends on. Full image
 # adds ~150 MB to BUILDER stage only (not runtime; final stage uses
 # python:3.11-slim). Audit fix 2026-05-18.
-FROM --platform=${BUILDPLATFORM:-linux/amd64} node:20.18.0 AS spa-builder
+FROM --platform=${BUILDPLATFORM:-linux/amd64} node:20.18.0 AS spa-build
 
 # DO NOT set NODE_ENV=production here — vite + svelte + tailwind are
 # devDependencies; production mode skips them and `vite build` fails
@@ -104,6 +116,16 @@ RUN npm install --no-audit --no-fund
 # Copy the rest of the SPA source + build.
 COPY shared/ui/spa/ ./
 RUN npm run build && ls -la dist/
+
+# --- Stage 1c: SPA canonical-dist alias --------------------------------------
+# Scratch stage whose root IS the dist/ contents. This is what the runtime
+# stage's `COPY --from=spa-dist` reads. Naming this stage `spa-dist` lets
+# buildx --build-context spa-dist=<host-dir> swap it out cleanly — when the
+# operator passes a host build context, that dir becomes the spa-dist
+# "stage" filesystem; root files (index.html, _app/, favicon.svg) line up
+# regardless of source.
+FROM scratch AS spa-dist
+COPY --from=spa-build /spa/dist/ /
 
 # --- Stage 2: runtime --------------------------------------------------------
 FROM --platform=${TARGETPLATFORM:-linux/amd64} python:${PYTHON_VERSION}-slim AS runtime
@@ -169,9 +191,15 @@ COPY --chown=spine:spine devops/       /app/devops/
 # development only invalidate this layer.
 COPY --chown=spine:spine hub/          /app/hub/
 
-# Hub SPA — copied from the dedicated spa-builder stage. shared/api/app.py
-# resolves /app/static/spa by default (SPINE_SPA_DIST env override possible).
-COPY --from=spa-builder --chown=spine:spine /spa/dist /app/static/spa
+# Hub SPA — copied from the canonical spa-dist source. By default this
+# is the in-Docker spa-dist scratch stage above (root = built dist/
+# contents). Operators on Docker-Desktop-affected hosts can override
+# via buildx --build-context spa-dist=<host-dist-dir>; that directory
+# becomes the spa-dist "stage" filesystem so the COPY below reads
+# from the same path layout in either mode. shared/api/app.py
+# resolves /app/static/spa by default (SPINE_SPA_DIST env override
+# possible).
+COPY --from=spa-dist --chown=spine:spine / /app/static/spa/
 
 # Ensure the per-subsystem __init__.py marker is recognized by Python.
 RUN find /app -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
