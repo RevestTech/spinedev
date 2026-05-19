@@ -27,6 +27,7 @@
   // All 10 surfaces shipped 2026-05-18 across SPA1+SPA2+SPA3.
   const items: NavItem[] = [
     { label: 'Dashboard', href: '/', surface: 'dashboard', shipped: true },
+    { label: 'Projects', href: '/projects', surface: 'projects', shipped: true },
     { label: 'Decision queue', href: '/panels/decision-queue', surface: 'decisions', shipped: true },
     { label: 'Talk to a role', href: '/panels/role-chat', surface: 'role_chat', shipped: true },
     { label: 'Master roles', href: '/panels/master-roles', surface: 'master_roles', shipped: true },

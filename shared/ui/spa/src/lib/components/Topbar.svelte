@@ -44,6 +44,13 @@
 
   <nav class="hidden items-center gap-1 md:flex" aria-label="Primary">
     <a
+      href="{base}/projects"
+      class="rounded-md px-3 py-1.5 text-sm hover:bg-surface-100 dark:hover:bg-surface-700"
+      class:bg-surface-100={$page.url.pathname.startsWith(base + '/projects') && !$page.url.pathname.includes('/panels/')}
+    >
+      Projects
+    </a>
+    <a
       href="{base}/panels/decision-queue"
       class="rounded-md px-3 py-1.5 text-sm hover:bg-surface-100 dark:hover:bg-surface-700"
       class:bg-surface-100={$page.url.pathname.startsWith(base + '/panels/decision-queue')}
