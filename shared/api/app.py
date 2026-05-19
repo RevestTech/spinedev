@@ -36,7 +36,7 @@ from typing import Any, AsyncIterator, Optional
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -383,6 +383,21 @@ def _mount_spa(app: FastAPI, *, dist_dir: Path = DEFAULT_SPA_DIST) -> None:
         if not index_file.exists():
             raise HTTPException(status_code=500, detail="spa index.html missing")
         return FileResponse(index_file, media_type="text/html")
+
+    # Bare-path redirects: bookmarked or pasted URLs like /panels/foo or
+    # /auth/login (without the /spa prefix) 301-redirect into the SPA
+    # mount so users never see a 404 from a stale cache / link.
+    @app.get("/panels/{path:path}", include_in_schema=False)
+    async def _redirect_panels(path: str) -> RedirectResponse:
+        return RedirectResponse(url=f"/spa/panels/{path}", status_code=301)
+
+    @app.get("/auth/{path:path}", include_in_schema=False)
+    async def _redirect_auth(path: str) -> RedirectResponse:
+        return RedirectResponse(url=f"/spa/auth/{path}", status_code=301)
+
+    @app.get("/", include_in_schema=False)
+    async def _root_redirect() -> RedirectResponse:
+        return RedirectResponse(url="/spa/", status_code=302)
 
     logger.info("spa_mounted", extra={"dist_dir": str(dist_dir)})
 
