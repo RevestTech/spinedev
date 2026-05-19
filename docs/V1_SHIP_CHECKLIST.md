@@ -111,7 +111,8 @@
   - Teardown: `tools/byoc/provision.sh --destroy --cloud=aws --account=...` cleans up
 - [ ] **Customer-managed-cloud** — Helm chart smoke-tested on EKS/AKS/GKE (at least 1; AWS recommended)
 - [ ] **Self-hosted on-prem** — same Helm chart on vanilla K8s smoke-tested (Rancher Desktop / k3s acceptable for the smoke)
-- [ ] **DR drill** — `tools/dr-test.sh` runs against laptop shape; backup taken; restore-to-throwaway environment within RTO ≤ 30 min per #32 layer 4
+- [x] **DR drill (wiring + dry-run)** — `tools/dr-test.sh --dry-run` validates Python driver wiring; real-run against `file://` target correctly reports `no_completed_backup_run_found` anomaly when DB has no backup history (the failure shape an operator hits before configuring backups, exercised end-to-end). 97/97 recovery tests pass. Last verified 2026-05-18.
+- [ ] **DR drill (timed end-to-end RTO ≤ 30 min)** — actual backup→restore→verify cycle against customer-grade infra. Deferred until §6 first design partner run; the laptop loop has no real Postgres state worth restoring, so timing is synthetic. Operator runbook in `docs/DR_RUNBOOK.md`.
 
 ## 6. Customer onboarding flow end-to-end
 
