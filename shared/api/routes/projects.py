@@ -55,6 +55,12 @@ class ProjectCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
     project_type: ProjectType
     owner: Optional[str] = None
+    # SPA "Kind" dropdown maps `greenfield` → project_type='feature' + this
+    # flag so the intake role skips the "read existing code first" preamble.
+    # Optional + ignored if not set; backend-only metadata, not stored as a
+    # separate column for #19 (the 7 work-item types stay canonical).
+    greenfield: Optional[bool] = None
+    description: Optional[str] = Field(default=None, max_length=2000)
 
 
 class ProjectUpdate(BaseModel):

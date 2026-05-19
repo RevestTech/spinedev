@@ -21,18 +21,33 @@
   type ProjectType =
     | 'feature' | 'bug' | 'incident' | 'support' | 'refactor' | 'infra' | 'compliance';
 
-  const TYPE_OPTIONS: { value: ProjectType; label: string; hint: string }[] = [
-    { value: 'feature',    label: 'Feature',    hint: 'Net-new capability — build me X' },
-    { value: 'bug',        label: 'Bug',        hint: 'Existing behavior is broken; fix it' },
-    { value: 'refactor',   label: 'Refactor',   hint: 'Clean up / restructure existing code' },
-    { value: 'incident',   label: 'Incident',   hint: 'Production is on fire; respond + write a post-mortem' },
-    { value: 'support',    label: 'Support',    hint: 'Customer-facing question or change' },
-    { value: 'infra',      label: 'Infra',      hint: 'Deploy / scale / migrate infrastructure' },
-    { value: 'compliance', label: 'Compliance', hint: 'SOC 2 / GDPR / sector control work' }
+  // UI-only "kind" — `greenfield` maps to backend project_type='feature' with
+  // a metadata.greenfield:true marker so the intake role skips the
+  // "read existing code first" preamble. All other kinds 1:1 with the
+  // 7 work-item types per #19. Greenfield is listed FIRST because that's
+  // most vibecoder/startup users' actual job-to-be-done; the other 7 are
+  // for teams operating against an existing codebase.
+  type ProjectKind = 'greenfield' | ProjectType;
+
+  const KIND_OPTIONS: { value: ProjectKind; label: string; hint: string }[] = [
+    { value: 'greenfield', label: 'New project (greenfield)', hint: 'Start a new app / service / codebase from scratch' },
+    { value: 'feature',    label: 'Feature (existing code)',   hint: 'Add a capability to a project you already have' },
+    { value: 'bug',        label: 'Bug',                       hint: 'Existing behavior is broken; fix it' },
+    { value: 'refactor',   label: 'Refactor',                  hint: 'Clean up / restructure existing code' },
+    { value: 'incident',   label: 'Incident',                  hint: 'Production is on fire; respond + write a post-mortem' },
+    { value: 'support',    label: 'Support',                   hint: 'Customer-facing question or change' },
+    { value: 'infra',      label: 'Infra',                     hint: 'Deploy / scale / migrate infrastructure' },
+    { value: 'compliance', label: 'Compliance',                hint: 'SOC 2 / GDPR / sector control work' }
   ];
 
+  function kindToBackend(kind: ProjectKind): { type: ProjectType; greenfield: boolean } {
+    return kind === 'greenfield'
+      ? { type: 'feature', greenfield: true }
+      : { type: kind, greenfield: false };
+  }
+
   let name = '';
-  let projectType: ProjectType = 'feature';
+  let projectKind: ProjectKind = 'greenfield';
   let description = '';
   let submitting = false;
   let error: string | null = null;
@@ -68,14 +83,23 @@
     submitting = true;
     error = null;
     try {
+      const { type, greenfield } = kindToBackend(projectKind);
       const body: Record<string, unknown> = {
         name: name.trim(),
-        project_type: projectType
+        project_type: type
       };
       if (description.trim()) body.description = description.trim();
-      const res = await api.post<{ project_id: string }>('/api/v2/projects', body);
+      if (greenfield) body.greenfield = true;
+      const res = await api.post<{
+        status?: string;
+        data?: { project_id?: string };
+        error?: { message?: string };
+      }>('/api/v2/projects', body);
+      if (res.status === 'error') {
+        throw new Error(res.error?.message || 'Project creation returned status=error');
+      }
+      console.info('project created:', res.data?.project_id);
       goto(`${base}/panels/decision-queue`);
-      console.info('project created:', res.project_id);
     } catch (e) {
       error = (e as Error).message || 'Project creation failed';
     } finally {
@@ -116,13 +140,13 @@
     </label>
 
     <label class="flex flex-col gap-1">
-      <span class="text-sm text-surface-700 dark:text-surface-200">Type</span>
+      <span class="text-sm text-surface-700 dark:text-surface-200">Kind</span>
       <select
-        bind:value={projectType}
+        bind:value={projectKind}
         class="rounded-md border border-surface-300 bg-white px-3 py-2 text-sm focus:border-accent focus:outline-none dark:border-surface-600 dark:bg-surface-700 dark:text-surface-50"
         data-testid="new-project-type"
       >
-        {#each TYPE_OPTIONS as opt (opt.value)}
+        {#each KIND_OPTIONS as opt (opt.value)}
           <option value={opt.value}>{opt.label}</option>
         {/each}
       </select>
@@ -143,7 +167,7 @@
 
     <div class="md:col-span-3 flex items-center justify-between">
       <p class="text-xs text-surface-700/70 dark:text-surface-200/70">
-        {TYPE_OPTIONS.find((o) => o.value === projectType)?.hint}
+        {KIND_OPTIONS.find((o) => o.value === projectKind)?.hint}
       </p>
       <button
         type="submit"
