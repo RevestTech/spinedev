@@ -309,6 +309,22 @@ _RUN_BLOCK_RE = re.compile(
     re.MULTILINE | re.DOTALL,
 )
 _WORKSPACE_ROOT = Path(_os.environ.get("SPINE_PROJECTS_ROOT", "/var/lib/spine/projects"))
+_WORKSPACE_ROOT_HOST = _os.environ.get("SPINE_PROJECTS_DIR_HOST", str(_WORKSPACE_ROOT))
+
+
+def _workspace_host_path(project_uuid: str) -> str:
+    """Equivalent host path for a project's workspace dir.
+
+    Inside the container we always use /var/lib/spine/projects/<uuid>;
+    on the host the bind-mount target is whatever
+    SPINE_PROJECTS_DIR resolved to in tools/hub-up.sh (default
+    ~/spine-projects). The workspace UI shows THIS path so the user
+    knows where their files actually are.
+    """
+    host = _WORKSPACE_ROOT_HOST.rstrip("/")
+    if host.startswith("~"):
+        host = _os.path.expanduser(host)
+    return f"{host}/{project_uuid}"
 
 
 def _parse_engineer_output(text: str) -> tuple[str, list[tuple[str, str]], str]:
@@ -919,6 +935,7 @@ async def _dispatch_engineer_codegen(*, project: dict[str, Any]) -> None:
         "code_files": [{"path": p, "bytes": len(c)} for p, c in files],
         "code_run_block": run_block,
         "code_workspace": str((_WORKSPACE_ROOT / project_id).resolve()),
+        "code_workspace_host": _workspace_host_path(project_id),
     })
 
     # Build card body: intro + file tree + run block.
@@ -1277,6 +1294,7 @@ async def _dispatch_engineer_codegen_with_feedback(*, project: dict[str, Any]) -
         "code_files": [{"path": p, "bytes": len(c)} for p, c in files],
         "code_run_block": run_block,
         "code_workspace": str((_WORKSPACE_ROOT / project_id).resolve()),
+        "code_workspace_host": _workspace_host_path(project_id),
         "code_fix_iteration": int(prior.get("code_fix_iteration", 0)) + 1,
     })
 

@@ -241,6 +241,11 @@ services:
       # actually call out. Prod uses vault directly (no env touch).
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      # Host-side projects directory — surfaced in the workspace UI so
+      # the user knows where to find generated files on their laptop.
+      # Inside the container the path stays /var/lib/spine/projects;
+      # this is the EQUIVALENT host path (bind-mount target).
+      SPINE_PROJECTS_DIR_HOST: ${SPINE_PROJECTS_DIR:-./_projects}
       SPINE_FEDERATION_PARENT_HUB: ${SPINE_FEDERATION_PARENT_HUB:-}
       SPINE_HUB_ID: ${SPINE_HUB_ID:-}
       # --- Vault AppRole login (NON-SECRET hints; the wrapped secret-id is
@@ -255,6 +260,12 @@ services:
       # NOT secrets. Per #34 (workspace hygiene), this is where .spine/work/
       # and .spine/archive/ live for the hub itself.
       - hub_state:/var/lib/spine
+      # Generated project files — bind-mounted to a HOST directory the
+      # user picked via SPINE_PROJECTS_DIR (defaults to ~/spine-projects
+      # via tools/hub-up.sh). Engineer writes per-project subdirs here:
+      #   ${SPINE_PROJECTS_DIR}/<project-uuid>/...
+      # Editing files on the host immediately reflects in the workspace.
+      - ${SPINE_PROJECTS_DIR:-./_projects}:/var/lib/spine/projects
     ports:
       - "${SPINE_HUB_HOST_PORT:-8090}:8080"
       # Project-deploy port range — when a project is "local deployed",

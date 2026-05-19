@@ -689,6 +689,15 @@
           Download .zip
         </a>
       </header>
+      {#if project.metadata?.code_workspace_host}
+        <p class="mb-3 text-xs text-surface-700/80 dark:text-surface-200/80">
+          📁 Files on your machine:
+          <code class="ml-1 break-all font-mono">{project.metadata.code_workspace_host}</code>
+          <span class="ml-2 text-surface-700/50 dark:text-surface-200/50">
+            (edit directly — bind-mounted into the Hub workspace)
+          </span>
+        </p>
+      {/if}
       <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
         <ul class="panel-card md:col-span-1 max-h-96 overflow-y-auto text-xs font-mono">
           {#each codeFiles as f (f.path)}
