@@ -10,7 +10,7 @@
   import PanelHeader from '$lib/components/PanelHeader.svelte';
   import ErrorBanner from '$lib/components/ErrorBanner.svelte';
   import LoadingSpinner from '$lib/components/LoadingSpinner.svelte';
-  import { api } from '$lib/api/client';
+  import { api, subscribeSse } from '$lib/api/client';
 
   interface ProjectRow {
     project_id: string;
@@ -29,6 +29,58 @@
   let loading = true;
   let error: string | null = null;
   let pollHandle: number | null = null;
+
+  // Live per-project role tracking via SSE.
+  let activeByProject: Record<string, { role: string; startedAt: number }> = {};
+  // Per-project pending-decision count (rolling from SSE).
+  let pendingByProject: Record<string, number> = {};
+  let sseSub: { close: () => void } | null = null;
+  let nowTick = Date.now();
+  let nowInterval: number | null = null;
+
+  async function loadPendingCounts() {
+    try {
+      const res = await api.get<{ items: any[] }>('/api/v2/decisions?status=pending');
+      const counts: Record<string, number> = {};
+      for (const card of res.items ?? []) {
+        const pid = card.project_id || card.metadata?.project_uuid;
+        if (!pid) continue;
+        counts[pid] = (counts[pid] ?? 0) + 1;
+      }
+      pendingByProject = counts;
+    } catch {
+      // best-effort
+    }
+  }
+
+  function subscribeFeed() {
+    if (sseSub) return;
+    sseSub = subscribeSse<any>(
+      '/api/v2/decisions/subscribe',
+      {
+        onMessage: (raw) => {
+          if (!raw) return;
+          const ev = raw as any;
+          const pid = ev.project_uuid ?? ev.card?.project_id ?? ev.card?.metadata?.project_uuid;
+          if (!pid) return;
+          if (ev.type === 'role_started') {
+            activeByProject = { ...activeByProject, [pid]: { role: ev.role, startedAt: (ev.ts ?? Date.now() / 1000) * 1000 } };
+          } else if (ev.type === 'role_finished' || ev.type === 'role_failed') {
+            const next = { ...activeByProject };
+            delete next[pid];
+            activeByProject = next;
+            loadPendingCounts();
+          } else if (ev.type === 'card_created' || ev.type === 'card_updated') {
+            loadPendingCounts();
+          }
+        },
+        onError: () => {
+          sseSub = null;
+          setTimeout(() => subscribeFeed(), 3000);
+        }
+      }
+    );
+  }
 
   async function load() {
     try {
@@ -79,11 +131,17 @@
 
   onMount(() => {
     load();
+    loadPendingCounts();
+    subscribeFeed();
     pollHandle = window.setInterval(load, 5000) as unknown as number;
+    nowInterval = window.setInterval(() => { nowTick = Date.now(); }, 1000) as unknown as number;
   });
 
   onDestroy(() => {
     if (pollHandle !== null) window.clearInterval(pollHandle);
+    if (nowInterval !== null) window.clearInterval(nowInterval);
+    sseSub?.close();
+    sseSub = null;
   });
 </script>
 
@@ -124,6 +182,9 @@
       </thead>
       <tbody>
         {#each projects as p (p.project_id)}
+          {@const active = activeByProject[p.project_id]}
+          {@const pending = pendingByProject[p.project_id] ?? 0}
+          {@const elapsed = active ? Math.max(0, Math.round((nowTick - active.startedAt) / 1000)) : 0}
           <tr class="border-t border-surface-200 hover:bg-surface-50 dark:border-surface-700 dark:hover:bg-surface-700">
             <td class="px-3 py-2">
               <a
@@ -132,6 +193,22 @@
               >
                 {p.name}
               </a>
+              <div class="mt-1 flex flex-wrap items-center gap-2">
+                {#if active}
+                  <span class="inline-flex items-center gap-1 rounded-full bg-accent px-2 py-0.5 text-[0.65rem] font-medium text-white">
+                    <span class="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-white"></span>
+                    {active.role} · {elapsed}s
+                  </span>
+                {/if}
+                {#if pending > 0}
+                  <a
+                    href="{base}/panels/decision-queue"
+                    class="inline-flex items-center gap-1 rounded-full bg-severity-warning px-2 py-0.5 text-[0.65rem] font-medium text-white hover:opacity-90"
+                  >
+                    ⚠ {pending} pending decision{pending === 1 ? '' : 's'}
+                  </a>
+                {/if}
+              </div>
             </td>
             <td class="px-3 py-2 text-surface-700 dark:text-surface-200">{p.project_type}</td>
             <td class="px-3 py-2">

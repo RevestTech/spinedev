@@ -20,10 +20,12 @@
 
   let sidebarOpen = false;
 
-  // SSE: open once at the layout level so multiple panels share the stream.
+  // SSE + initial load: open once at the layout level so multiple panels
+  // share the stream + topbar pending-count badge reflects DB truth.
   onMount(() => {
     if (data.user) {
-      decisions.connect();
+      decisions.load();      // initial fetch so pendingCount > 0 on first paint
+      decisions.connect();   // SSE keeps it live
     }
     return () => decisions.disconnect();
   });
