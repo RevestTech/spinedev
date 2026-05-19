@@ -11,6 +11,7 @@
 -->
 <script lang="ts">
   import { page } from '$app/stores';
+  import { base } from '$app/paths';
 
   export let open = false;
   export let onClose: (() => void) | null = null;
@@ -59,10 +60,10 @@
     {#each items as it (it.surface)}
       {#if it.shipped}
         <a
-          href={it.href}
+          href={base + it.href}
           class="flex items-center justify-between rounded-md px-3 py-2 text-sm hover:bg-surface-100 dark:hover:bg-surface-700"
-          class:bg-accent={$page.url.pathname === it.href}
-          class:text-white={$page.url.pathname === it.href}
+          class:bg-accent={$page.url.pathname === base + it.href}
+          class:text-white={$page.url.pathname === base + it.href}
           on:click={() => onClose?.()}
         >
           <span>{it.label}</span>

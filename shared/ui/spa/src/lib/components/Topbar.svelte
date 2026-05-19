@@ -6,6 +6,7 @@
 -->
 <script lang="ts">
   import { page } from '$app/stores';
+  import { base } from '$app/paths';
   import { user } from '$lib/stores/user';
   import { pendingCount } from '$lib/stores/decisions';
 
@@ -29,7 +30,7 @@
         <span aria-hidden="true">&#9776;</span>
       </button>
     {/if}
-    <a href="/" class="flex items-center gap-2 font-semibold text-surface-900 dark:text-surface-50">
+    <a href="{base}/" class="flex items-center gap-2 font-semibold text-surface-900 dark:text-surface-50">
       <span class="text-accent">{'/'}</span>
       <span class="truncate">{title}</span>
     </a>
@@ -43,9 +44,9 @@
 
   <nav class="hidden items-center gap-1 md:flex" aria-label="Primary">
     <a
-      href="/panels/decision-queue"
+      href="{base}/panels/decision-queue"
       class="rounded-md px-3 py-1.5 text-sm hover:bg-surface-100 dark:hover:bg-surface-700"
-      class:bg-surface-100={$page.url.pathname.startsWith('/panels/decision-queue')}
+      class:bg-surface-100={$page.url.pathname.startsWith(base + '/panels/decision-queue')}
     >
       Decisions
       {#if $pendingCount > 0}
@@ -55,9 +56,9 @@
       {/if}
     </a>
     <a
-      href="/panels/role-chat"
+      href="{base}/panels/role-chat"
       class="rounded-md px-3 py-1.5 text-sm hover:bg-surface-100 dark:hover:bg-surface-700"
-      class:bg-surface-100={$page.url.pathname.startsWith('/panels/role-chat')}
+      class:bg-surface-100={$page.url.pathname.startsWith(base + '/panels/role-chat')}
     >
       Talk to a Role
     </a>
@@ -68,9 +69,9 @@
       <span class="hidden truncate text-sm text-surface-700 dark:text-surface-200 sm:inline">
         {$user.username}
       </span>
-      <a href="/auth/logout" class="btn-ghost text-sm" data-testid="logout-link">Sign out</a>
+      <a href="{base}/auth/logout" class="btn-ghost text-sm" data-testid="logout-link">Sign out</a>
     {:else}
-      <a href="/auth/login" class="btn-primary text-sm" data-testid="login-link">Sign in</a>
+      <a href="{base}/auth/login" class="btn-primary text-sm" data-testid="login-link">Sign in</a>
     {/if}
   </div>
 </header>

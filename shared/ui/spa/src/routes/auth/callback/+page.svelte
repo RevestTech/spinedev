@@ -21,6 +21,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { browser } from '$app/environment';
+  import { base } from '$app/paths';
   import LoadingSpinner from '$lib/components/LoadingSpinner.svelte';
   import ErrorBanner from '$lib/components/ErrorBanner.svelte';
 
@@ -51,7 +52,7 @@
   <div class="panel-card w-full max-w-md text-center">
     {#if error}
       <ErrorBanner kind="error" message={error} />
-      <a href="/auth/login" class="btn-primary mt-4 inline-flex">Try sign-in again</a>
+      <a href="{base}/auth/login" class="btn-primary mt-4 inline-flex">Try sign-in again</a>
     {:else if stage === 'forwarding'}
       <h1 class="text-lg font-semibold text-surface-900 dark:text-surface-50">Finalising sign-in</h1>
       <div class="mt-4 flex justify-center">

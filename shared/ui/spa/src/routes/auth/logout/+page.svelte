@@ -10,6 +10,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { browser } from '$app/environment';
+  import { base } from '$app/paths';
   import { clearUser } from '$lib/stores/user';
   import LoadingSpinner from '$lib/components/LoadingSpinner.svelte';
   import ErrorBanner from '$lib/components/ErrorBanner.svelte';
@@ -32,7 +33,7 @@
         // The backend already 302'd us to Keycloak end-session; if the
         // browser didn't honour the redirect (e.g. CORS edge case in
         // sub-path deploys), fall back to the SPA root.
-        setTimeout(() => window.location.assign('/'), 250);
+        setTimeout(() => window.location.assign(base + '/'), 250);
       } catch (e) {
         error = (e as Error).message || 'logout failed';
       }
