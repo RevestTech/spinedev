@@ -22,47 +22,47 @@ BEGIN;
 
 CREATE SCHEMA IF NOT EXISTS spine_recording;
 COMMENT ON SCHEMA spine_recording IS
-  'Unified recording: cost ledger, telemetry, and reporting feeds across all Spine subsystems.';
+'Unified recording: cost ledger, telemetry, and reporting feeds across all Spine subsystems.';
 
 CREATE TABLE IF NOT EXISTS spine_recording.costs (
-    id                BIGSERIAL    PRIMARY KEY,
-    ts                TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-    project_id        BIGINT,
-    phase             TEXT,
-    actor             TEXT,
-    pipeline_version  TEXT,
-    model_id          TEXT,
-    tier_id           TEXT,
-    tokens_in         INTEGER      NOT NULL DEFAULT 0,
-    tokens_out        INTEGER      NOT NULL DEFAULT 0,
-    wall_s            DOUBLE PRECISION NOT NULL DEFAULT 0,
-    cost_usd          NUMERIC(14,6) NOT NULL DEFAULT 0,
-    metadata          JSONB        NOT NULL DEFAULT '{}'::jsonb
+    id BIGSERIAL PRIMARY KEY,
+    ts TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    project_id BIGINT,
+    phase TEXT,
+    actor TEXT,
+    pipeline_version TEXT,
+    model_id TEXT,
+    tier_id TEXT,
+    tokens_in INTEGER NOT NULL DEFAULT 0,
+    tokens_out INTEGER NOT NULL DEFAULT 0,
+    wall_s DOUBLE PRECISION NOT NULL DEFAULT 0,
+    cost_usd NUMERIC(14, 6) NOT NULL DEFAULT 0,
+    metadata JSONB NOT NULL DEFAULT '{}'::JSONB
 );
 
 COMMENT ON TABLE spine_recording.costs IS
-  'Unified cost ledger: every Plan/Build/Verify/Orchestrator LLM call lands here (REQ-INIT-9 FR-7).';
+'Unified cost ledger: every Plan/Build/Verify/Orchestrator LLM call lands here (REQ-INIT-9 FR-7).';
 
 -- subsystem — discriminator that makes per-subsystem rollups possible.
 -- NOT NULL with DEFAULT 'unknown' so pre-migration rows survive without
 -- backfill (STORY-9.6.1 acceptance).
 ALTER TABLE spine_recording.costs
-    ADD COLUMN IF NOT EXISTS subsystem TEXT NOT NULL DEFAULT 'unknown';
+ADD COLUMN IF NOT EXISTS subsystem TEXT NOT NULL DEFAULT 'unknown';
 
 ALTER TABLE spine_recording.costs
-    DROP CONSTRAINT IF EXISTS costs_subsystem_chk;
+DROP CONSTRAINT IF EXISTS costs_subsystem_chk;
 ALTER TABLE spine_recording.costs
-    ADD  CONSTRAINT costs_subsystem_chk CHECK (
-        subsystem IN ('plan', 'build', 'verify', 'orchestrator', 'shared', 'unknown')
-    );
+ADD CONSTRAINT costs_subsystem_chk CHECK (
+    subsystem IN ('plan', 'build', 'verify', 'orchestrator', 'shared', 'unknown')
+);
 
 COMMENT ON COLUMN spine_recording.costs.subsystem IS
-  'Which Spine subsystem produced this cost row: plan|build|verify|orchestrator|shared|unknown.';
+'Which Spine subsystem produced this cost row: plan|build|verify|orchestrator|shared|unknown.';
 
 CREATE INDEX IF NOT EXISTS idx_costs_subsystem_ts
-    ON spine_recording.costs (subsystem, ts DESC);
+ON spine_recording.costs (subsystem, ts DESC);
 CREATE INDEX IF NOT EXISTS idx_costs_project_ts
-    ON spine_recording.costs (project_id, ts DESC);
+ON spine_recording.costs (project_id, ts DESC);
 
 -- View 1 — per project_id × phase × subsystem. Primary input to the budget
 -- enforcer (STORY-9.6.3) and the dashboard's per-project cost card.
@@ -71,58 +71,59 @@ SELECT
     project_id,
     phase,
     subsystem,
-    SUM(cost_usd)::numeric  AS total_cost,
-    COUNT(*)::bigint        AS event_count,
-    SUM(tokens_in)::bigint  AS tokens_in_total,
-    SUM(tokens_out)::bigint AS tokens_out_total,
-    MIN(ts)                 AS first_event,
-    MAX(ts)                 AS last_event
-FROM   spine_recording.costs
-GROUP  BY project_id, phase, subsystem;
+    SUM(cost_usd)::NUMERIC AS total_cost,
+    COUNT(*)::BIGINT AS event_count,
+    SUM(tokens_in)::BIGINT AS tokens_in_total,
+    SUM(tokens_out)::BIGINT AS tokens_out_total,
+    MIN(ts) AS first_event,
+    MAX(ts) AS last_event
+FROM spine_recording.costs
+GROUP BY project_id, phase, subsystem;
 
 COMMENT ON VIEW spine_recording.v_cost_per_project IS
-  'Per project_id x phase x subsystem rollup. Consumers: budget enforcer (EPIC-2.3), dashboard, finance export.';
+'Per project_id x phase x subsystem rollup. Consumers: budget enforcer (EPIC-2.3), dashboard, finance export.';
 
 -- View 2 — per actor (user) with day/week/month buckets. Drives per-user
 -- spend caps (STORY-2.3.1) and the user cost meter.
 CREATE OR REPLACE VIEW spine_recording.v_cost_per_user AS
 SELECT
-    actor                            AS user_id,
+    actor AS user_id,
     subsystem,
-    date_trunc('day',   ts)::date    AS day_bucket,
-    date_trunc('week',  ts)::date    AS week_bucket,
-    date_trunc('month', ts)::date    AS month_bucket,
-    SUM(cost_usd)::numeric           AS total_cost,
-    COUNT(*)::bigint                 AS event_count,
-    MIN(ts)                          AS first_event,
-    MAX(ts)                          AS last_event
-FROM   spine_recording.costs
-WHERE  actor IS NOT NULL
-GROUP  BY actor, subsystem,
-          date_trunc('day',   ts),
-          date_trunc('week',  ts),
-          date_trunc('month', ts);
+    DATE_TRUNC('day', ts)::DATE AS day_bucket,
+    DATE_TRUNC('week', ts)::DATE AS week_bucket,
+    DATE_TRUNC('month', ts)::DATE AS month_bucket,
+    SUM(cost_usd)::NUMERIC AS total_cost,
+    COUNT(*)::BIGINT AS event_count,
+    MIN(ts) AS first_event,
+    MAX(ts) AS last_event
+FROM spine_recording.costs
+WHERE actor IS NOT NULL
+GROUP BY
+    actor, subsystem,
+    DATE_TRUNC('day', ts),
+    DATE_TRUNC('week', ts),
+    DATE_TRUNC('month', ts);
 
 COMMENT ON VIEW spine_recording.v_cost_per_user IS
-  'Per-user spend by subsystem with day/week/month buckets. Consumers: per-user budget enforcer (EPIC-2.3), user cost meter.';
+'Per-user spend by subsystem with day/week/month buckets. Consumers: per-user budget enforcer (EPIC-2.3), user cost meter.';
 
 -- View 3 — per org (org_id read via project.org_bundle join). Drives
 -- org-wide spend caps and finance export.
 CREATE OR REPLACE VIEW spine_recording.v_cost_per_org AS
 SELECT
-    p.org_bundle              AS org_id,
+    p.org_bundle AS org_id,
     c.subsystem,
     c.phase,
-    SUM(c.cost_usd)::numeric  AS total_cost,
-    COUNT(*)::bigint          AS event_count,
-    MIN(c.ts)                 AS first_event,
-    MAX(c.ts)                 AS last_event
-FROM   spine_recording.costs    AS c
-JOIN   spine_lifecycle.project  AS p ON p.id = c.project_id
-GROUP  BY p.org_bundle, c.subsystem, c.phase;
+    SUM(c.cost_usd)::NUMERIC AS total_cost,
+    COUNT(*)::BIGINT AS event_count,
+    MIN(c.ts) AS first_event,
+    MAX(c.ts) AS last_event
+FROM spine_recording.costs AS c
+JOIN spine_lifecycle.project AS p ON p.id = c.project_id
+GROUP BY p.org_bundle, c.subsystem, c.phase;
 
 COMMENT ON VIEW spine_recording.v_cost_per_org IS
-  'Per-org rollup via project.org_bundle join. Consumers: org-wide budget enforcer (EPIC-2.3), finance export, multi-tenant billing.';
+'Per-org rollup via project.org_bundle join. Consumers: org-wide budget enforcer (EPIC-2.3), finance export, multi-tenant billing.';
 
 -- View 4 — per pipeline_version. Lets the architect see whether a manifest
 -- change (EPIC-1.7) moved per-project cost up or down.
@@ -131,17 +132,17 @@ SELECT
     pipeline_version,
     subsystem,
     phase,
-    COUNT(DISTINCT project_id)::bigint AS project_count,
-    SUM(cost_usd)::numeric             AS total_cost,
-    AVG(cost_usd)::numeric             AS avg_cost_per_event,
-    COUNT(*)::bigint                   AS event_count,
-    MIN(ts)                            AS first_event,
-    MAX(ts)                            AS last_event
-FROM   spine_recording.costs
-WHERE  pipeline_version IS NOT NULL
-GROUP  BY pipeline_version, subsystem, phase;
+    COUNT(DISTINCT project_id)::BIGINT AS project_count,
+    SUM(cost_usd)::NUMERIC AS total_cost,
+    AVG(cost_usd)::NUMERIC AS avg_cost_per_event,
+    COUNT(*)::BIGINT AS event_count,
+    MIN(ts) AS first_event,
+    MAX(ts) AS last_event
+FROM spine_recording.costs
+WHERE pipeline_version IS NOT NULL
+GROUP BY pipeline_version, subsystem, phase;
 
 COMMENT ON VIEW spine_recording.v_cost_per_pipeline_version IS
-  'Per-pipeline-version cost-impact rollup. Consumers: architect reviewing manifest changes (EPIC-1.7), regression dashboard.';
+'Per-pipeline-version cost-impact rollup. Consumers: architect reviewing manifest changes (EPIC-1.7), regression dashboard.';
 
 COMMIT;

@@ -27,19 +27,19 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;  -- gen_random_uuid()
 -- ─────────────────────────────────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS spine_lifecycle.decision_card (
-    id              UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
-    project_id      BIGINT        REFERENCES spine_lifecycle.project(id) ON DELETE SET NULL,
-    kind            TEXT          NOT NULL,
-    title           TEXT          NOT NULL,
-    body            TEXT          NOT NULL DEFAULT '',
-    severity        TEXT          NOT NULL DEFAULT 'info',
-    status          TEXT          NOT NULL DEFAULT 'pending',
-    pushed_at       TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
-    decided_at      TIMESTAMPTZ,
-    decided_by      TEXT,
-    expires_at      TIMESTAMPTZ,
-    citations       JSONB         NOT NULL DEFAULT '[]'::jsonb,
-    metadata        JSONB         NOT NULL DEFAULT '{}'::jsonb,
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    project_id BIGINT REFERENCES spine_lifecycle.project (id) ON DELETE SET NULL,
+    kind TEXT NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL DEFAULT '',
+    severity TEXT NOT NULL DEFAULT 'info',
+    status TEXT NOT NULL DEFAULT 'pending',
+    pushed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    decided_at TIMESTAMPTZ,
+    decided_by TEXT,
+    expires_at TIMESTAMPTZ,
+    citations JSONB NOT NULL DEFAULT '[]'::JSONB,
+    metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
     CONSTRAINT decision_card_status_chk CHECK (
         status IN ('pending', 'acked', 'rejected', 'superseded', 'expired')
     ),
@@ -48,24 +48,24 @@ CREATE TABLE IF NOT EXISTS spine_lifecycle.decision_card (
     )
 );
 
-COMMENT ON TABLE  spine_lifecycle.decision_card             IS 'Active-push decision cards (#5); persistent across Hub restart + federation.';
-COMMENT ON COLUMN spine_lifecycle.decision_card.id          IS 'External-facing stable decision_id (UUID).';
-COMMENT ON COLUMN spine_lifecycle.decision_card.project_id  IS 'spine_lifecycle.project.id when scoped; NULL for Hub-global cards (briefings, license events).';
-COMMENT ON COLUMN spine_lifecycle.decision_card.kind        IS 'Decision class: approval | incident | release | briefing | budget | policy_change | ... (open text per #19).';
-COMMENT ON COLUMN spine_lifecycle.decision_card.title       IS 'Short summary the SPA renders as the card heading.';
-COMMENT ON COLUMN spine_lifecycle.decision_card.body        IS 'Card body — markdown allowed; up to 8 KiB enforced at API layer.';
-COMMENT ON COLUMN spine_lifecycle.decision_card.severity    IS 'info | warning | critical — drives notification routing per #6.';
-COMMENT ON COLUMN spine_lifecycle.decision_card.status      IS 'pending | acked | rejected | superseded | expired.';
-COMMENT ON COLUMN spine_lifecycle.decision_card.pushed_at   IS 'When the Hub first pushed the card to the user (#5 active push).';
-COMMENT ON COLUMN spine_lifecycle.decision_card.decided_at  IS 'When the user resolved the card; NULL while pending.';
-COMMENT ON COLUMN spine_lifecycle.decision_card.decided_by  IS 'Actor handle that resolved the card (matches audit_event.actor).';
-COMMENT ON COLUMN spine_lifecycle.decision_card.expires_at  IS 'Optional soft expiry; expired cards become status=expired by sweeper.';
-COMMENT ON COLUMN spine_lifecycle.decision_card.citations   IS 'Cite-or-Refuse evidence per #12: list of {kg_node_id|file_line|audit_event_id}.';
-COMMENT ON COLUMN spine_lifecycle.decision_card.metadata    IS 'Free-form JSON (correlation_id, source_role, surface, ...).';
+COMMENT ON TABLE spine_lifecycle.decision_card IS 'Active-push decision cards (#5); persistent across Hub restart + federation.';
+COMMENT ON COLUMN spine_lifecycle.decision_card.id IS 'External-facing stable decision_id (UUID).';
+COMMENT ON COLUMN spine_lifecycle.decision_card.project_id IS 'spine_lifecycle.project.id when scoped; NULL for Hub-global cards (briefings, license events).';
+COMMENT ON COLUMN spine_lifecycle.decision_card.kind IS 'Decision class: approval | incident | release | briefing | budget | policy_change | ... (open text per #19).';
+COMMENT ON COLUMN spine_lifecycle.decision_card.title IS 'Short summary the SPA renders as the card heading.';
+COMMENT ON COLUMN spine_lifecycle.decision_card.body IS 'Card body — markdown allowed; up to 8 KiB enforced at API layer.';
+COMMENT ON COLUMN spine_lifecycle.decision_card.severity IS 'info | warning | critical — drives notification routing per #6.';
+COMMENT ON COLUMN spine_lifecycle.decision_card.status IS 'pending | acked | rejected | superseded | expired.';
+COMMENT ON COLUMN spine_lifecycle.decision_card.pushed_at IS 'When the Hub first pushed the card to the user (#5 active push).';
+COMMENT ON COLUMN spine_lifecycle.decision_card.decided_at IS 'When the user resolved the card; NULL while pending.';
+COMMENT ON COLUMN spine_lifecycle.decision_card.decided_by IS 'Actor handle that resolved the card (matches audit_event.actor).';
+COMMENT ON COLUMN spine_lifecycle.decision_card.expires_at IS 'Optional soft expiry; expired cards become status=expired by sweeper.';
+COMMENT ON COLUMN spine_lifecycle.decision_card.citations IS 'Cite-or-Refuse evidence per #12: list of {kg_node_id|file_line|audit_event_id}.';
+COMMENT ON COLUMN spine_lifecycle.decision_card.metadata IS 'Free-form JSON (correlation_id, source_role, surface, ...).';
 
-CREATE INDEX IF NOT EXISTS idx_decision_card_status_pushed  ON spine_lifecycle.decision_card (status, pushed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_decision_card_status_pushed ON spine_lifecycle.decision_card (status, pushed_at DESC);
 CREATE INDEX IF NOT EXISTS idx_decision_card_project_pushed ON spine_lifecycle.decision_card (project_id, pushed_at DESC);
-CREATE INDEX IF NOT EXISTS idx_decision_card_kind           ON spine_lifecycle.decision_card (kind);
+CREATE INDEX IF NOT EXISTS idx_decision_card_kind ON spine_lifecycle.decision_card (kind);
 
 -- Reuse the shared updated-at trigger if present (V1 ships ``set_updated_at``).
 -- decision_card does NOT track updated_at on every row because status

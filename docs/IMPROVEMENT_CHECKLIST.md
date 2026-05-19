@@ -6,7 +6,7 @@
 > file (not this one) for active v1.0 ship gating. For current Spine v3 status see
 > [`STATUS.md`](STATUS.md); for design decisions see
 > [`V3_DESIGN_DECISIONS.md`](V3_DESIGN_DECISIONS.md).
-
+>
 > **v1.4.4:** **`make selftest`** + **`lib/tests/test-*.sh`**. **v1.4.3:** **`## Long job:`** extension-only + **`costs.csv` `outcome`**. **v1.4.2:** documentation + **`EXTENSIONS`**. **v1.4.0:** Program-delivery framework. **Post–ADR-001 (template):** **13-manager** roster (`engineering-*` top-level roles retired — use **`engineer`** + workers). **v1.3.4:** knowledge-only install + ADR scaffolding. Remaining checklist rows still apply for future hardening.
 
 Actionable items to keep the template healthy. Completion is optional; use as a roadmap.

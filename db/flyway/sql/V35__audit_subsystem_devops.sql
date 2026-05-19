@@ -63,6 +63,6 @@ END $$;
 
 -- Keep the COMMENT in sync with the new catalog so \d+ output stays accurate.
 COMMENT ON COLUMN spine_audit.audit_event.subsystem IS
-    'plan | build | verify | orchestrator | shared | hub | federation | integration | devops.';
+'plan | build | verify | orchestrator | shared | hub | federation | integration | devops.';
 
 COMMIT;

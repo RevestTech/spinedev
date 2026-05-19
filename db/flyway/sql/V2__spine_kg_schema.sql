@@ -31,21 +31,21 @@ COMMENT ON SCHEMA spine_kg IS
 -- ─────────────────────────────────────────────────────────────────────
 
 CREATE TABLE spine_kg.kg_node (
-    id           bigserial   PRIMARY KEY,
-    node_id      text        NOT NULL UNIQUE,
-    type         text        NOT NULL,
-    subtype      text,
-    repo         text        NOT NULL,
-    commit_sha   text        NOT NULL,
-    path         text,
-    name         text,
-    properties   jsonb       NOT NULL DEFAULT '{}'::jsonb,
-    created_at   timestamptz NOT NULL DEFAULT now(),
-    valid_from   timestamptz NOT NULL DEFAULT now(),
-    valid_to     timestamptz
+    id bigserial PRIMARY KEY,
+    node_id text NOT NULL UNIQUE,
+    type text NOT NULL,
+    subtype text,
+    repo text NOT NULL,
+    commit_sha text NOT NULL,
+    path text,
+    name text,
+    properties jsonb NOT NULL DEFAULT '{}'::jsonb,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    valid_from timestamptz NOT NULL DEFAULT now(),
+    valid_to timestamptz
 );
 
-COMMENT ON TABLE  spine_kg.kg_node IS
+COMMENT ON TABLE spine_kg.kg_node IS
 'Core KG entity. Open `type` taxonomy: File/Module/Class/Function/Method/'
 'Variable/TypeDef/TestFile/TestCase/Document/Heading/Reference/Initiative/'
 'Epic/Story/Directive/Report/Role/AuditEvent/Issue/PullRequest/Commit/Person/'
@@ -69,29 +69,29 @@ COMMENT ON COLUMN spine_kg.kg_node.valid_to IS
 'a prior timestamp still resolve cleanly.';
 
 CREATE INDEX idx_kg_node_type_repo_commit
-    ON spine_kg.kg_node (type, repo, commit_sha);
+ON spine_kg.kg_node (type, repo, commit_sha);
 CREATE INDEX idx_kg_node_repo_valid
-    ON spine_kg.kg_node (repo)
-    WHERE valid_to IS NULL;
+ON spine_kg.kg_node (repo)
+WHERE valid_to IS NULL;
 CREATE INDEX idx_kg_node_properties_gin
-    ON spine_kg.kg_node USING gin (properties jsonb_path_ops);
+ON spine_kg.kg_node USING gin (properties jsonb_path_ops);
 
 -- ─────────────────────────────────────────────────────────────────────
 -- kg_edge — typed relationships between nodes
 -- ─────────────────────────────────────────────────────────────────────
 
 CREATE TABLE spine_kg.kg_edge (
-    id            bigserial   PRIMARY KEY,
-    from_node_id  bigint      NOT NULL REFERENCES spine_kg.kg_node (id) ON DELETE CASCADE,
-    to_node_id    bigint      NOT NULL REFERENCES spine_kg.kg_node (id) ON DELETE CASCADE,
-    type          text        NOT NULL,
-    commit_sha    text        NOT NULL,
-    properties    jsonb       NOT NULL DEFAULT '{}'::jsonb,
-    valid_from    timestamptz NOT NULL DEFAULT now(),
-    valid_to      timestamptz
+    id bigserial PRIMARY KEY,
+    from_node_id bigint NOT NULL REFERENCES spine_kg.kg_node (id) ON DELETE CASCADE,
+    to_node_id bigint NOT NULL REFERENCES spine_kg.kg_node (id) ON DELETE CASCADE,
+    type text NOT NULL,
+    commit_sha text NOT NULL,
+    properties jsonb NOT NULL DEFAULT '{}'::jsonb,
+    valid_from timestamptz NOT NULL DEFAULT now(),
+    valid_to timestamptz
 );
 
-COMMENT ON TABLE  spine_kg.kg_edge IS
+COMMENT ON TABLE spine_kg.kg_edge IS
 'Typed relationship between two kg_node rows. Open `type` taxonomy: CALLS, '
 'IMPORTS, DEFINES, REFERENCES, OVERRIDES, EXTENDS, IMPLEMENTS, CONTAINS, '
 'TESTS, COVERS, LINKS_TO, CITES, SUPERSEDES, DERIVED_FROM, APPROVED_BY, '
@@ -101,23 +101,23 @@ COMMENT ON COLUMN spine_kg.kg_edge.commit_sha IS
 'Snapshot commit at which this edge was observed (matches kg_node.commit_sha).';
 
 CREATE INDEX idx_kg_edge_from_type ON spine_kg.kg_edge (from_node_id, type);
-CREATE INDEX idx_kg_edge_to_type   ON spine_kg.kg_edge (to_node_id,   type);
+CREATE INDEX idx_kg_edge_to_type ON spine_kg.kg_edge (to_node_id, type);
 CREATE INDEX idx_kg_edge_type_commit
-    ON spine_kg.kg_edge (type, commit_sha);
+ON spine_kg.kg_edge (type, commit_sha);
 
 -- ─────────────────────────────────────────────────────────────────────
 -- kg_node_embedding — pgvector store (one row per node)
 -- ─────────────────────────────────────────────────────────────────────
 
 CREATE TABLE spine_kg.kg_node_embedding (
-    node_id     bigint      PRIMARY KEY REFERENCES spine_kg.kg_node (id) ON DELETE CASCADE,
-    model       text        NOT NULL,
-    embedding   vector(768) NOT NULL,
-    text_hash   text        NOT NULL,
-    created_at  timestamptz NOT NULL DEFAULT now()
+    node_id bigint PRIMARY KEY REFERENCES spine_kg.kg_node (id) ON DELETE CASCADE,
+    model text NOT NULL,
+    embedding vector(768) NOT NULL,
+    text_hash text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now()
 );
 
-COMMENT ON TABLE  spine_kg.kg_node_embedding IS
+COMMENT ON TABLE spine_kg.kg_node_embedding IS
 'Dense semantic embedding for a node. 768-dim default fits nomic-embed-text-v1 '
 'and most BGE/MiniLM models; switch dimension by amending this column.';
 COMMENT ON COLUMN spine_kg.kg_node_embedding.text_hash IS
@@ -130,9 +130,9 @@ COMMENT ON COLUMN spine_kg.kg_node_embedding.model IS
 -- IVFFlat with cosine distance — good balance of recall and speed at our
 -- expected corpus size (~ tens of thousands of nodes per repo).
 CREATE INDEX idx_kg_embedding_ivfflat_cosine
-    ON spine_kg.kg_node_embedding
-    USING ivfflat (embedding vector_cosine_ops)
-    WITH (lists = 100);
+ON spine_kg.kg_node_embedding
+USING ivfflat (embedding vector_cosine_ops)
+WITH (lists = 100);
 
 -- ─────────────────────────────────────────────────────────────────────
 -- kg_node_property — denormalized hot-key index
@@ -140,8 +140,8 @@ CREATE INDEX idx_kg_embedding_ivfflat_cosine
 
 CREATE TABLE spine_kg.kg_node_property (
     node_id bigint NOT NULL REFERENCES spine_kg.kg_node (id) ON DELETE CASCADE,
-    key     text   NOT NULL,
-    value   text   NOT NULL,
+    key text NOT NULL,
+    value text NOT NULL,
     PRIMARY KEY (node_id, key)
 );
 
@@ -151,19 +151,19 @@ COMMENT ON TABLE spine_kg.kg_node_property IS
 'The (key, value) index supports "find all nodes with key=X, value=Y" in O(log n).';
 
 CREATE INDEX idx_kg_node_property_key_value
-    ON spine_kg.kg_node_property (key, value);
+ON spine_kg.kg_node_property (key, value);
 
 -- ─────────────────────────────────────────────────────────────────────
 -- kg_index_state — per-repo indexer cursor
 -- ─────────────────────────────────────────────────────────────────────
 
 CREATE TABLE spine_kg.kg_index_state (
-    repo                     text        PRIMARY KEY,
-    last_indexed_commit_sha  text        NOT NULL,
-    last_indexed_at          timestamptz NOT NULL DEFAULT now(),
-    node_count               integer     NOT NULL DEFAULT 0,
-    edge_count               integer     NOT NULL DEFAULT 0,
-    embedding_count          integer     NOT NULL DEFAULT 0
+    repo text PRIMARY KEY,
+    last_indexed_commit_sha text NOT NULL,
+    last_indexed_at timestamptz NOT NULL DEFAULT now(),
+    node_count integer NOT NULL DEFAULT 0,
+    edge_count integer NOT NULL DEFAULT 0,
+    embedding_count integer NOT NULL DEFAULT 0
 );
 
 COMMENT ON TABLE spine_kg.kg_index_state IS
@@ -174,11 +174,11 @@ COMMENT ON TABLE spine_kg.kg_index_state IS
 -- Default privileges — let the app role created in V1 use the new schema
 -- ─────────────────────────────────────────────────────────────────────
 
-GRANT USAGE ON SCHEMA spine_kg TO PUBLIC;
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES    IN SCHEMA spine_kg TO PUBLIC;
-GRANT USAGE,  SELECT, UPDATE         ON ALL SEQUENCES IN SCHEMA spine_kg TO PUBLIC;
+GRANT USAGE ON SCHEMA spine_kg TO public;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA spine_kg TO public;
+GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA spine_kg TO public;
 
 ALTER DEFAULT PRIVILEGES IN SCHEMA spine_kg
-    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES    TO PUBLIC;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO public;
 ALTER DEFAULT PRIVILEGES IN SCHEMA spine_kg
-    GRANT USAGE,  SELECT, UPDATE         ON SEQUENCES TO PUBLIC;
+GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO public;

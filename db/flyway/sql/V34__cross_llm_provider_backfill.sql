@@ -46,14 +46,14 @@ ALTER TABLE spine_audit.audit_event DISABLE TRIGGER trg_audit_event_no_update;
 -- and top-level scalars (metadata.provider) are both covered in one pass.
 -- ─────────────────────────────────────────────────────────────────────
 UPDATE spine_audit.audit_event
-SET    metadata = REPLACE(metadata::text, '"provider": "google"', '"provider": "vertex"')::jsonb
-WHERE  metadata::text LIKE '%"provider": "google"%';
+SET metadata = REPLACE(metadata::text, '"provider": "google"', '"provider": "vertex"')::jsonb
+WHERE metadata::text LIKE '%"provider": "google"%';
 
 -- Same rewrite for the compact JSON form (no space after the colon) emitted
 -- by some serialisers (``json.dumps(..., separators=(",", ":"))``).
 UPDATE spine_audit.audit_event
-SET    metadata = REPLACE(metadata::text, '"provider":"google"', '"provider":"vertex"')::jsonb
-WHERE  metadata::text LIKE '%"provider":"google"%';
+SET metadata = REPLACE(metadata::text, '"provider":"google"', '"provider":"vertex"')::jsonb
+WHERE metadata::text LIKE '%"provider":"google"%';
 
 -- ─────────────────────────────────────────────────────────────────────
 -- Step 3: rewrite ``"provider": "local"`` -> ``"provider": "ollama"``.
@@ -62,12 +62,12 @@ WHERE  metadata::text LIKE '%"provider":"google"%';
 -- is no signal in ``metadata`` to disambiguate at backfill time.
 -- ─────────────────────────────────────────────────────────────────────
 UPDATE spine_audit.audit_event
-SET    metadata = REPLACE(metadata::text, '"provider": "local"', '"provider": "ollama"')::jsonb
-WHERE  metadata::text LIKE '%"provider": "local"%';
+SET metadata = REPLACE(metadata::text, '"provider": "local"', '"provider": "ollama"')::jsonb
+WHERE metadata::text LIKE '%"provider": "local"%';
 
 UPDATE spine_audit.audit_event
-SET    metadata = REPLACE(metadata::text, '"provider":"local"', '"provider":"ollama"')::jsonb
-WHERE  metadata::text LIKE '%"provider":"local"%';
+SET metadata = REPLACE(metadata::text, '"provider":"local"', '"provider":"ollama"')::jsonb
+WHERE metadata::text LIKE '%"provider":"local"%';
 
 -- ─────────────────────────────────────────────────────────────────────
 -- Step 4: re-enable the append-only triggers.
