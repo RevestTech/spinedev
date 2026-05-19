@@ -73,7 +73,10 @@ class DecisionCard(BaseModel):
     decision_class: DecisionClass
     project_id: Optional[str] = None
     title: str = Field(..., min_length=1, max_length=200)
-    body: str = Field(default="", max_length=8_000)
+    # Body up to 64 KB so real artifacts (PRD/TRD/impl plan/QA plan) can
+    # ride inline rather than needing a separate fetch. Wave 4 may move
+    # large artifacts to spine_lifecycle.artifact + reduce this cap.
+    body: str = Field(default="", max_length=64_000)
     severity: Literal["info", "warning", "critical"] = "info"
     actions: list[str] = Field(default_factory=lambda: ["ack", "reject"])
     status: DecisionStatus = "pending"

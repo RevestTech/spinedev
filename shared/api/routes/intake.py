@@ -247,6 +247,7 @@ async def _synthesize_prd_and_seed_approval(
                 "kind": "prd_approval",
                 "project_name": project_name,
                 "project_type": project_type,
+                "project_uuid": project_id,
                 "greenfield": bool(greenfield),
                 "advances_phase_to": "plan",
             },

@@ -171,6 +171,7 @@ async def create_project(
             metadata={
                 "kind": "intake_briefing",
                 "project_type": body.project_type,
+                "project_uuid": project_id,
                 "greenfield": bool(body.greenfield),
             },
         )

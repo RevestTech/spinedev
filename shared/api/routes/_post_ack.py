@@ -261,6 +261,7 @@ async def _dispatch_role(
         "metadata": {
             "kind": approval_card_kind,
             "project_name": project_name,
+            "project_uuid": project_id,
             "advances_phase_to": next_phase,
             "produced_by": role,
         },
@@ -279,8 +280,15 @@ async def on_decision_acked(card: Any, *, actor: str) -> None:
     """
     md = getattr(card, "metadata", {}) or {}
     kind = md.get("kind")
-    project_id = getattr(card, "project_id", None)
+    # Card.project_id is a TEXT field on the model but a BIGINT column in
+    # spine_lifecycle.decision_card (V36). The DB persistence drops the
+    # UUID string. Recover from metadata.project_uuid that the enqueueing
+    # site is now responsible for setting.
+    project_id = getattr(card, "project_id", None) or md.get("project_uuid")
     if not project_id:
+        logger.warning("post_ack_no_project_id",
+                       extra={"decision_id": getattr(card, "decision_id", None),
+                              "kind": kind, "metadata_keys": list(md.keys())})
         return
 
     logger.info("post_ack_dispatch", extra={"kind": kind, "project_id": project_id, "actor": actor})
@@ -356,6 +364,7 @@ async def on_decision_acked(card: Any, *, actor: str) -> None:
             "metadata": {
                 "kind": "project_complete",
                 "project_name": project["name"],
+                "project_uuid": project_id,
             },
         })
         return
