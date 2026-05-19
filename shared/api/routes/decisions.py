@@ -542,6 +542,15 @@ async def reject_decision(
     rec = _audit_decision_event(
         action="decision_rejected", decision_id=decision_id, actor=actor, project_id=updated.project_id
     )
+    # Engineer fix-loop — when a code/devops/qa card is rejected,
+    # re-dispatch engineer with the rejection feedback as context.
+    try:
+        import asyncio as _asyncio
+        from shared.api.routes._post_ack import on_decision_rejected
+        _asyncio.create_task(on_decision_rejected(updated, actor=actor))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("post_reject_hook_failed",
+                       extra={"decision_id": decision_id, "error": str(exc)})
     return DecisionActionResponse(
         decision_id=decision_id,
         status=updated.status,

@@ -177,14 +177,15 @@ Output ONLY the markdown.
 
 _RELEASE_MANAGER_PROMPT = """
 You are the Spine **release_manager** role (ITIL change-management
-anchored). QA signed off. Produce a ship-gate checklist.
+anchored). QA signed off. Produce a ship gate + concrete cloud-deploy
+options. The user picks one target post-approval.
 
 SHIP GATE structure (start with `# Ship gate — <Project Name>`):
   1. **Release scope** — one-paragraph summary of what's shipping.
   2. **Go / no-go checklist** — explicit boxes:
      - [ ] PRD signed off
      - [ ] TRD signed off
-     - [ ] Code review complete (or self-review note for solo founders)
+     - [ ] Code review complete
      - [ ] Test plan executed; coverage threshold met
      - [ ] No P0/P1 defects open
      - [ ] Rollback plan documented
@@ -193,7 +194,21 @@ SHIP GATE structure (start with `# Ship gate — <Project Name>`):
   3. **Rollback plan** — concrete steps if launch fails.
   4. **Comms plan** — who gets notified pre/post launch, in what
      order, via what channel.
-  5. **Post-launch retro framing** — 3 questions the team should
+  5. **Cloud deploy options** — for the stack the architect chose,
+     give the user 3-4 viable targets with the **exact shell commands**
+     they'd run from the project workspace. Examples:
+       * Vercel (Next.js / Vite SPA): `vercel deploy` + env-var setup
+       * Railway (any stack with a Procfile or Dockerfile)
+       * Fly.io (Dockerfile)
+       * Render (web service from Git)
+       * Cloudflare Workers / Pages (static + serverless)
+     For each, include:
+       - One-time setup commands (account/CLI install)
+       - Deploy command
+       - Env-var configuration
+       - Custom-domain + TLS notes
+     Recommend ONE as the default with a one-line justification.
+  6. **Post-launch retro framing** — 3 questions the team should
      answer 1 week post-launch.
 
 Output ONLY the markdown.
@@ -421,6 +436,140 @@ async def _dispatch_role(
 
 
 # ---------------------------------------------------------------------------
+# DevOps stand-up — runs the engineer's install commands inside the
+# project workspace, captures output, pushes a card with the result.
+# ---------------------------------------------------------------------------
+
+
+_INSTALL_HINTS = ("npm install", "npm ci", "pip install", "pnpm install",
+                  "yarn install", "yarn", "bundle install", "cargo build",
+                  "cargo fetch", "go mod download", "poetry install",
+                  "uv pip install", "uv sync")
+_DEVOPS_SHELL_TIMEOUT_SECS = 180
+
+
+def _classify_run_block(run_block: str) -> tuple[list[str], list[str]]:
+    """Split bash commands into (install_steps, start_steps).
+
+    Lines that look like long-running servers (npm start / uvicorn /
+    python -m / cargo run / etc) go to start_steps; everything else
+    treated as install. Heuristic — not a full bash parser.
+    """
+    install: list[str] = []
+    start: list[str] = []
+    for raw in run_block.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        lower = line.lower()
+        if any(h in lower for h in _INSTALL_HINTS):
+            install.append(line)
+            continue
+        # Long-running server starts
+        if any(tok in lower for tok in ("npm start", "npm run dev", "yarn dev",
+                                        "uvicorn", "fastapi run", "python -m",
+                                        "python app", "cargo run", "go run",
+                                        "flask run", "rails server")):
+            start.append(line)
+            continue
+        # Mkdir / cd / cp / echo etc → treat as install (cheap setup).
+        install.append(line)
+    return install, start
+
+
+async def _dispatch_devops_install(*, project: dict[str, Any]) -> None:
+    project_id = project["project_uuid"]
+    project_name = project["name"]
+    workspace = (_WORKSPACE_ROOT / project_id).resolve()
+    if not workspace.exists():
+        logger.warning("devops_no_workspace", extra={"project_id": project_id})
+        # Fall back: skip devops, jump to qa.
+        await _advance_phase(project_id, "verify")
+        proj = (await _load_project_full(project_id)) or project
+        await _dispatch_role(role="qa", project=proj, role_prompt=_QA_PROMPT,
+                             artifact_key="qa_md", next_phase="verify",
+                             approval_card_kind="qa_approval")
+        return
+
+    run_block = (project.get("metadata", {}) or {}).get("code_run_block") or ""
+    install, start = _classify_run_block(run_block)
+
+    log_chunks: list[str] = []
+    all_ok = True
+    for cmd in install:
+        log_chunks.append(f"$ {cmd}")
+        try:
+            proc = await asyncio.create_subprocess_shell(
+                cmd,
+                cwd=str(workspace),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                stdout, _ = await asyncio.wait_for(proc.communicate(),
+                                                   timeout=_DEVOPS_SHELL_TIMEOUT_SECS)
+            except asyncio.TimeoutError:
+                proc.kill()
+                log_chunks.append(f"[timeout after {_DEVOPS_SHELL_TIMEOUT_SECS}s]")
+                all_ok = False
+                break
+            output = (stdout or b"").decode("utf-8", errors="replace")
+            # Keep last ~4 KB of output per command so the card stays readable.
+            tail = output if len(output) <= 4000 else "…[truncated]…\n" + output[-4000:]
+            log_chunks.append(tail.rstrip())
+            log_chunks.append(f"[exit={proc.returncode}]")
+            if proc.returncode != 0:
+                all_ok = False
+                break
+        except Exception as exc:  # noqa: BLE001
+            log_chunks.append(f"[devops error: {type(exc).__name__}: {exc}]")
+            all_ok = False
+            break
+
+    install_log = "\n".join(log_chunks) if log_chunks else "_(no install commands detected)_"
+    start_cmd_md = "\n".join(f"  $ {s}" for s in start) if start else "  _(none — engineer didn't emit a start command)_"
+
+    await _persist_metadata_patch(project_id, {
+        "devops_install_log": install_log,
+        "devops_install_ok": bool(all_ok),
+        "devops_start_cmds": start,
+    })
+
+    status_line = "✅ install completed cleanly" if all_ok else "❌ install FAILED — reject to send back to engineer"
+    body = (
+        f"DevOps ran the engineer's install commands inside the project "
+        f"workspace (`/var/lib/spine/projects/{project_id}/`).\n\n"
+        f"**Status:** {status_line}\n\n"
+        f"## Install log\n\n```\n{install_log}\n```\n\n"
+        f"## To run locally\n\n"
+        f"1. Click **Download .zip** on the workspace page (or the link above).\n"
+        f"2. Unzip; cd into it.\n"
+        f"3. Run the start commands:\n\n```bash\n"
+        + ("\n".join(start) if start else "# (no start command — see engineer intro)")
+        + "\n```\n\n"
+        f"Approve when the app runs as expected. Reject (with feedback in "
+        f"the next iteration) to send the engineer back for a fix."
+    )
+
+    _enqueue({
+        "decision_class": "approval",
+        "project_id": project_id,
+        "title": f"DevOps stand-up — {project_name}",
+        "body": body,
+        "severity": "info" if all_ok else "warning",
+        "actions": ["ack", "reject"],
+        "metadata": {
+            "kind": "devops_approval",
+            "project_name": project_name,
+            "project_uuid": project_id,
+            "install_ok": bool(all_ok),
+            "advances_phase_to": "verify",
+            "produced_by": "devops",
+        },
+    })
+
+
+# ---------------------------------------------------------------------------
 # Engineer code-gen dispatcher — produces real files, writes to workspace,
 # pushes a code_approval card with intro + file tree + RUN block summary.
 # ---------------------------------------------------------------------------
@@ -577,8 +726,13 @@ async def on_decision_acked(card: Any, *, actor: str) -> None:
         return
 
     if kind == "code_approval":
-        # Optional: devops local stand-up step (Wave 2 of this feature).
-        # For now, jump straight to qa.
+        # DevOps role exec's the install commands inside the project
+        # workspace + pushes a stand-up card. User then runs locally
+        # (download zip) + approves once verified.
+        await _dispatch_devops_install(project=project)
+        return
+
+    if kind == "devops_approval":
         await _advance_phase(project_id, "verify")
         project = (await _load_project_full(project_id)) or project
         await _dispatch_role(
@@ -627,4 +781,118 @@ async def on_decision_acked(card: Any, *, actor: str) -> None:
     logger.debug("post_ack_no_handler", extra={"kind": kind, "project_id": project_id})
 
 
-__all__ = ["on_decision_acked"]
+async def on_decision_rejected(card: Any, *, actor: str, reason: str = "") -> None:
+    """Reject-side hook: route to the engineer fix-loop when the
+    rejected card is in the build / verify lane.
+
+    Supported kinds:
+      code_approval    → engineer re-codes with prior code + reason
+      devops_approval  → engineer re-codes with install-failure log
+      qa_approval      → engineer re-codes with QA findings
+    """
+    md = getattr(card, "metadata", {}) or {}
+    kind = md.get("kind")
+    project_id = getattr(card, "project_id", None) or md.get("project_uuid")
+    if not project_id:
+        return
+    if kind not in ("code_approval", "devops_approval", "qa_approval"):
+        return
+    project = await _load_project_full(project_id)
+    if project is None:
+        return
+    logger.info("post_ack_reject_dispatch",
+                extra={"kind": kind, "project_id": project_id, "actor": actor})
+    feedback_block = (
+        f"## Rejection feedback\n\n"
+        f"The {md.get('produced_by','prior')} role's output was REJECTED by "
+        f"`{actor}`{f' with: {reason}' if reason else ''}. "
+        f"The previous output below has issues you must address in this revision."
+    )
+    prior = project.get("metadata") or {}
+    extra_ctx_blocks = [feedback_block]
+    if kind == "devops_approval" and prior.get("devops_install_log"):
+        extra_ctx_blocks.append("## Prior install log (the issue is in here)\n\n```\n"
+                                + prior["devops_install_log"][:6000] + "\n```")
+    if prior.get("code_intro_md"):
+        extra_ctx_blocks.append("## Prior engineer intro\n\n" + prior["code_intro_md"])
+
+    project["_fix_loop_context"] = "\n\n---\n\n".join(extra_ctx_blocks)
+    await _dispatch_engineer_codegen_with_feedback(project=project)
+
+
+async def _dispatch_engineer_codegen_with_feedback(*, project: dict[str, Any]) -> None:
+    """Re-run engineer with the rejection feedback prepended to the
+    user prompt. Same output flow as the first pass.
+    """
+    project_id = project["project_uuid"]
+    project_name = project["name"]
+    prior = project.get("metadata", {}) or {}
+    feedback = project.get("_fix_loop_context", "")
+    try:
+        charter = _load_charter("engineer")
+        context_blocks = []
+        if prior.get("prd_md"):
+            context_blocks.append("## Approved PRD\n\n" + prior["prd_md"])
+        if prior.get("trd_md"):
+            context_blocks.append("## Approved TRD\n\n" + prior["trd_md"])
+        if prior.get("sprint_plan_md"):
+            context_blocks.append("## Approved sprint plan\n\n" + prior["sprint_plan_md"])
+        if feedback:
+            context_blocks.append(feedback)
+        system = (
+            _ENGINEER_PROMPT
+            + "\n\n---\n\n## Project metadata\n"
+            + f"- Name: **{project_name}**\n- Type: **{project['project_type']}**\n\n"
+            + "---\n\n## Your charter\n\n" + charter
+            + ("\n\n---\n\n" + "\n\n---\n\n".join(context_blocks) if context_blocks else "")
+        )
+        resp = await call_async(LLMRequest(
+            model=_DEFAULT_MODEL,
+            messages=[Message(role="user", content=f"Re-generate the code for {project_name}, addressing the rejection feedback.")],
+            system=system, max_tokens=16000, temperature=0.2,
+        ))
+        raw = resp.content.strip()
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("engineer_codegen_retry_failed", extra={"project_id": project_id})
+        return
+
+    intro_md, files, run_block = _parse_engineer_output(raw)
+    written = _write_workspace_files(project_id, files)
+
+    await _persist_metadata_patch(project_id, {
+        "code_intro_md": intro_md,
+        "code_files": [{"path": p, "bytes": len(c)} for p, c in files],
+        "code_run_block": run_block,
+        "code_workspace": str((_WORKSPACE_ROOT / project_id).resolve()),
+        "code_fix_iteration": int(prior.get("code_fix_iteration", 0)) + 1,
+    })
+
+    tree_lines = [f"  - `{p}` ({len(c):,} bytes)" for p, c in files]
+    tree_md = "\n".join(tree_lines) if tree_lines else "  _(no files parsed)_"
+    iter_num = int(prior.get("code_fix_iteration", 0)) + 1
+    body = (
+        f"Engineer re-generated **{written}** files (fix iteration #{iter_num}). "
+        f"Approve to advance; reject again to send back with another round of feedback.\n\n"
+        f"---\n\n{intro_md}\n\n## Generated files\n\n{tree_md}\n\n"
+        f"## Local run\n\n```bash\n{run_block or '# (no RUN block produced)'}\n```"
+    )
+    _enqueue({
+        "decision_class": "approval",
+        "project_id": project_id,
+        "title": f"Approve CODE output (fix #{iter_num}) — {project_name}",
+        "body": body,
+        "severity": "info",
+        "actions": ["ack", "reject"],
+        "metadata": {
+            "kind": "code_approval",
+            "project_name": project_name,
+            "project_uuid": project_id,
+            "files_written": written,
+            "fix_iteration": iter_num,
+            "advances_phase_to": "verify",
+            "produced_by": "engineer",
+        },
+    })
+
+
+__all__ = ["on_decision_acked", "on_decision_rejected"]

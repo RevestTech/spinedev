@@ -167,6 +167,9 @@ RUN apt-get update \
         ca-certificates \
         tini \
         jq \
+        git \
+        nodejs \
+        npm \
  && rm -rf /var/lib/apt/lists/* \
  && useradd --create-home --shell /sbin/nologin --uid 1000 spine \
  && mkdir -p /app /etc/spine /var/lib/spine \
