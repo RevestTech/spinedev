@@ -428,11 +428,46 @@ async def _dispatch_role(
                          extra={"project_id": project_id, "role": role})
         _emit("role_failed", project_uuid=project_id, role=role,
               error=f"{type(exc).__name__}: {exc}")
-        artifact_md = (
-            f"# {role.title()} output — {project_name}\n\n"
-            f"_Role dispatch failed: {type(exc).__name__}_\n\n"
-            f"Check the Hub logs and re-run the dispatcher."
-        )
+        # Push a FIX-REQUIRED card with kind=role_failure (NOT the
+        # forward-chain approval_card_kind). User must resolve the
+        # root cause + re-ack the upstream card to retry. Prevents
+        # an auto-ack storm where every downstream role also fails
+        # and the chain blasts through to "release" with empty
+        # artifacts.
+        _enqueue({
+            "decision_class": "approval",
+            "project_id": project_id,
+            "title": f"{role.upper()} role FAILED — {project_name}",
+            "body": (
+                f"The **{role}** role raised an exception during LLM "
+                f"dispatch. Approving this card is a no-op (chain will "
+                f"NOT advance). Fix the root cause first, then re-ack "
+                f"the upstream card to retry.\n\n"
+                f"**Error:** `{type(exc).__name__}: {str(exc)[:500]}`\n\n"
+                f"## Common causes\n\n"
+                f"- `AuthenticationError 401` → `ANTHROPIC_API_KEY` is "
+                f"missing or invalid in the Hub container env. Re-export "
+                f"and `bash tools/hub-up.sh --rebuild`.\n"
+                f"- `ProviderConfigError` → SDK not installed.\n"
+                f"- Timeout / rate limit → wait, retry.\n\n"
+                f"## To retry\n\n"
+                f"1. Fix the root cause.\n"
+                f"2. Re-ack the previous role's approval card (it stays "
+                f"in the queue history; status flips back to acked + "
+                f"refires `on_decision_acked`)."
+            ),
+            "severity": "critical",
+            "actions": ["ack", "reject"],
+            "metadata": {
+                "kind": "role_failure",
+                "project_uuid": project_id,
+                "project_name": project_name,
+                "failed_role": role,
+                "error_class": type(exc).__name__,
+                "error_message": str(exc)[:500],
+            },
+        })
+        return  # IMPORTANT: stop here. Do NOT chain forward.
 
     await _persist_metadata_patch(project_id, {artifact_key: artifact_md})
 
@@ -944,6 +979,13 @@ async def on_decision_acked(card: Any, *, actor: str) -> None:
     if kind == "intake_briefing":
         # The seed card from project_create — user confirmed scope; nothing
         # downstream to do here, the intake chat is already running.
+        return
+
+    if kind == "role_failure":
+        # Acking a failure card is a no-op — chain does NOT advance.
+        # User must fix root cause + re-ack upstream card to retry.
+        logger.info("role_failure_acked", extra={"project_id": project_id,
+                                                  "failed_role": md.get("failed_role")})
         return
 
     project = await _load_project_full(project_id)
