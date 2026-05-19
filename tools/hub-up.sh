@@ -70,7 +70,10 @@ build_spa_on_host() {
   if [[ ! -d node_modules ]]; then
     npm install --no-audit --no-fund
   fi
-  npm run build
+  # SPA_BASE_PATH must match the Hub's mount prefix (shared/api/app.py
+  # serves the SPA at /spa/*). Without this, SvelteKit emits absolute
+  # /_app/... asset URLs that 404 against the catch-all route.
+  SPA_BASE_PATH=/spa npm run build
   popd >/dev/null
   if [[ ! -f shared/ui/spa/dist/index.html ]]; then
     echo "[hub-up] FATAL: SPA build did not produce dist/index.html" >&2

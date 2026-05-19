@@ -114,8 +114,11 @@ COPY shared/ui/spa/package.json ./
 RUN npm install --no-audit --no-fund
 
 # Copy the rest of the SPA source + build.
+# SPA_BASE_PATH must match the Hub's mount prefix (shared/api/app.py
+# serves SPA at /spa/*). Without it, SvelteKit emits absolute /_app/...
+# asset URLs that 404 against the catch-all /spa/{path:path} route.
 COPY shared/ui/spa/ ./
-RUN npm run build && ls -la dist/
+RUN SPA_BASE_PATH=/spa npm run build && ls -la dist/
 
 # --- Stage 1c: SPA canonical-dist alias --------------------------------------
 # Scratch stage whose root IS the dist/ contents. This is what the runtime
