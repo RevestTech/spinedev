@@ -33,7 +33,7 @@
 - [ ] **pyshamir** pinned in `requirements.txt` (and CI Docker layer) — auto-activates 26 Shamir tests
 - [ ] **shellcheck / ruff / sqlfluff / markdownlint** all clean — `make lint` passes
 - [ ] **`make hygiene`** sweeps clean — no stale workspace state in repo
-- [ ] **OpenAPI snapshot drift gate** — `shared/ui/spa/scripts/openapi-sample.json` matches live spec (per Wave 3 Squad SPA3)
+- [x] **OpenAPI snapshot drift gate** — `tools/openapi-drift-gate.py` builds the live spec via `build_openapi(create_app())` and verifies every path/method/component-schema referenced by `shared/ui/spa/scripts/openapi-sample.json` still exists in live. Wired into CI (`.github/workflows/ci.yml`). Refresh snapshot via `--print-live-only > shared/ui/spa/scripts/openapi-sample.json`. Last run 2026-05-18: clean.
 
 ## 2. Vendor-side production setup
 

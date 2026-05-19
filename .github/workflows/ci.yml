@@ -230,6 +230,8 @@ jobs:
           grep -qE "0 +FAIL" smoke.out
       - name: Secret-value grep audit (V1 §4 / #9)
         run: bash tools/audit-secrets.sh
+      - name: OpenAPI snapshot drift gate (V1 §1)
+        run: .venv/bin/python tools/openapi-drift-gate.py
       - name: Upload smoke output
         if: always()
         uses: actions/upload-artifact@v4
