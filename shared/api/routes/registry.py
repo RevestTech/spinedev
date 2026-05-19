@@ -265,6 +265,31 @@ async def list_integrations(
     return IntegrationList(items=list(_INTEGRATIONS))
 
 
+class WhoamiResponse(BaseModel):
+    """SPA session probe payload."""
+    ok: bool
+    user: dict[str, Any]
+
+
+@router.get("/me", response_model=WhoamiResponse)
+async def whoami(
+    user: Annotated[User, Depends(current_user)],
+) -> WhoamiResponse:
+    """Session probe consumed by the SPA's +layout.ts. Returns the
+    authenticated user; in dev mode this is the synthetic dev user from
+    ``shared.identity.middleware.current_user``."""
+    return WhoamiResponse(
+        ok=True,
+        user={
+            "sub": user.id,
+            "username": user.username or user.id,
+            "email": user.email,
+            "roles": user.roles,
+            "hub_id": None,
+        },
+    )
+
+
 __all__ = [
     "router",
     "RoleEntry",

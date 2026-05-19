@@ -130,13 +130,37 @@ def bearer_token_from_header(authorization: str | None) -> str | None:
 
 
 async def current_user(
-    authorization: str = Header(..., alias="Authorization"),
+    authorization: str | None = Header(None, alias="Authorization"),
 ) -> User:
     """Required-auth dependency: validate the Bearer JWT, return a ``User``.
 
     Raises ``HTTPException(401)`` if the header is missing/malformed or
     if Keycloak rejects the token.
+
+    Dev-mode escape: when SPINE_HUB_DEV=1 AND no Authorization header is
+    present, returns a synthetic dev user (sub='dev-user') so the laptop
+    loop renders without an OIDC round-trip. Prod paths (SPINE_HUB_DEV
+    unset) always require a real token.
     """
+    if authorization is None:
+        import os as _os
+
+        if _os.environ.get("SPINE_HUB_DEV") == "1":
+            from shared.identity.models import TokenClaims
+
+            return User.from_claims(
+                TokenClaims(
+                    sub="dev-user",
+                    email="dev@spine.local",
+                    preferred_username="dev-user",
+                    name="Dev User",
+                    realm_access={"roles": ["user", "hub-admin"]},
+                    scope="openid profile email",
+                    exp=9_999_999_999,
+                    iat=1,
+                )
+            )
+        raise AuthenticationError("Missing or malformed Authorization: Bearer header")
     token = bearer_token_from_header(authorization)
     if token is None:
         raise AuthenticationError("Missing or malformed Authorization: Bearer header")
