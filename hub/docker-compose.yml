@@ -257,6 +257,12 @@ services:
       - hub_state:/var/lib/spine
     ports:
       - "${SPINE_HUB_HOST_PORT:-8090}:8080"
+      # Project-deploy port range — when a project is "local deployed",
+      # the engineer's start command binds to one of these ports inside
+      # the Hub container; the mapping makes it reachable from the
+      # host. Sized for ~20 concurrent dev deployments. High range to
+      # avoid collisions with common dev servers on 9000/9001/etc.
+      - "18000-18019:18000-18019"
     networks:
       - spine
 

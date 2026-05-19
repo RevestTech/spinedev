@@ -459,6 +459,204 @@ async def _dispatch_role(
 
 
 # ---------------------------------------------------------------------------
+# Local deploy — starts the engineer's project as a managed subprocess
+# inside the Hub container, binding to a free port from the published
+# 9000-9019 range so the user can hit it from their browser.
+# ---------------------------------------------------------------------------
+
+
+_DEPLOY_PORT_MIN = 18000
+_DEPLOY_PORT_MAX = 18019
+_DEPLOY_PIDS: dict[str, dict[str, Any]] = {}  # project_uuid → {pid, port, cmd, started}
+
+
+def _pick_free_port() -> Optional[int]:
+    import socket as _sock
+    taken = {info["port"] for info in _DEPLOY_PIDS.values() if info.get("port")}
+    for port in range(_DEPLOY_PORT_MIN, _DEPLOY_PORT_MAX + 1):
+        if port in taken:
+            continue
+        s = _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM)
+        try:
+            s.bind(("0.0.0.0", port))
+            s.close()
+            return port
+        except OSError:
+            continue
+    return None
+
+
+def get_deployment(project_uuid: str) -> Optional[dict[str, Any]]:
+    return _DEPLOY_PIDS.get(project_uuid)
+
+
+async def stop_deployment(project_uuid: str) -> bool:
+    info = _DEPLOY_PIDS.get(project_uuid)
+    if not info:
+        return False
+    proc = info.get("proc")
+    if proc is not None:
+        try:
+            proc.kill()
+            await proc.wait()
+        except Exception:  # noqa: BLE001
+            pass
+    _DEPLOY_PIDS.pop(project_uuid, None)
+    _emit("deploy_stopped", project_uuid=project_uuid, role="devops_release")
+    return True
+
+
+async def _dispatch_local_deploy(*, project: dict[str, Any]) -> None:
+    project_id = project["project_uuid"]
+    project_name = project["name"]
+    _emit("role_started", project_uuid=project_id, role="devops_release",
+          message="standing up local deployment…")
+    workspace = (_WORKSPACE_ROOT / project_id).resolve()
+    if not workspace.exists():
+        logger.warning("local_deploy_no_workspace", extra={"project_id": project_id})
+        return
+
+    md = project.get("metadata", {}) or {}
+    start_cmds: list[str] = md.get("devops_start_cmds") or []
+    if not start_cmds:
+        # Fall back: try common defaults based on file presence.
+        if (workspace / "package.json").exists():
+            start_cmds = ["npm start"]
+        elif (workspace / "app.py").exists() or (workspace / "main.py").exists():
+            start_cmds = ["python app.py" if (workspace / "app.py").exists() else "python main.py"]
+        else:
+            _emit("role_failed", project_uuid=project_id, role="devops_release",
+                  error="no start command in metadata or detectable entry point")
+            _enqueue({
+                "decision_class": "approval",
+                "project_id": project_id,
+                "title": f"Local deploy FAILED — {project_name}",
+                "body": "Couldn't find a start command. Engineer didn't emit one and "
+                        "no `package.json` / `app.py` / `main.py` in workspace.",
+                "severity": "warning", "actions": ["ack", "reject"],
+                "metadata": {"kind": "deploy_status", "project_uuid": project_id,
+                             "project_name": project_name, "deploy_ok": False},
+            })
+            return
+
+    # Stop any prior deployment for this project before starting a new one.
+    if project_id in _DEPLOY_PIDS:
+        await stop_deployment(project_id)
+
+    port = _pick_free_port()
+    if port is None:
+        _emit("role_failed", project_uuid=project_id, role="devops_release",
+              error="no free port in 9000-9019 range")
+        _enqueue({
+            "decision_class": "approval",
+            "project_id": project_id,
+            "title": f"Local deploy FAILED — {project_name}",
+            "body": "No free port in the 18000-18019 range — stop another deployment first.",
+            "severity": "warning", "actions": ["ack", "reject"],
+            "metadata": {"kind": "deploy_status", "project_uuid": project_id,
+                         "project_name": project_name, "deploy_ok": False},
+        })
+        return
+
+    # Compose env passes PORT (Node convention) + HOST=0.0.0.0 (so the
+    # subprocess listens on the published interface, not just loopback).
+    env = {**_os.environ, "PORT": str(port), "HOST": "0.0.0.0", "BIND_ADDR": "0.0.0.0"}
+    full_cmd = " && ".join(start_cmds)
+    try:
+        proc = await asyncio.create_subprocess_shell(
+            full_cmd,
+            cwd=str(workspace),
+            env=env,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("local_deploy_spawn_failed", extra={"project_id": project_id})
+        _emit("role_failed", project_uuid=project_id, role="devops_release",
+              error=f"{type(exc).__name__}: {exc}")
+        return
+
+    import time as _time
+    started = _time.time()
+    _DEPLOY_PIDS[project_id] = {
+        "proc": proc, "pid": proc.pid, "port": port,
+        "cmd": full_cmd, "started": started,
+        "url": f"http://localhost:{port}",
+    }
+
+    # Background log tail — keeps last 4KB so the UI can show recent output.
+    async def _tail_logs() -> None:
+        chunks: list[bytes] = []
+        chunk_total = 0
+        try:
+            assert proc.stdout is not None
+            while True:
+                line = await proc.stdout.readline()
+                if not line:
+                    break
+                chunks.append(line)
+                chunk_total += len(line)
+                if chunk_total > 8192:
+                    chunks = chunks[-50:]
+                    chunk_total = sum(len(c) for c in chunks)
+                info = _DEPLOY_PIDS.get(project_id)
+                if info is not None:
+                    info["log_tail"] = b"".join(chunks).decode("utf-8", errors="replace")
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("deploy_tail_failed", extra={"project_id": project_id, "error": str(exc)})
+
+    asyncio.create_task(_tail_logs())
+
+    # Wait briefly for the server to come up + emit running event.
+    await asyncio.sleep(3.0)
+    still_running = proc.returncode is None
+
+    await _persist_metadata_patch(project_id, {
+        "deploy_local_url": f"http://localhost:{port}",
+        "deploy_local_port": port,
+        "deploy_local_started": started,
+        "deploy_local_running": bool(still_running),
+    })
+
+    _emit("role_finished", project_uuid=project_id, role="devops_release",
+          deploy_url=f"http://localhost:{port}", running=still_running)
+
+    status_line = (
+        f"✅ Live at [http://localhost:{port}](http://localhost:{port})"
+        if still_running else
+        f"❌ Process exited (rc={proc.returncode}) — see log tail"
+    )
+    info = _DEPLOY_PIDS.get(project_id, {})
+    log_tail = info.get("log_tail", "")[:2000]
+
+    body = (
+        f"DevOps started the project locally. {status_line}\n\n"
+        f"## Command\n\n```bash\n{full_cmd}\n```\n\n"
+        f"**Port:** {port} (range 18000-18019 published from Hub container)  \n"
+        f"**Workspace:** `/var/lib/spine/projects/{project_id}/`  \n"
+        f"**PID:** {proc.pid}\n\n"
+        f"## Recent stdout/stderr\n\n```\n{log_tail or '(no output yet)'}\n```\n\n"
+        f"Approve to keep running. Reject to stop the process (engineer can iterate)."
+    )
+    _enqueue({
+        "decision_class": "approval",
+        "project_id": project_id,
+        "title": f"Local deployment — {project_name}",
+        "body": body,
+        "severity": "info" if still_running else "warning",
+        "actions": ["ack", "reject"],
+        "metadata": {
+            "kind": "deploy_status",
+            "project_uuid": project_id,
+            "project_name": project_name,
+            "deploy_ok": bool(still_running),
+            "deploy_url": f"http://localhost:{port}",
+            "deploy_port": port,
+        },
+    })
+
+
+# ---------------------------------------------------------------------------
 # DevOps stand-up — runs the engineer's install commands inside the
 # project workspace, captures output, pushes a card with the result.
 # ---------------------------------------------------------------------------
@@ -782,9 +980,40 @@ async def on_decision_acked(card: Any, *, actor: str) -> None:
         )
         return
 
+    if kind == "local_deploy_prompt":
+        await _dispatch_local_deploy(project=project)
+        return
+
+    if kind == "deploy_status":
+        # User acked a successful local deploy — leave running.
+        return
+
     if kind == "release_gate_approval":
         await _advance_phase(project_id, "release")
-        # Final card — celebrate; no further dispatch.
+        # Offer the user a deploy: local (now) or remote cloud (via the
+        # commands in release_gate_md). Pushed BEFORE the celebration
+        # card so the queue lists the deploy choice first.
+        _enqueue({
+            "decision_class": "approval",
+            "project_id": project_id,
+            "title": f"Deploy locally? — {project['name']}",
+            "body": (
+                f"The project is ready to ship. Approve to **stand it up "
+                f"locally in the Hub** — devops will start the engineer's "
+                f"run commands inside the workspace and bind to a port in "
+                f"the 18000-18019 range. You'll get a `http://localhost:NNNNN` "
+                f"link to click.\n\n"
+                f"Reject to skip local deploy (cloud-deploy commands are in "
+                f"the release_gate_md artifact above)."
+            ),
+            "severity": "info",
+            "actions": ["ack", "reject"],
+            "metadata": {
+                "kind": "local_deploy_prompt",
+                "project_uuid": project_id,
+                "project_name": project["name"],
+            },
+        })
         _enqueue({
             "decision_class": "briefing",
             "project_id": project_id,
@@ -825,6 +1054,12 @@ async def on_decision_rejected(card: Any, *, actor: str, reason: str = "") -> No
     kind = md.get("kind")
     project_id = getattr(card, "project_id", None) or md.get("project_uuid")
     if not project_id:
+        return
+    if kind == "deploy_status":
+        # Reject means "stop the deployment"
+        project_id_md = md.get("project_uuid") or getattr(card, "project_id", None)
+        if project_id_md:
+            await stop_deployment(project_id_md)
         return
     if kind not in ("code_approval", "devops_approval", "qa_approval"):
         return

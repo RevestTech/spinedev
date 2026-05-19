@@ -198,6 +198,7 @@
 
   onDestroy(() => {
     if (pollHandle !== null) window.clearInterval(pollHandle);
+    if (deployPollHandle !== null) window.clearInterval(deployPollHandle);
     sseSub?.close();
     sseSub = null;
   });
@@ -287,6 +288,54 @@
   }
 
   $: if (project?.metadata?.code_files) refreshCodeFiles();
+
+  // Deployment status — polls /deployment for live process state.
+  interface Deployment {
+    running: boolean;
+    port?: number;
+    url?: string;
+    pid?: number;
+    cmd?: string;
+    log_tail?: string;
+    rc?: number | null;
+    started?: number;
+  }
+  let deployment: Deployment = { running: false };
+  let deployPollHandle: number | null = null;
+  let deployActionBusy = false;
+
+  async function loadDeployment() {
+    try {
+      deployment = await api.get<Deployment>(`/api/v2/projects/${projectId}/deployment`);
+    } catch {
+      deployment = { running: false };
+    }
+  }
+
+  async function startDeployment() {
+    deployActionBusy = true;
+    try {
+      await api.post(`/api/v2/projects/${projectId}/deployment/start`, {});
+      setTimeout(loadDeployment, 4000);
+    } finally {
+      deployActionBusy = false;
+    }
+  }
+
+  async function stopDeployment() {
+    deployActionBusy = true;
+    try {
+      await api.post(`/api/v2/projects/${projectId}/deployment/stop`, {});
+      await loadDeployment();
+    } finally {
+      deployActionBusy = false;
+    }
+  }
+
+  $: if (project?.metadata?.code_files?.length > 0 && deployPollHandle === null) {
+    loadDeployment();
+    deployPollHandle = window.setInterval(loadDeployment, 5000) as unknown as number;
+  }
 </script>
 
 <PanelHeader
@@ -474,6 +523,71 @@
           </details>
         {/each}
       </div>
+    </section>
+  {/if}
+
+  <!-- Live deployment -->
+  {#if codeFiles.length > 0}
+    <section class="panel-card mb-6">
+      <header class="mb-3 flex items-center justify-between">
+        <h2 class="text-sm font-semibold text-surface-900 dark:text-surface-50">
+          Live deployment
+        </h2>
+        <div class="flex items-center gap-2">
+          {#if deployment.running}
+            <a
+              href={deployment.url}
+              target="_blank"
+              rel="noopener"
+              class="rounded-full bg-severity-info px-3 py-1 text-xs font-medium text-white hover:opacity-90"
+            >
+              ▶ Open {deployment.url}
+            </a>
+            <button
+              type="button"
+              class="btn-ghost text-xs"
+              on:click={stopDeployment}
+              disabled={deployActionBusy}
+            >
+              Stop
+            </button>
+          {:else}
+            <button
+              type="button"
+              class="btn-primary text-xs"
+              on:click={startDeployment}
+              disabled={deployActionBusy}
+            >
+              {deployActionBusy ? 'Starting…' : 'Deploy locally'}
+            </button>
+          {/if}
+        </div>
+      </header>
+      {#if deployment.running}
+        <dl class="grid grid-cols-2 gap-1 text-xs text-surface-700 dark:text-surface-200 md:grid-cols-4">
+          <dt>URL</dt><dd class="font-mono">{deployment.url}</dd>
+          <dt>Port</dt><dd class="font-mono">{deployment.port}</dd>
+          <dt>PID</dt><dd class="font-mono">{deployment.pid}</dd>
+          <dt>Started</dt><dd>{deployment.started ? new Date(deployment.started * 1000).toLocaleTimeString() : ''}</dd>
+        </dl>
+        {#if deployment.cmd}
+          <p class="mt-2 text-xs">Command: <code class="font-mono">{deployment.cmd}</code></p>
+        {/if}
+        {#if deployment.log_tail}
+          <details class="mt-3">
+            <summary class="cursor-pointer text-xs text-surface-700 dark:text-surface-200">Log tail</summary>
+            <pre class="mt-2 max-h-40 overflow-auto rounded-md bg-surface-900 p-3 text-xs text-green-400">{deployment.log_tail}</pre>
+          </details>
+        {/if}
+      {:else}
+        <p class="text-sm text-surface-700/70 dark:text-surface-200/70">
+          Not running. Click <strong>Deploy locally</strong> to start the
+          project as a subprocess in the Hub container (port range 18000-18019).
+          {#if deployment.rc !== null && deployment.rc !== undefined}
+            Last run exited with code <code>{deployment.rc}</code>.
+          {/if}
+        </p>
+      {/if}
     </section>
   {/if}
 

@@ -362,6 +362,47 @@ async def download_workspace_zip(project_id: str) -> StreamingResponse:
     )
 
 
+@router.get("/{project_id}/deployment")
+async def deployment_status(project_id: str) -> dict[str, Any]:
+    """Return the live deployment state for a project (in-memory)."""
+    from shared.api.routes._post_ack import get_deployment
+    info = get_deployment(project_id)
+    if info is None:
+        return {"running": False}
+    return {
+        "running": info.get("proc") is not None and info["proc"].returncode is None,
+        "port": info.get("port"),
+        "url": info.get("url"),
+        "pid": info.get("pid"),
+        "cmd": info.get("cmd"),
+        "started": info.get("started"),
+        "log_tail": (info.get("log_tail") or "")[:4000],
+        "rc": info["proc"].returncode if info.get("proc") else None,
+    }
+
+
+@router.post("/{project_id}/deployment/stop")
+async def deployment_stop(project_id: str) -> dict[str, Any]:
+    """Kill the project's running subprocess."""
+    from shared.api.routes._post_ack import stop_deployment
+    ok = await stop_deployment(project_id)
+    return {"ok": ok, "project_id": project_id}
+
+
+@router.post("/{project_id}/deployment/start")
+async def deployment_start(project_id: str) -> dict[str, Any]:
+    """Force-start (or restart) the local deployment without waiting for
+    the local_deploy_prompt approval card. Useful for the workspace UI's
+    "Re-deploy" button."""
+    from shared.api.routes._post_ack import _dispatch_local_deploy, _load_project_full
+    project = await _load_project_full(project_id)
+    if project is None:
+        raise _err(404, "project_not_found", project_id)
+    import asyncio as _asyncio
+    _asyncio.create_task(_dispatch_local_deploy(project=project))
+    return {"ok": True, "project_id": project_id, "started": True}
+
+
 @router.post("/{project_id}/advance-phase-by-uuid")
 async def advance_phase_by_uuid(project_id: str, body: dict[str, Any]) -> dict[str, Any]:
     """Direct phase-advance bypassing MCP indirection.

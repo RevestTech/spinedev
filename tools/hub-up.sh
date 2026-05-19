@@ -111,8 +111,10 @@ build_image() {
 action="${1:-up}"
 case "${action}" in
   --down|down)
+    # Stop containers but preserve volumes — projects survive --down/--up.
+    # Use --reset to wipe everything.
     write_env_file
-    docker compose -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" down -v
+    docker compose -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" down
     ;;
   --status|status)
     docker ps --format '{{.Names}}\t{{.Status}}' | grep -E '^spine-hub' || true
