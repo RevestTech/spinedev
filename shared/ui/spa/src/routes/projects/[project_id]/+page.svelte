@@ -68,7 +68,31 @@
   }
   let feed: FeedEvent[] = [];
   let activeRole: string | null = null;
+  let activeRoleStartedAt: number | null = null;
+  let activeRoleMessage: string | null = null;
+  let nowTick = Date.now();
+  let nowInterval: number | null = null;
   let sseSub: { close: () => void } | null = null;
+
+  // Per-role copy that shows up in the "currently working" banner.
+  const ROLE_INFO: Record<string, { label: string; what: string; typical: string }> = {
+    product:         { label: 'Product',         what: 'synthesizing your PRD from the intake conversation', typical: '~30-60s' },
+    planner:         { label: 'Planner',         what: 'drafting the project roadmap (PMBOK sprints + RACI)', typical: '~30-60s' },
+    architect:       { label: 'Architect',       what: 'designing the system + picking your stack (TOGAF)',    typical: '~45-90s' },
+    conductor:       { label: 'Conductor',       what: 'breaking the TRD into sprint tasks (Scrum)',           typical: '~30-60s' },
+    engineer:        { label: 'Engineer',        what: 'generating real code files for the project',           typical: '~60-180s' },
+    devops:          { label: 'DevOps',          what: 'running install commands in the workspace',            typical: '~30-90s' },
+    qa:              { label: 'QA',              what: 'writing the test plan (ISTQB traceability)',            typical: '~30-60s' },
+    release_manager: { label: 'Release manager', what: 'preparing the ship gate + cloud-deploy options',       typical: '~30-60s' },
+    devops_release:  { label: 'DevOps (deploy)', what: 'standing the project up locally on a port',            typical: '~10-20s' },
+  };
+  $: roleInfo = activeRole ? (ROLE_INFO[activeRole] ?? { label: activeRole, what: 'working…', typical: '~60s' }) : null;
+  $: elapsedSecs = activeRoleStartedAt ? Math.max(0, Math.round((nowTick - activeRoleStartedAt) / 1000)) : 0;
+  $: progressCeiling = (() => {
+    if (!roleInfo) return 60;
+    const m = roleInfo.typical.match(/(\d+)\s*-\s*(\d+)/);
+    return m ? parseInt(m[2], 10) : 60;
+  })();
 
   async function loadProject() {
     try {
@@ -141,10 +165,18 @@
 
   function pushFeed(ev: FeedEvent) {
     feed = [...feed, ev].slice(-50);
-    if (ev.type === 'role_started') activeRole = ev.role ?? null;
+    if (ev.type === 'role_started') {
+      activeRole = ev.role ?? null;
+      activeRoleStartedAt = (ev.ts ?? Date.now() / 1000) * 1000;
+      activeRoleMessage = ev.message ?? null;
+    }
     if (ev.type === 'role_finished' || ev.type === 'role_failed') {
       // Card landing also implies role is idle until next dispatch.
-      if (activeRole === ev.role) activeRole = null;
+      if (activeRole === ev.role) {
+        activeRole = null;
+        activeRoleStartedAt = null;
+        activeRoleMessage = null;
+      }
       // Re-fetch the project to pick up new artifacts immediately.
       loadProject();
     }
@@ -194,11 +226,13 @@
     if (project?.current_phase === 'intake') kickoff();
     pollHandle = window.setInterval(loadProject, 8000) as unknown as number;
     subscribeLiveFeed();
+    nowInterval = window.setInterval(() => { nowTick = Date.now(); }, 1000) as unknown as number;
   });
 
   onDestroy(() => {
     if (pollHandle !== null) window.clearInterval(pollHandle);
     if (deployPollHandle !== null) window.clearInterval(deployPollHandle);
+    if (nowInterval !== null) window.clearInterval(nowInterval);
     sseSub?.close();
     sseSub = null;
   });
@@ -353,6 +387,45 @@
 {#if projectLoading}
   <div class="flex items-center justify-center py-10"><LoadingSpinner label="Loading project" /></div>
 {:else if project}
+  <!-- Currently-working banner — pulls focus while a background role
+       runs so the user knows AI is doing real work, not stuck. -->
+  {#if activeRole && roleInfo}
+    <section
+      class="mb-6 rounded-lg border-2 border-accent bg-accent/5 p-4"
+      data-testid="role-working-banner"
+    >
+      <div class="flex items-start gap-4">
+        <!-- spinner -->
+        <span class="relative mt-1 inline-flex h-10 w-10 shrink-0">
+          <span class="absolute inset-0 animate-ping rounded-full bg-accent opacity-30"></span>
+          <span class="relative m-auto h-6 w-6 animate-spin rounded-full border-2 border-accent border-t-transparent"></span>
+        </span>
+        <div class="grow">
+          <h2 class="text-base font-semibold text-surface-900 dark:text-surface-50">
+            {roleInfo.label} role working…
+          </h2>
+          <p class="mt-1 text-sm text-surface-700 dark:text-surface-200">
+            {activeRoleMessage ?? roleInfo.what}
+          </p>
+          <p class="mt-2 flex items-center gap-3 text-xs text-surface-700/70 dark:text-surface-200/70">
+            <span>⏱ {elapsedSecs}s elapsed</span>
+            <span>·</span>
+            <span>Typical: {roleInfo.typical}</span>
+            <span>·</span>
+            <span>A decision card will land in <a href="{base}/panels/decision-queue" class="text-accent underline">your queue</a> when this finishes.</span>
+          </p>
+          <!-- progress bar (max-bound on typical ceiling, indeterminate look) -->
+          <div class="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-surface-200 dark:bg-surface-700">
+            <div
+              class="h-full bg-accent transition-all"
+              style="width: {Math.min(100, (elapsedSecs / progressCeiling) * 100)}%"
+            ></div>
+          </div>
+        </div>
+      </div>
+    </section>
+  {/if}
+
   <!-- Phase pipeline + active-role banner -->
   <section class="panel-card mb-6">
     <div class="mb-3 flex items-center justify-between">
@@ -495,10 +568,20 @@
           </button>
         </form>
       {:else}
-        <div class="rounded-md border border-severity-info/30 bg-severity-info/10 p-3 text-sm">
-          PRD draft running in the background. You'll see an approval card
-          in <a href="{base}/panels/decision-queue" class="text-accent underline">decisions</a>
-          in a few seconds. Approve to advance to the architect.
+        <div class="flex items-start gap-3 rounded-md border border-severity-info/30 bg-severity-info/10 p-3 text-sm">
+          <span class="relative inline-flex h-5 w-5 shrink-0">
+            <span class="absolute inset-0 animate-ping rounded-full bg-severity-info opacity-40"></span>
+            <span class="relative m-auto h-3 w-3 animate-spin rounded-full border-2 border-severity-info border-t-transparent"></span>
+          </span>
+          <div>
+            <p class="font-medium">Intake complete — product role is now drafting your PRD.</p>
+            <p class="mt-1 text-xs text-surface-700/80 dark:text-surface-200/80">
+              This typically takes 30-60 seconds. A "Currently working" banner will
+              appear at the top of this page once the LLM call kicks off. Then a
+              <a href="{base}/panels/decision-queue" class="text-accent underline">decision card</a>
+              lands for you to approve, and the next role (planner) starts.
+            </p>
+          </div>
         </div>
       {/if}
     </section>
