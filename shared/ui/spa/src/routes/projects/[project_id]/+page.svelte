@@ -133,17 +133,66 @@
     if (pollHandle !== null) window.clearInterval(pollHandle);
   });
 
-  // Pre-computed artifact list per current state.
+  // Pre-computed artifact list per current state. Order matches the
+  // dispatch chain so artifacts appear top-down in the order roles ran.
   $: artifacts = (() => {
     if (!project) return [] as { label: string; key: string; md: string }[];
     const md = project.metadata || {};
     const out: { label: string; key: string; md: string }[] = [];
     if (md.prd_md) out.push({ label: 'PRD (product role)', key: 'prd_md', md: md.prd_md });
+    if (md.roadmap_md) out.push({ label: 'Roadmap (planner role)', key: 'roadmap_md', md: md.roadmap_md });
     if (md.trd_md) out.push({ label: 'TRD (architect role)', key: 'trd_md', md: md.trd_md });
-    if (md.impl_md) out.push({ label: 'Implementation plan (engineer role)', key: 'impl_md', md: md.impl_md });
+    if (md.sprint_plan_md) out.push({ label: 'Sprint plan (conductor role)', key: 'sprint_plan_md', md: md.sprint_plan_md });
+    if (md.code_intro_md) out.push({ label: 'Engineer intro', key: 'code_intro_md', md: md.code_intro_md });
     if (md.qa_md) out.push({ label: 'Test plan (qa role)', key: 'qa_md', md: md.qa_md });
+    if (md.release_gate_md) out.push({ label: 'Ship gate (release_manager)', key: 'release_gate_md', md: md.release_gate_md });
     return out;
   })();
+
+  // Generated code files (if engineer produced any).
+  interface FileEntry { path: string; bytes: number }
+  let codeFiles: FileEntry[] = [];
+  let codeFilesLoading = false;
+  let openFile: string | null = null;
+  let openFileContent = '';
+  let openFileLoading = false;
+
+  async function refreshCodeFiles() {
+    if (!project) return;
+    if (!(project.metadata?.code_files?.length > 0 || project.metadata?.code_workspace)) {
+      codeFiles = [];
+      return;
+    }
+    codeFilesLoading = true;
+    try {
+      const res = await api.get<{ items: FileEntry[]; missing: boolean }>(
+        `/api/v2/projects/${projectId}/workspace/files`
+      );
+      codeFiles = res.items || [];
+    } catch {
+      codeFiles = [];
+    } finally {
+      codeFilesLoading = false;
+    }
+  }
+
+  async function loadFile(path: string) {
+    openFile = path;
+    openFileLoading = true;
+    openFileContent = '';
+    try {
+      const res = await api.get<{ content: string }>(
+        `/api/v2/projects/${projectId}/workspace/file?path=${encodeURIComponent(path)}`
+      );
+      openFileContent = res.content;
+    } catch (e) {
+      openFileContent = `// failed to load: ${(e as Error).message}`;
+    } finally {
+      openFileLoading = false;
+    }
+  }
+
+  $: if (project?.metadata?.code_files) refreshCodeFiles();
 </script>
 
 <PanelHeader
@@ -293,6 +342,63 @@
           </details>
         {/each}
       </div>
+    </section>
+  {/if}
+
+  <!-- Generated code files (engineer role) -->
+  {#if codeFiles.length > 0}
+    <section class="mb-6">
+      <header class="mb-3 flex items-center justify-between">
+        <h2 class="text-sm font-semibold text-surface-900 dark:text-surface-50">
+          Generated code · {codeFiles.length} file{codeFiles.length === 1 ? '' : 's'}
+        </h2>
+        <a
+          href="/api/v2/projects/{projectId}/workspace/zip"
+          class="btn-ghost text-xs"
+          download
+        >
+          Download .zip
+        </a>
+      </header>
+      <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
+        <ul class="panel-card md:col-span-1 max-h-96 overflow-y-auto text-xs font-mono">
+          {#each codeFiles as f (f.path)}
+            <li>
+              <button
+                type="button"
+                class="block w-full text-left rounded px-2 py-1 hover:bg-surface-100 dark:hover:bg-surface-700 {openFile === f.path ? 'bg-accent text-white' : ''}"
+                on:click={() => loadFile(f.path)}
+              >
+                {f.path} <span class="opacity-60">({f.bytes.toLocaleString()}b)</span>
+              </button>
+            </li>
+          {/each}
+        </ul>
+        <div class="panel-card md:col-span-2 max-h-96 overflow-y-auto">
+          {#if openFile}
+            <header class="mb-2 text-xs font-mono text-surface-700 dark:text-surface-200">
+              {openFile}
+            </header>
+            {#if openFileLoading}
+              <LoadingSpinner label="Loading file" />
+            {:else}
+              <pre class="whitespace-pre-wrap text-xs leading-relaxed">{openFileContent}</pre>
+            {/if}
+          {:else}
+            <p class="text-sm text-surface-700/70 dark:text-surface-200/70">
+              Click any file to view its contents.
+            </p>
+          {/if}
+        </div>
+      </div>
+      {#if project.metadata?.code_run_block}
+        <details class="panel-card mt-4">
+          <summary class="cursor-pointer text-sm font-semibold text-surface-900 dark:text-surface-50">
+            Run locally
+          </summary>
+          <pre class="mt-3 whitespace-pre-wrap rounded-md bg-surface-900 p-3 text-xs text-green-400">{project.metadata.code_run_block}</pre>
+        </details>
+      {/if}
     </section>
   {/if}
 

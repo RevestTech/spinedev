@@ -300,6 +300,68 @@ async def get_project_full(project_id: str) -> dict[str, Any]:
     }
 
 
+@router.get("/{project_id}/workspace/files")
+async def list_workspace_files(project_id: str) -> dict[str, Any]:
+    """Return a tree of files the engineer wrote into the project's
+    workspace dir (/var/lib/spine/projects/{uuid}/)."""
+    import os as _os
+    root = Path(_os.environ.get("SPINE_PROJECTS_ROOT", "/var/lib/spine/projects"))
+    pdir = (root / project_id).resolve()
+    if not pdir.exists() or not pdir.is_dir():
+        return {"items": [], "root": str(pdir), "missing": True}
+    items: list[dict[str, Any]] = []
+    for path in sorted(pdir.rglob("*")):
+        if path.is_file():
+            rel = str(path.relative_to(pdir))
+            items.append({"path": rel, "bytes": path.stat().st_size})
+    return {"items": items, "root": str(pdir), "missing": False}
+
+
+@router.get("/{project_id}/workspace/file")
+async def read_workspace_file(project_id: str, path: str) -> dict[str, Any]:
+    """Return the contents of one file under the project's workspace dir.
+
+    Path traversal-safe (resolve must stay under project root).
+    """
+    import os as _os
+    root = Path(_os.environ.get("SPINE_PROJECTS_ROOT", "/var/lib/spine/projects"))
+    pdir = (root / project_id).resolve()
+    target = (pdir / path).resolve()
+    try:
+        target.relative_to(pdir)
+    except ValueError:
+        raise _err(400, "path_escape", "path escapes workspace") from None
+    if not target.exists() or not target.is_file():
+        raise _err(404, "file_not_found", f"{path} not in workspace")
+    content = target.read_text(encoding="utf-8", errors="replace")
+    return {"path": path, "bytes": len(content), "content": content}
+
+
+from fastapi.responses import StreamingResponse
+import io
+import zipfile
+
+
+@router.get("/{project_id}/workspace/zip")
+async def download_workspace_zip(project_id: str) -> StreamingResponse:
+    """Stream the project's workspace dir as a zip."""
+    import os as _os
+    root = Path(_os.environ.get("SPINE_PROJECTS_ROOT", "/var/lib/spine/projects"))
+    pdir = (root / project_id).resolve()
+    if not pdir.exists() or not pdir.is_dir():
+        raise _err(404, "workspace_missing", f"no workspace for {project_id}")
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for path in pdir.rglob("*"):
+            if path.is_file():
+                zf.write(path, arcname=path.relative_to(pdir))
+    buf.seek(0)
+    return StreamingResponse(
+        buf, media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="spine-{project_id[:8]}.zip"'},
+    )
+
+
 @router.post("/{project_id}/advance-phase-by-uuid")
 async def advance_phase_by_uuid(project_id: str, body: dict[str, Any]) -> dict[str, Any]:
     """Direct phase-advance bypassing MCP indirection.

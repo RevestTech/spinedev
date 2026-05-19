@@ -21,6 +21,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os as _os
+import re
 import uuid
 from pathlib import Path
 from typing import Any, Optional
@@ -129,6 +131,75 @@ def _enqueue(card_kwargs: dict[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 
 
+_PLANNER_PROMPT = """
+You are the Spine **planner** role (PMBOK 7-anchored). The PRD has
+just been approved. Produce a project roadmap in markdown.
+
+ROADMAP structure (start with `# Roadmap — <Project Name>`):
+  1. **Sprint breakdown** — split the PRD into 1-3 sprints with names
+     + clear sprint goals. PMBOK iteration-planning discipline.
+  2. **Critical path** — ordered list of milestone artifacts and their
+     dependencies. Identify the MVP cut.
+  3. **RACI snapshot** — for each PRD FR, name the role responsible
+     (architect / engineer / qa / devops) and the consulted/informed roles.
+  4. **Risks + mitigations** — top 3 schedule/scope risks with explicit
+     mitigations (per PMBOK risk register format).
+  5. **Definition of Done (project-level)** — checklist the
+     release_manager will reference at ship gate.
+
+Output ONLY the markdown.
+""".strip()
+
+
+_CONDUCTOR_PROMPT = """
+You are the Spine **conductor** role (Scrum master + SAFe anchored).
+The TRD has just been approved. Produce a sprint plan that the
+engineer role can execute against.
+
+SPRINT PLAN structure (start with `# Sprint plan — <Project Name>`):
+  1. **Sprint goal** — one sentence: what shipped at the end of this
+     sprint proves the PRD's desired outcome.
+  2. **Task breakdown** — for each TRD build-sequence item, define
+     story-card-sized tasks (1-2 day chunks). Format:
+       - **T-1** Title — description (1-2 lines).
+         Acceptance: <testable criteria>
+         Files touched: <path>, <path>
+         Estimate: <S/M/L>
+  3. **Definition of Done (sprint-level)** — concrete pass/fail.
+  4. **Standups + ceremonies** — propose cadence: daily standup
+     summary format, sprint review, retro.
+  5. **Impediment log** — placeholders the scrum master will fill in
+     during execution.
+
+Output ONLY the markdown.
+""".strip()
+
+
+_RELEASE_MANAGER_PROMPT = """
+You are the Spine **release_manager** role (ITIL change-management
+anchored). QA signed off. Produce a ship-gate checklist.
+
+SHIP GATE structure (start with `# Ship gate — <Project Name>`):
+  1. **Release scope** — one-paragraph summary of what's shipping.
+  2. **Go / no-go checklist** — explicit boxes:
+     - [ ] PRD signed off
+     - [ ] TRD signed off
+     - [ ] Code review complete (or self-review note for solo founders)
+     - [ ] Test plan executed; coverage threshold met
+     - [ ] No P0/P1 defects open
+     - [ ] Rollback plan documented
+     - [ ] Monitoring + alerting in place
+     - [ ] Runbook for ops linked
+  3. **Rollback plan** — concrete steps if launch fails.
+  4. **Comms plan** — who gets notified pre/post launch, in what
+     order, via what channel.
+  5. **Post-launch retro framing** — 3 questions the team should
+     answer 1 week post-launch.
+
+Output ONLY the markdown.
+""".strip()
+
+
 _ARCHITECT_PROMPT = """
 You are the Spine **architect** role. The PRD has just been approved.
 Produce a Technical Requirements Document (TRD) in markdown.
@@ -155,23 +226,104 @@ with `[INFERRED]`.
 
 
 _ENGINEER_PROMPT = """
-You are the Spine **engineer** role. The TRD has just been approved.
-Produce an implementation plan in markdown — the concrete code work
-that turns the TRD's build sequence into a shippable change set.
+You are the Spine **engineer** role. The sprint plan has been
+approved. Produce REAL code that the user can run.
 
-IMPL plan structure (start with `# Implementation plan — <Project Name>`):
-  1. **Repository layout** — files / directories that need creating
-     or modifying. Use a tree diagram.
-  2. **Build sequence walkthrough** — for each TRD build item:
-     - File-level diff summary (what files change, what functions added)
-     - Tests added (test names + what they assert)
-     - Estimated lines-of-code delta
-  3. **Run instructions** — how the user runs the result locally.
-  4. **Out of scope (this pass)** — anything you'd defer to a follow-up.
+OUTPUT FORMAT — strict. Your entire reply must be ONLY:
+  1. One short markdown intro (3-6 lines) explaining what you built +
+     a tree diagram of the files.
+  2. One file block per file you're creating. Each block is exactly:
 
-Clean Code conventions: small functions, intention-revealing names,
-no commented-out code. Output ONLY the markdown.
+        ===== FILE: <relative/path/from/project/root> =====
+        <verbatim file contents — no markdown fences>
+        ===== END FILE =====
+
+  3. One closing block exactly:
+
+        ===== RUN =====
+        <bash commands the user runs locally to install + start>
+        ===== END RUN =====
+
+Hard rules:
+  - Use the stack the architect chose in the TRD. Do not introduce
+    new languages / frameworks.
+  - Files must be CONSISTENT — every import resolves to a file you
+    also produced.
+  - Cover the MVP scope from the sprint plan's task list. If you
+    can't fit everything, prioritize the critical path and note
+    deferrals in the closing markdown.
+  - Aim for 5-15 files. Bigger projects can split across sprints.
+  - Include a README.md with one-paragraph project description +
+    setup steps.
+  - Include configuration files the stack needs (package.json,
+    requirements.txt, Cargo.toml, etc.) with REAL dependency
+    versions.
+  - Tests: include ONE smoke test that exercises the critical path.
+    Full coverage lives in the QA pass.
+  - Do NOT include explanatory comments in code beyond what makes
+    the code clear; Clean Code conventions apply.
+
+If you cannot fit the project, output a minimal "hello world"-level
+working version of the critical path and clearly mark what's missing.
 """.strip()
+
+
+_FILE_BLOCK_RE = re.compile(
+    r"^=====\s*FILE:\s*([^\s=]+)\s*=====\s*$(.*?)^=====\s*END FILE\s*=====\s*$",
+    re.MULTILINE | re.DOTALL,
+)
+_RUN_BLOCK_RE = re.compile(
+    r"^=====\s*RUN\s*=====\s*$(.*?)^=====\s*END RUN\s*=====\s*$",
+    re.MULTILINE | re.DOTALL,
+)
+_WORKSPACE_ROOT = Path(_os.environ.get("SPINE_PROJECTS_ROOT", "/var/lib/spine/projects"))
+
+
+def _parse_engineer_output(text: str) -> tuple[str, list[tuple[str, str]], str]:
+    """Parse engineer output into (intro_md, [(path, content), ...], run_block)."""
+    files: list[tuple[str, str]] = []
+    for m in _FILE_BLOCK_RE.finditer(text):
+        path = m.group(1).strip()
+        content = m.group(2)
+        # Strip the leading newline that follows the FILE marker.
+        if content.startswith("\n"):
+            content = content[1:]
+        # Strip the trailing newline that precedes the END FILE marker.
+        if content.endswith("\n"):
+            content = content[:-1]
+        # Reject path-traversal attempts.
+        if ".." in path.split("/") or path.startswith("/"):
+            continue
+        files.append((path, content))
+    run_m = _RUN_BLOCK_RE.search(text)
+    run_block = run_m.group(1).strip() if run_m else ""
+    # Intro = whatever comes before the first FILE marker.
+    first_file_idx = text.find("===== FILE:")
+    intro = text[:first_file_idx].strip() if first_file_idx >= 0 else text.strip()
+    return intro, files, run_block
+
+
+def _write_workspace_files(project_uuid: str, files: list[tuple[str, str]]) -> int:
+    """Write each (path, content) tuple under <SPINE_PROJECTS_ROOT>/<uuid>/.
+
+    Returns the count written. Skips any path that escapes the project
+    root after resolve(); the parser already filters traversal but
+    belt-and-suspenders.
+    """
+    project_dir = (_WORKSPACE_ROOT / project_uuid).resolve()
+    project_dir.mkdir(parents=True, exist_ok=True)
+    written = 0
+    for path, content in files:
+        target = (project_dir / path).resolve()
+        try:
+            target.relative_to(project_dir)
+        except ValueError:
+            logger.warning("workspace_path_escape", extra={"path": path})
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+        written += 1
+    return written
 
 
 _QA_PROMPT = """
@@ -269,6 +421,95 @@ async def _dispatch_role(
 
 
 # ---------------------------------------------------------------------------
+# Engineer code-gen dispatcher — produces real files, writes to workspace,
+# pushes a code_approval card with intro + file tree + RUN block summary.
+# ---------------------------------------------------------------------------
+
+
+async def _dispatch_engineer_codegen(*, project: dict[str, Any]) -> None:
+    project_id = project["project_uuid"]
+    project_name = project["name"]
+    prior = project.get("metadata", {})
+    try:
+        charter = _load_charter("engineer")
+        context_blocks = []
+        if prior.get("prd_md"):
+            context_blocks.append("## Approved PRD\n\n" + prior["prd_md"])
+        if prior.get("trd_md"):
+            context_blocks.append("## Approved TRD\n\n" + prior["trd_md"])
+        if prior.get("sprint_plan_md"):
+            context_blocks.append("## Approved sprint plan\n\n" + prior["sprint_plan_md"])
+        system = (
+            _ENGINEER_PROMPT
+            + "\n\n---\n\n## Project metadata\n"
+            + f"- Name: **{project_name}**\n- Type: **{project['project_type']}**\n\n"
+            + "---\n\n## Your charter\n\n" + charter
+            + ("\n\n---\n\n" + "\n\n---\n\n".join(context_blocks) if context_blocks else "")
+        )
+        resp = await call_async(LLMRequest(
+            model=_DEFAULT_MODEL,
+            messages=[Message(role="user", content=f"Generate the code for {project_name} now.")],
+            system=system,
+            max_tokens=16000,
+            temperature=0.2,
+        ))
+        raw = resp.content.strip()
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("engineer_codegen_failed", extra={"project_id": project_id})
+        _enqueue({
+            "decision_class": "approval",
+            "project_id": project_id,
+            "title": f"Engineer dispatch FAILED — {project_name}",
+            "body": f"_Engineer LLM call raised {type(exc).__name__}: {exc!s}_\n\nReject + re-run.",
+            "severity": "warning",
+            "actions": ["ack", "reject"],
+            "metadata": {"kind": "code_approval", "project_uuid": project_id,
+                         "project_name": project_name, "error": str(exc)[:200]},
+        })
+        return
+
+    intro_md, files, run_block = _parse_engineer_output(raw)
+    written = _write_workspace_files(project_id, files)
+
+    # Persist artifact metadata.
+    await _persist_metadata_patch(project_id, {
+        "code_intro_md": intro_md,
+        "code_files": [{"path": p, "bytes": len(c)} for p, c in files],
+        "code_run_block": run_block,
+        "code_workspace": str((_WORKSPACE_ROOT / project_id).resolve()),
+    })
+
+    # Build card body: intro + file tree + run block.
+    tree_lines = [f"  - `{p}` ({len(c):,} bytes)" for p, c in files]
+    tree_md = "\n".join(tree_lines) if tree_lines else "  _(no files parsed — engineer output didn't follow the FILE block format)_"
+    body = (
+        f"The engineer role generated **{written}** files. Approve to advance "
+        f"to the **verify** phase and dispatch the qa role for testing.\n\n"
+        f"---\n\n{intro_md}\n\n"
+        f"## Generated files\n\n{tree_md}\n\n"
+        f"## Local run\n\n```bash\n{run_block or '# (no RUN block produced)'}\n```\n\n"
+        f"## Workspace location\n\n"
+        f"```\n{_WORKSPACE_ROOT / project_id}\n```"
+    )
+    _enqueue({
+        "decision_class": "approval",
+        "project_id": project_id,
+        "title": f"Approve CODE output — {project_name}",
+        "body": body,
+        "severity": "info",
+        "actions": ["ack", "reject"],
+        "metadata": {
+            "kind": "code_approval",
+            "project_name": project_name,
+            "project_uuid": project_id,
+            "files_written": written,
+            "advances_phase_to": "verify",
+            "produced_by": "engineer",
+        },
+    })
+
+
+# ---------------------------------------------------------------------------
 # Hook entry point
 # ---------------------------------------------------------------------------
 
@@ -307,42 +548,56 @@ async def on_decision_acked(card: Any, *, actor: str) -> None:
         await _advance_phase(project_id, "plan")
         project = (await _load_project_full(project_id)) or project
         await _dispatch_role(
-            role="architect",
-            project=project,
-            role_prompt=_ARCHITECT_PROMPT,
-            artifact_key="trd_md",
-            next_phase="build",
+            role="planner", project=project, role_prompt=_PLANNER_PROMPT,
+            artifact_key="roadmap_md", next_phase="plan",
+            approval_card_kind="roadmap_approval",
+        )
+        return
+
+    if kind == "roadmap_approval":
+        await _dispatch_role(
+            role="architect", project=project, role_prompt=_ARCHITECT_PROMPT,
+            artifact_key="trd_md", next_phase="plan",
             approval_card_kind="trd_approval",
         )
         return
 
     if kind == "trd_approval":
-        await _advance_phase(project_id, "build")
-        project = (await _load_project_full(project_id)) or project
         await _dispatch_role(
-            role="engineer",
-            project=project,
-            role_prompt=_ENGINEER_PROMPT,
-            artifact_key="impl_md",
-            next_phase="verify",
-            approval_card_kind="impl_approval",
+            role="conductor", project=project, role_prompt=_CONDUCTOR_PROMPT,
+            artifact_key="sprint_plan_md", next_phase="plan",
+            approval_card_kind="sprint_plan_approval",
         )
         return
 
-    if kind == "impl_approval":
+    if kind == "sprint_plan_approval":
+        await _advance_phase(project_id, "build")
+        project = (await _load_project_full(project_id)) or project
+        await _dispatch_engineer_codegen(project=project)
+        return
+
+    if kind == "code_approval":
+        # Optional: devops local stand-up step (Wave 2 of this feature).
+        # For now, jump straight to qa.
         await _advance_phase(project_id, "verify")
         project = (await _load_project_full(project_id)) or project
         await _dispatch_role(
-            role="qa",
-            project=project,
-            role_prompt=_QA_PROMPT,
-            artifact_key="qa_md",
-            next_phase="release",
+            role="qa", project=project, role_prompt=_QA_PROMPT,
+            artifact_key="qa_md", next_phase="verify",
             approval_card_kind="qa_approval",
         )
         return
 
     if kind == "qa_approval":
+        await _dispatch_role(
+            role="release_manager", project=project,
+            role_prompt=_RELEASE_MANAGER_PROMPT,
+            artifact_key="release_gate_md", next_phase="release",
+            approval_card_kind="release_gate_approval",
+        )
+        return
+
+    if kind == "release_gate_approval":
         await _advance_phase(project_id, "release")
         # Final card — celebrate; no further dispatch.
         _enqueue({
@@ -350,14 +605,14 @@ async def on_decision_acked(card: Any, *, actor: str) -> None:
             "project_id": project_id,
             "title": f"Project ready to ship — {project['name']}",
             "body": (
-                f"All four roles signed off on **{project['name']}**.\n\n"
-                f"- PRD, TRD, implementation plan, and test plan are all "
-                f"approved and stored on the project (`metadata.prd_md`, "
-                f"`trd_md`, `impl_md`, `qa_md`).\n"
-                f"- Next: a human pushes the code to git and runs the "
-                f"approved test plan. Real code-generation lands in the "
-                f"next iteration (engineer role producing actual file "
-                f"diffs rather than the plan).\n"
+                f"All seven roles signed off on **{project['name']}**.\n\n"
+                f"- Artifacts in `metadata`: prd_md, roadmap_md, trd_md, "
+                f"sprint_plan_md, code_intro_md, qa_md, release_gate_md.\n"
+                f"- Generated code lives at /var/lib/spine/projects/"
+                f"`{project_id}`/ inside the Hub container.\n"
+                f"- Next: a human pushes the code to git, runs the "
+                f"approved test plan, then executes the deploy plan from "
+                f"the release gate.\n"
             ),
             "severity": "info",
             "actions": ["ack", "reject"],
