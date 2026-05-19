@@ -98,8 +98,13 @@
       if (res.status === 'error') {
         throw new Error(res.error?.message || 'Project creation returned status=error');
       }
-      console.info('project created:', res.data?.project_id);
-      goto(`${base}/panels/decision-queue`);
+      const pid = res.data?.project_id;
+      console.info('project created:', pid);
+      if (pid) {
+        goto(`${base}/projects/${pid}`);
+      } else {
+        goto(`${base}/panels/decision-queue`);
+      }
     } catch (e) {
       error = (e as Error).message || 'Project creation failed';
     } finally {
@@ -203,15 +208,20 @@
   {:else}
     <ul class="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
       {#each recent as p (p.project_id)}
-        <li class="panel-card">
-          <h3 class="break-words text-sm font-semibold text-surface-900 dark:text-surface-50">
-            {p.name}
-          </h3>
-          <dl class="mt-2 grid grid-cols-2 gap-1 text-xs text-surface-700 dark:text-surface-200">
-            <dt>Type</dt><dd>{p.project_type}</dd>
-            <dt>Phase</dt><dd>{p.current_phase}</dd>
-            <dt>Status</dt><dd>{p.status}</dd>
-          </dl>
+        <li>
+          <a
+            href="{base}/projects/{p.project_id}"
+            class="panel-card block transition hover:border-accent hover:shadow-md"
+          >
+            <h3 class="break-words text-sm font-semibold text-surface-900 dark:text-surface-50">
+              {p.name}
+            </h3>
+            <dl class="mt-2 grid grid-cols-2 gap-1 text-xs text-surface-700 dark:text-surface-200">
+              <dt>Type</dt><dd>{p.project_type}</dd>
+              <dt>Phase</dt><dd>{p.current_phase}</dd>
+              <dt>Status</dt><dd>{p.status}</dd>
+            </dl>
+          </a>
         </li>
       {/each}
     </ul>

@@ -72,26 +72,54 @@ class ProviderAdapter(ABC):
     def _get_api_key(self) -> str | None:
         """Resolve provider credential.
 
-        Wave 0 implementation: try ``shared.secrets.get_secret`` (soft
-        import — module may not exist yet) then fall back to the documented
-        env var. Wave 1 MUST replace this with vault-only per design #9 —
-        production deployments will fail-closed on env-var-only auth.
+        Resolution order:
+          1. ``shared.secrets`` default-adapter sync read (in-process
+             dict lookup — works for InMemoryAdapter in dev mode
+             without an event loop).
+          2. ``shared.secrets.get_secret`` async path bridged via
+             ``asyncio.run`` when no loop is running (CLI / scripts).
+          3. Environment variable fallback (``env_var``).
 
-        TODO Wave 1: replace with ``shared.secrets.get_secret(secret_name)``
-        and remove the env-var fallback. Tracking: V3_TRIAGE.md row for
-        shared/secrets/ + #9 (vault-only secrets).
+        Production paths go through (1) because the Vault adapter sets
+        the value into the default adapter's cache at bootstrap.
         """
+        import asyncio  # noqa: PLC0415 — local import keeps cold-load path light
+
         if self.secret_name:
+            # Path 1 — sync InMemoryAdapter direct read (works at uvicorn
+            # request time without a loop bridge).
+            try:
+                from shared.secrets import get_default_adapter  # type: ignore[import-not-found]
+                adapter = get_default_adapter()
+                store = getattr(adapter, "_store", None)
+                if isinstance(store, dict):
+                    val = store.get(self.secret_name)
+                    if val:
+                        return val
+            except (ImportError, ModuleNotFoundError):
+                pass
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("vault_sync_lookup_skipped name=%s err=%s",
+                             self.secret_name, exc)
+
+            # Path 2 — async read via asyncio.run (CLI / script context).
             try:
                 from shared.secrets import get_secret  # type: ignore[import-not-found]
-                value = get_secret(self.secret_name)
-                if value:
-                    return value
+                try:
+                    asyncio.get_running_loop()
+                    # Running loop present — can't asyncio.run; fall through.
+                except RuntimeError:
+                    try:
+                        val = asyncio.run(get_secret(self.secret_name))
+                        if val:
+                            return val
+                    except Exception as exc:  # noqa: BLE001
+                        logger.debug("vault_async_lookup_failed name=%s err=%s",
+                                     self.secret_name, exc)
             except (ImportError, ModuleNotFoundError):
-                pass  # Wave 0: shared/secrets/ may not exist yet
-            except Exception as exc:  # noqa: BLE001 — vault read is best-effort here
-                logger.warning("vault_lookup_failed name=%s err=%s",
-                               self.secret_name, exc)
+                pass
+
+        # Path 3 — env var fallback.
         if self.env_var:
             return os.environ.get(self.env_var)
         return None

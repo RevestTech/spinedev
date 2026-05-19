@@ -15,6 +15,7 @@ from shared.api.routes.approvals import router as approvals_router
 from shared.api.routes.audit import router as audit_router
 from shared.api.routes.decisions import router as decisions_router
 from shared.api.routes.federation import router as federation_router
+from shared.api.routes.intake import router as intake_router
 from shared.api.routes.integrations import router as integrations_router
 from shared.api.routes.kg import router as kg_router
 from shared.api.routes.license import router as license_router
@@ -43,6 +44,8 @@ ALL_ROUTERS = [
     # Wave 6 — mobile + voice scaffolds (#28, #29)
     mobile_router,
     voice_router,
+    # Conversational intake — real LLM-backed product role
+    intake_router,
 ]
 
 __all__: list[str] = [

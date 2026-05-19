@@ -235,6 +235,12 @@ services:
       # from env when the URL has no password. Dev-only convenience; prod
       # vault rewrites SPINE_DB_URL to include the password at bootstrap.
       PGPASSWORD: ${SPINE_DB_PASSWORD:-}
+      # LLM provider keys — dev-mode passthrough. Hub re-seeds these into
+      # the InMemoryAdapter at vault paths `llm/anthropic_api_key` /
+      # `llm/openai_api_key` so the intake role + downstream agents can
+      # actually call out. Prod uses vault directly (no env touch).
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       SPINE_FEDERATION_PARENT_HUB: ${SPINE_FEDERATION_PARENT_HUB:-}
       SPINE_HUB_ID: ${SPINE_HUB_ID:-}
       # --- Vault AppRole login (NON-SECRET hints; the wrapped secret-id is

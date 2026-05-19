@@ -77,7 +77,9 @@ RUN pip wheel --wheel-dir /wheels \
         "httpx==0.27.2" \
         "PyYAML==6.0.2" \
         "PyJWT[crypto]==2.9.0" \
-        "cryptography==43.0.1"
+        "cryptography==43.0.1" \
+        "anthropic==0.39.0" \
+        "openai==1.54.4"
 
 # --- Stage 1b: SPA builder (V3 Wave 3 part 2, Squad SPA1) -------------------
 # Builds the SvelteKit Hub SPA → dist/ which the runtime stage copies into

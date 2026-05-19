@@ -440,6 +440,15 @@ def create_app() -> FastAPI:
                 initial["spine/postgres/dsn"] = (
                     f"postgresql://{db_user}:{db_pw}@{db_host}:{db_port}/{db_name}"
                 )
+            # LLM provider keys — pull from env in dev mode so the intake
+            # role + downstream agents can actually reason. Per #9 prod
+            # uses vault directly; this env-passthrough is the dev escape.
+            anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
+            if anthropic_key:
+                initial["llm/anthropic_api_key"] = anthropic_key
+            openai_key = os.environ.get("OPENAI_API_KEY")
+            if openai_key:
+                initial["llm/openai_api_key"] = openai_key
             try:
                 adapter = get_default_adapter()
                 # Adapter already installed (rare in dev) — seed missing keys.
