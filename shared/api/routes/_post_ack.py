@@ -984,27 +984,71 @@ async def on_decision_acked(card: Any, *, actor: str) -> None:
         await _dispatch_local_deploy(project=project)
         return
 
+    if kind == "host_deploy_prompt":
+        md_proj = project.get("metadata", {}) or {}
+        start_cmds = md_proj.get("devops_start_cmds") or []
+        start_block = "\n".join(start_cmds) if start_cmds else "# (no explicit start command)"
+        zip_url = f"/api/v2/projects/{project_id}/workspace/zip"
+        _enqueue({
+            "decision_class": "briefing",
+            "project_id": project_id,
+            "title": f"Host run instructions — {project['name']}",
+            "body": (
+                f"**Step 1.** Download the project zip:\n\n"
+                f"  → [{zip_url}]({zip_url})\n\n"
+                f"**Step 2.** Unzip it and `cd` into the directory.\n\n"
+                f"**Step 3.** Run these commands (the engineer's start "
+                f"block):\n\n```bash\n{start_block}\n```\n\n"
+                f"**Step 4.** Open the project URL it prints (usually "
+                f"`http://localhost:3000` for Node, `http://localhost:5173` "
+                f"for Vite, `http://localhost:8000` for Python).\n\n"
+                f"Need to iterate? Reject any prior decision card with "
+                f"feedback — engineer re-codes on rejection."
+            ),
+            "severity": "info",
+            "actions": ["ack", "reject"],
+            "metadata": {
+                "kind": "host_deploy_instructions",
+                "project_uuid": project_id,
+                "project_name": project["name"],
+            },
+        })
+        return
+
     if kind == "deploy_status":
         # User acked a successful local deploy — leave running.
         return
 
+    if kind == "host_deploy_instructions":
+        return
+
     if kind == "release_gate_approval":
         await _advance_phase(project_id, "release")
-        # Offer the user a deploy: local (now) or remote cloud (via the
-        # commands in release_gate_md). Pushed BEFORE the celebration
-        # card so the queue lists the deploy choice first.
+        # Offer the user TWO deploy paths — Container or Host — plus
+        # cloud is documented in release_gate_md (manual paste for now;
+        # automated cloud-deploy lands when vault-stored creds wire up).
+        md_proj = project.get("metadata", {}) or {}
+        start_cmds = md_proj.get("devops_start_cmds") or []
+        start_block = "\n".join(start_cmds) if start_cmds else "# (no explicit start command; check engineer intro)"
         _enqueue({
             "decision_class": "approval",
             "project_id": project_id,
-            "title": f"Deploy locally? — {project['name']}",
+            "title": f"Deploy IN HUB CONTAINER — {project['name']}",
             "body": (
-                f"The project is ready to ship. Approve to **stand it up "
-                f"locally in the Hub** — devops will start the engineer's "
-                f"run commands inside the workspace and bind to a port in "
-                f"the 18000-18019 range. You'll get a `http://localhost:NNNNN` "
-                f"link to click.\n\n"
-                f"Reject to skip local deploy (cloud-deploy commands are in "
-                f"the release_gate_md artifact above)."
+                f"Approve to stand the project up **inside this Hub's "
+                f"container**. Devops runs the engineer's commands, binds "
+                f"to a free port in 18000-18019, and gives you a clickable "
+                f"`http://localhost:NNNNN`.\n\n"
+                f"Good when:\n"
+                f"  - You want to click and see it work immediately\n"
+                f"  - You don't have the project's stack installed on your "
+                f"machine (node / python / etc.)\n"
+                f"  - Hub container already has node/npm/python/git\n\n"
+                f"Less good when:\n"
+                f"  - You want to edit + iterate on the code locally\n"
+                f"  - The project needs hardware Hub can't see (GPU / Bluetooth / etc.)\n\n"
+                f"Reject this card if you prefer the **Run on your machine** "
+                f"option below."
             ),
             "severity": "info",
             "actions": ["ack", "reject"],
@@ -1012,6 +1056,38 @@ async def on_decision_acked(card: Any, *, actor: str) -> None:
                 "kind": "local_deploy_prompt",
                 "project_uuid": project_id,
                 "project_name": project["name"],
+                "deploy_target": "container",
+            },
+        })
+        _enqueue({
+            "decision_class": "approval",
+            "project_id": project_id,
+            "title": f"Run ON YOUR MACHINE — {project['name']}",
+            "body": (
+                f"Approve to get the **download-and-run script** for your "
+                f"laptop. The Hub will hand you:\n\n"
+                f"  1. A zip of the project workspace (link in the artifacts "
+                f"panel above)\n"
+                f"  2. The exact commands to run after you unzip:\n\n"
+                f"```bash\n{start_block}\n```\n\n"
+                f"Good when:\n"
+                f"  - You want the code in your editor + run it under your "
+                f"dev tooling\n"
+                f"  - You need real localhost (Hub-bound ports are isolated)\n"
+                f"  - You'll iterate + push to your own git remote\n\n"
+                f"Reject this card if you want the **Run in Hub container** "
+                f"option above instead. Cloud-target deploy commands are in "
+                f"the `release_gate_md` artifact (run them yourself for now; "
+                f"automated cloud-deploy lands when we wire vault-stored "
+                f"provider creds — coming next)."
+            ),
+            "severity": "info",
+            "actions": ["ack", "reject"],
+            "metadata": {
+                "kind": "host_deploy_prompt",
+                "project_uuid": project_id,
+                "project_name": project["name"],
+                "deploy_target": "host",
             },
         })
         _enqueue({
