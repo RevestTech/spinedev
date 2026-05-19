@@ -44,6 +44,19 @@ def _load_charter(role: str) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def _load_enterprise_directives() -> str:
+    """Read shared/charters/enterprise_directives.md once per call.
+
+    The doc is the binding enterprise-grade SDLC contract every Spine
+    role that touches production code must follow. Injected verbatim
+    into the engineer + code_review system prompts.
+    """
+    path = _CHARTERS_DIR / "enterprise_directives.md"
+    if not path.exists():
+        return ""
+    return path.read_text(encoding="utf-8")
+
+
 async def _load_project_full(project_id: str) -> Optional[dict[str, Any]]:
     """Fetch the project row + metadata (incl. prior artifacts)."""
     from shared.api.dependencies import get_db_pool_raw
@@ -194,10 +207,16 @@ Output ONLY the markdown.
 
 _CODE_REVIEW_PROMPT = """
 You are the Spine **security_engineer** + **auditor** role performing
-a real OWASP-style code review on what the engineer just produced.
-Anchor your findings in: OWASP Top 10, CWE catalog, NIST 800-53
-control families, language-specific best practices (Clean Code,
-secure-by-default).
+a real code review on what the engineer just produced. Anchor in:
+OWASP Top 10, CWE catalog, NIST 800-53 control families,
+language-specific best practices (Clean Code, secure-by-default), AND
+Spine's enterprise SDLC directives (loaded into your context — treat
+each numbered directive as a checklist item).
+
+For each directive (1-15), state PASS / FAIL / N/A with one-line
+evidence (file:line or "no relevant code"). Any FAIL on directives
+1-9 or 11-13 is an automatic REVIEW BLOCK. Directives 10/14/15
+without evidence is REVIEW BLOCK if the project ships money or PII.
 
 You will receive every generated file (path + contents) plus the PRD,
 TRD, and sprint plan as context.
@@ -313,7 +332,40 @@ with `[INFERRED]`.
 
 _ENGINEER_PROMPT = """
 You are the Spine **engineer** role. The sprint plan has been
-approved. Produce REAL code that the user can run.
+approved. Produce REAL code that the user can run AND that complies
+with Spine's enterprise SDLC directives (loaded into your context
+below). Read those directives first; treat them as binding.
+
+Hard contract drawn from the directives:
+  - No mass-assignment. Every mutator takes an explicit field
+    allowlist as a `const` array.
+  - No SQL string interpolation — always parameterize.
+  - `z.number()` banned. Use `z.number().finite().safe()` with min/max.
+  - No `!` non-null assertions outside tests. No `as` past validation.
+  - Middleware does FULL JWT verify; cookie-presence is NOT auth.
+  - External side-effects (Stripe / email / webhook) use idempotency
+    keys + outbox pattern. Never inside a DB transaction holding
+    locks.
+  - Every route file starts with a `const AUTH = {...}` declarative
+    block.
+  - Every function ships with a `// Failure modes:` comment listing
+    timeout / partial write / concurrent caller / malformed input /
+    downstream 5xx and the code's behavior for each.
+  - Env validated at boot via a Zod schema in `env.ts`; fail-fast.
+    No `process.env.X!` at module scope elsewhere.
+  - Structured JSON logs with trace_id / user_id / request_id; no
+    `console.log`; no `catch {}` swallows.
+
+If a directive CAN'T be satisfied in a given file (legit reason),
+emit on its own line in that file:
+    // BLOCKED: <directive #> — <one-line reason + escalation path>
+The security review reads these — either accepts with documented
+reason or rejects + sends back. Do NOT silently violate.
+
+After writing each file, run an adversarial-review pass on it (10
+attack scenarios — SQL injection / XSS / IDOR / race / replay / mass
+assignment / privesc / rate-limit spoof / orphan side-effect / DoS).
+Fix the failures BEFORE finalizing the file.
 
 OUTPUT FORMAT — strict. Your entire reply must be ONLY:
   1. One short markdown intro (3-6 lines) explaining what you built +
@@ -603,11 +655,13 @@ async def _dispatch_code_review(*, project: dict[str, Any]) -> None:
         if prior.get("sprint_plan_md"):
             context_blocks.append("## Approved sprint plan\n\n" + prior["sprint_plan_md"])
         context_blocks.append("## Generated code files\n\n" + code_dump)
+        directives = _load_enterprise_directives()
         system = (
             _CODE_REVIEW_PROMPT
             + "\n\n---\n\n## Project metadata\n"
             + f"- Name: **{project_name}**\n- Type: **{project['project_type']}**\n\n"
-            + "---\n\n## security_engineer charter\n\n" + sec_charter
+            + "---\n\n## Spine enterprise SDLC directives (binding checklist)\n\n" + directives
+            + "\n\n---\n\n## security_engineer charter\n\n" + sec_charter
             + "\n\n---\n\n## auditor charter\n\n" + aud_charter
             + "\n\n---\n\n" + "\n\n---\n\n".join(context_blocks)
         )
@@ -1060,11 +1114,13 @@ async def _dispatch_engineer_codegen(*, project: dict[str, Any]) -> None:
             context_blocks.append("## Approved TRD\n\n" + prior["trd_md"])
         if prior.get("sprint_plan_md"):
             context_blocks.append("## Approved sprint plan\n\n" + prior["sprint_plan_md"])
+        directives = _load_enterprise_directives()
         system = (
             _ENGINEER_PROMPT
             + "\n\n---\n\n## Project metadata\n"
             + f"- Name: **{project_name}**\n- Type: **{project['project_type']}**\n\n"
-            + "---\n\n## Your charter\n\n" + charter
+            + "---\n\n## Spine enterprise SDLC directives (binding)\n\n" + directives
+            + "\n\n---\n\n## Your charter\n\n" + charter
             + ("\n\n---\n\n" + "\n\n---\n\n".join(context_blocks) if context_blocks else "")
         )
         resp = await call_async(LLMRequest(
@@ -1453,11 +1509,13 @@ async def _dispatch_engineer_codegen_with_feedback(*, project: dict[str, Any]) -
             context_blocks.append("## Approved sprint plan\n\n" + prior["sprint_plan_md"])
         if feedback:
             context_blocks.append(feedback)
+        directives = _load_enterprise_directives()
         system = (
             _ENGINEER_PROMPT
             + "\n\n---\n\n## Project metadata\n"
             + f"- Name: **{project_name}**\n- Type: **{project['project_type']}**\n\n"
-            + "---\n\n## Your charter\n\n" + charter
+            + "---\n\n## Spine enterprise SDLC directives (binding)\n\n" + directives
+            + "\n\n---\n\n## Your charter\n\n" + charter
             + ("\n\n---\n\n" + "\n\n---\n\n".join(context_blocks) if context_blocks else "")
         )
         resp = await call_async(LLMRequest(

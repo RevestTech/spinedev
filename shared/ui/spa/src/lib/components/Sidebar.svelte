@@ -87,7 +87,7 @@
 {/if}
 
 <aside
-  class="fixed inset-y-0 left-0 z-40 w-72 transform overflow-y-auto border-r border-surface-700/60 bg-surface-900/70 p-4 backdrop-blur-md transition-transform md:static md:translate-x-0"
+  class="fixed inset-y-0 left-0 z-40 w-60 transform overflow-y-auto border-r border-surface-700/60 bg-surface-900/70 p-3 backdrop-blur-md transition-transform md:static md:translate-x-0"
   class:translate-x-0={open}
   class:-translate-x-full={!open}
   aria-label="Hub surfaces"
@@ -111,30 +111,22 @@
                   href={base + it.href}
                   title={it.desc}
                   aria-label="{it.label} — {it.desc}"
-                  class="group flex items-start gap-2.5 rounded-lg px-2.5 py-2 text-sm text-surface-300 transition-all hover:bg-surface-800/80 hover:text-white"
+                  class="group flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm text-surface-300 transition-all hover:bg-surface-800/80 hover:text-white"
                   class:!bg-gradient-brand={isActive(it.href)}
                   class:!text-white={isActive(it.href)}
                   class:shadow-glow-sm={isActive(it.href)}
                   on:click={() => onClose?.()}
                 >
-                  <span class="mt-0.5 w-4 text-center text-base leading-none opacity-70 group-hover:opacity-100">{it.icon}</span>
-                  <span class="flex-1">
-                    <span class="block font-medium">{it.label}</span>
-                    <span
-                      class="block text-[0.65rem] leading-tight {isActive(it.href) ? 'text-white/80' : 'text-surface-500 group-hover:text-surface-300'}"
-                    >{it.desc}</span>
-                  </span>
+                  <span class="w-4 text-center text-base leading-none opacity-70 group-hover:opacity-100">{it.icon}</span>
+                  <span class="flex-1">{it.label}</span>
                 </a>
               {:else}
                 <span
-                  class="flex items-start gap-2.5 rounded-lg px-2.5 py-2 text-sm text-surface-500"
-                  title="Coming soon"
+                  class="flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm text-surface-500"
+                  title={it.desc}
                 >
-                  <span class="mt-0.5 w-4 text-center opacity-50">{it.icon}</span>
-                  <span class="flex-1">
-                    <span class="block">{it.label}</span>
-                    <span class="block text-[0.65rem] text-surface-600">{it.desc}</span>
-                  </span>
+                  <span class="w-4 text-center opacity-50">{it.icon}</span>
+                  <span class="flex-1">{it.label}</span>
                   <span class="text-[0.6rem] uppercase tracking-wide text-surface-600">soon</span>
                 </span>
               {/if}

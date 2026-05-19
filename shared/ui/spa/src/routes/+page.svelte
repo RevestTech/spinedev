@@ -235,35 +235,70 @@
   {/if}
 </section>
 
-<details class="rounded-md border border-surface-200 bg-white p-3 dark:border-surface-700 dark:bg-surface-800">
-  <summary class="cursor-pointer text-sm font-medium text-surface-900 dark:text-surface-50">
-    Hub administration · observability surfaces
-  </summary>
-  <p class="mt-2 text-xs text-surface-700/70 dark:text-surface-200/70">
-    These panels are for operators monitoring the Hub itself — your AI workforce, integrations,
-    audit ledger, vault, license, federation. You won't need any of them to ship your first
-    project; the build form above is the entry point.
-  </p>
-  <div class="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
-    {#each [
-      { href: '/panels/decision-queue', title: 'Decision queue',  desc: 'Pending decision cards from AI scrum masters (#5).' },
-      { href: '/panels/role-chat',      title: 'Talk to a role',  desc: 'Ad-hoc chat with any role using its charter prompt.' },
-      { href: '/panels/master-roles',   title: 'Master roles',    desc: 'Master-tier role state across the federation.' },
-      { href: '/panels/registry',       title: 'Registry',        desc: 'Project + agent + role registry.' },
-      { href: '/panels/audit',          title: 'Audit',           desc: 'Chained audit-event explorer.' },
-      { href: '/panels/vault-config',   title: 'Vault config',    desc: 'Two-party vault secret approvals (#9).' },
-      { href: '/panels/integrations',   title: 'Integrations',    desc: 'GitHub / Linear / Slack / Vanta wiring.' },
-      { href: '/panels/federation',     title: 'Federation',      desc: 'Hub switcher + federation topology.' },
-      { href: '/panels/license',        title: 'License',         desc: 'Active license bundle + feature flags (#23).' },
-      { href: '/panels/kg-search',      title: 'KG search',       desc: 'Knowledge-graph hybrid search.' }
-    ] as t (t.href)}
-      <a
-        href="{base}{t.href}"
-        class="rounded-md border border-surface-200 p-3 text-sm hover:border-accent hover:bg-surface-50 dark:border-surface-700 dark:hover:bg-surface-700"
-      >
-        <span class="block font-medium text-surface-900 dark:text-surface-50">{t.title}</span>
-        <span class="block text-xs text-surface-700/70 dark:text-surface-200/70">{t.desc}</span>
-      </a>
-    {/each}
-  </div>
-</details>
+<section class="mb-8">
+  <header class="mb-3">
+    <h2 class="text-base font-semibold text-surface-50">What's in your Hub</h2>
+    <p class="text-xs text-surface-400">
+      The sidebar groups every surface by job. Quick legend:
+    </p>
+  </header>
+  {#each [
+    {
+      group: 'Build',
+      blurb: 'What you use to make software',
+      items: [
+        { href: '/',                       icon: '⌂', title: 'Dashboard',       desc: 'Start a new project; pick up recent projects.' },
+        { href: '/projects',               icon: '▤', title: 'Projects',        desc: 'All projects in this Hub with SDLC phase + status.' },
+        { href: '/panels/decision-queue',  icon: '✓', title: 'Decisions',       desc: 'Approval cards waiting on you — PRDs, TRDs, code reviews, deploys.' },
+        { href: '/panels/role-chat',       icon: '✎', title: 'Talk to a role',  desc: 'Ad-hoc chat with any role using its charter prompt.' }
+      ]
+    },
+    {
+      group: 'Observe',
+      blurb: 'What is happening, what already happened',
+      items: [
+        { href: '/panels/audit',     icon: '⌽', title: 'Audit log',       desc: 'Hash-chained ledger of every LLM call + role action (per #24).' },
+        { href: '/panels/kg-search', icon: '◈', title: 'Knowledge graph', desc: 'Search the project KG — symbols, files, decisions, citations.' }
+      ]
+    },
+    {
+      group: 'Operate',
+      blurb: 'Hub configuration + integrations',
+      items: [
+        { href: '/panels/master-roles', icon: '◐', title: 'Master roles',  desc: 'Master-tier role state across the federation.' },
+        { href: '/panels/registry',     icon: '◇', title: 'Registry',      desc: 'Catalog of roles + integrations the Hub knows about.' },
+        { href: '/panels/integrations', icon: '⌶', title: 'Integrations',  desc: 'External systems wired in (GitHub / Linear / Slack / Vanta).' },
+        { href: '/panels/vault-config', icon: '🔒', title: 'Vault',         desc: 'Secret paths the Hub references (per #9 vault-only).' }
+      ]
+    },
+    {
+      group: 'Governance',
+      blurb: 'Across the org — multi-Hub + entitlements',
+      items: [
+        { href: '/panels/federation', icon: '⌬', title: 'Federation', desc: 'Hub-to-Hub topology — link this Hub to others in your org.' },
+        { href: '/panels/license',    icon: '◍', title: 'License',    desc: 'Active license bundle + feature flags (per #23).' }
+      ]
+    }
+  ] as section (section.group)}
+    <div class="mb-5">
+      <div class="mb-2 flex items-baseline gap-3">
+        <h3 class="text-[0.7rem] font-semibold uppercase tracking-widest text-accent">{section.group}</h3>
+        <span class="text-xs text-surface-500">{section.blurb}</span>
+      </div>
+      <div class="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+        {#each section.items as t (t.href)}
+          <a
+            href="{base}{t.href}"
+            class="flex items-start gap-3 rounded-lg border border-surface-700/60 bg-surface-900/60 p-3 text-sm transition-all hover:border-accent/60 hover:bg-surface-800/70 hover:shadow-glow-sm"
+          >
+            <span class="text-lg leading-none text-accent">{t.icon}</span>
+            <span class="flex-1">
+              <span class="block font-medium text-surface-50">{t.title}</span>
+              <span class="mt-0.5 block text-xs leading-tight text-surface-400">{t.desc}</span>
+            </span>
+          </a>
+        {/each}
+      </div>
+    </div>
+  {/each}
+</section>
