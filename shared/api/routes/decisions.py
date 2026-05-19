@@ -508,6 +508,16 @@ async def ack_decision(
     rec = _audit_decision_event(
         action="decision_acked", decision_id=decision_id, actor=actor, project_id=updated.project_id
     )
+    # Side-effect hooks tied to ack — fire-and-forget so the response
+    # lands fast. Each handler reads card.metadata.kind to decide what
+    # downstream work to kick off (phase advance + role dispatch).
+    try:
+        import asyncio as _asyncio
+        from shared.api.routes._post_ack import on_decision_acked
+        _asyncio.create_task(on_decision_acked(updated, actor=actor))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("post_ack_hook_failed",
+                       extra={"decision_id": decision_id, "error": str(exc)})
     return DecisionActionResponse(
         decision_id=decision_id,
         status=updated.status,

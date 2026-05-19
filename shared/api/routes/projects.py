@@ -215,6 +215,90 @@ async def get_project(
     return {"project_id": project_id, "status_snapshot": snap, "total_cost_usd": cost}
 
 
+@router.get("/{project_id}/full")
+async def get_project_full(project_id: str) -> dict[str, Any]:
+    """Direct read of project row + metadata (incl. PRD when present).
+
+    Used by the workspace UI to render the project header + PRD + activity
+    feed without going through the MCP indirection. Returns 404 if the
+    project doesn't exist; 503 if the DB pool is unavailable.
+    """
+    from shared.api.dependencies import get_db_pool_raw
+    pool = get_db_pool_raw()
+    if pool is None:
+        raise _err(503, "db_unavailable", "DB pool not initialized (dev mode without vault?)")
+    where_clause = "id = $1" if project_id.isdigit() else "project_uuid::text = $1"
+    arg: Any = int(project_id) if project_id.isdigit() else project_id
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            f"SELECT id, project_uuid::text AS project_uuid, name, project_type, "
+            f"current_phase, status, owner_user, pipeline_version, "
+            f"metadata, created_at, updated_at "
+            f"FROM spine_lifecycle.project WHERE {where_clause}",
+            arg,
+        )
+    if row is None:
+        raise _err(404, "project_not_found", f"project {project_id!r} not found")
+    import json as _json
+    metadata = row["metadata"]
+    if isinstance(metadata, str):
+        try:
+            metadata = _json.loads(metadata)
+        except Exception:  # noqa: BLE001
+            metadata = {}
+    return {
+        "id": int(row["id"]),
+        "project_id": row["project_uuid"],
+        "name": row["name"],
+        "project_type": row["project_type"],
+        "current_phase": row["current_phase"],
+        "status": row["status"],
+        "owner": row["owner_user"],
+        "pipeline_version": row["pipeline_version"],
+        "metadata": metadata or {},
+        "prd_md": (metadata or {}).get("prd_md"),
+        "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+        "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
+    }
+
+
+@router.post("/{project_id}/advance-phase-by-uuid")
+async def advance_phase_by_uuid(project_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    """Direct phase-advance bypassing MCP indirection.
+
+    Used by the decision-card ack handler when a prd_approval card lands
+    so the SPA can flip the workspace into the plan phase immediately.
+    Updates project.current_phase + appends to phase_history. No
+    HMAC-token check in dev mode (Wave 4 wires the approval token
+    pathway through here too).
+    """
+    target_phase = str(body.get("target_phase", "")).strip()
+    if not target_phase:
+        raise _err(400, "invalid_input", "target_phase required")
+    from shared.api.dependencies import get_db_pool_raw
+    pool = get_db_pool_raw()
+    if pool is None:
+        raise _err(503, "db_unavailable", "DB pool not initialized")
+    where_clause = "id = $2" if project_id.isdigit() else "project_uuid::text = $2"
+    arg: Any = int(project_id) if project_id.isdigit() else project_id
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                f"UPDATE spine_lifecycle.project SET current_phase = $1, "
+                f"updated_at = now() WHERE {where_clause} "
+                f"RETURNING id, current_phase",
+                target_phase, arg,
+            )
+            if row is None:
+                raise _err(404, "project_not_found", f"project {project_id!r} not found")
+            await conn.execute(
+                "INSERT INTO spine_lifecycle.phase_history "
+                "(project_id, phase, entered_at) VALUES ($1, $2, now())",
+                int(row["id"]), target_phase,
+            )
+    return {"project_id": project_id, "current_phase": row["current_phase"]}
+
+
 @router.patch("/{project_id}")
 async def patch_project(project_id: str, body: ProjectUpdate,
                         user: Annotated[User, Depends(current_user)]) -> dict[str, Any]:

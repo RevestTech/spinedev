@@ -1,12 +1,13 @@
 <!--
   Spine Hub SPA — Project workspace.
 
-  Per-project SDLC workspace. Phase pipeline at the top; intake chat
-  (real LLM-backed product role) below while in intake phase; switches
-  to PRD review / build dashboard as phases advance.
+  Phase-aware: shows intake chat during intake; shows artifacts (PRD,
+  TRD, impl plan, QA plan) as they accumulate in project metadata.
+  Polls every 4s to pick up live phase + artifact updates from the
+  background role dispatcher.
 -->
 <script lang="ts">
-  import { onMount, tick } from 'svelte';
+  import { onMount, onDestroy, tick } from 'svelte';
   import { page } from '$app/stores';
   import { base } from '$app/paths';
   import PanelHeader from '$lib/components/PanelHeader.svelte';
@@ -16,15 +17,18 @@
 
   $: projectId = $page.params.project_id;
 
-  interface ProjectRow {
+  interface ProjectFull {
+    id: number;
     project_id: string;
     name: string;
     project_type: string;
     current_phase: string;
     status: string;
     owner?: string;
+    metadata: Record<string, any>;
+    prd_md?: string | null;
   }
-  let project: ProjectRow | null = null;
+  let project: ProjectFull | null = null;
   let projectLoading = true;
   let projectError: string | null = null;
 
@@ -46,17 +50,13 @@
   let intakeDone = false;
   let chatScroller: HTMLDivElement;
 
+  let pollHandle: number | null = null;
+
   async function loadProject() {
-    projectLoading = true;
-    projectError = null;
     try {
-      const list = await api.get<{ items: string[] }>(`/api/v2/projects?limit=200`);
-      // items are JSON-encoded strings; find ours by id.
-      const rows: ProjectRow[] = (list.items ?? []).map((s) =>
-        typeof s === 'string' ? JSON.parse(s) : (s as ProjectRow)
-      );
-      project = rows.find((r) => r.project_id === projectId) ?? null;
-      if (!project) projectError = `project ${projectId} not found in list`;
+      const res = await api.get<ProjectFull>(`/api/v2/projects/${projectId}/full`);
+      project = res;
+      projectError = null;
     } catch (e) {
       projectError = (e as Error).message || 'failed to load project';
     } finally {
@@ -69,7 +69,6 @@
     const msg = userInput.trim();
     chatBusy = true;
     chatError = null;
-    // Optimistic user-turn render so the UI feels responsive.
     transcript = [...transcript, { role: 'user', content: msg }];
     userInput = '';
     await tick();
@@ -82,17 +81,16 @@
         model: string;
       }>(`/api/v2/projects/${projectId}/intake/chat`, {
         message: msg,
-        transcript: transcript.slice(0, -1), // server expects prior turns sans the just-added user turn
+        transcript: transcript.slice(0, -1),
         project_name: project.name,
         project_type: project.project_type,
-        greenfield: false // TODO: thread through from project metadata when stored
+        greenfield: false
       });
       transcript = res.transcript;
       intakeDone = res.done;
       await tick();
       chatScroller?.scrollTo({ top: chatScroller.scrollHeight, behavior: 'smooth' });
     } catch (e) {
-      // Roll the optimistic user-turn back on failure.
       transcript = transcript.slice(0, -1);
       userInput = msg;
       chatError = (e as Error).message || 'intake chat failed';
@@ -102,9 +100,7 @@
   }
 
   async function kickoff() {
-    // Auto-fire an opening turn so the user sees the role talking first.
     if (!project || transcript.length > 0) return;
-    transcript = [];
     userInput = `Start the intake for project "${project.name}" (${project.project_type}).`;
     await sendIntake();
   }
@@ -112,7 +108,26 @@
   onMount(async () => {
     await loadProject();
     if (project?.current_phase === 'intake') kickoff();
+    // Poll for phase / artifact updates so the user sees the system
+    // working without manual refresh. Lightweight read (single row).
+    pollHandle = window.setInterval(loadProject, 4000) as unknown as number;
   });
+
+  onDestroy(() => {
+    if (pollHandle !== null) window.clearInterval(pollHandle);
+  });
+
+  // Pre-computed artifact list per current state.
+  $: artifacts = (() => {
+    if (!project) return [] as { label: string; key: string; md: string }[];
+    const md = project.metadata || {};
+    const out: { label: string; key: string; md: string }[] = [];
+    if (md.prd_md) out.push({ label: 'PRD (product role)', key: 'prd_md', md: md.prd_md });
+    if (md.trd_md) out.push({ label: 'TRD (architect role)', key: 'trd_md', md: md.trd_md });
+    if (md.impl_md) out.push({ label: 'Implementation plan (engineer role)', key: 'impl_md', md: md.impl_md });
+    if (md.qa_md) out.push({ label: 'Test plan (qa role)', key: 'qa_md', md: md.qa_md });
+    return out;
+  })();
 </script>
 
 <PanelHeader
@@ -120,6 +135,7 @@
   subtitle={project ? `${project.project_type} · phase: ${project.current_phase} · ${project.status}` : 'Loading…'}
 >
   <a href="{base}/" class="btn-ghost text-sm">← Dashboard</a>
+  <a href="{base}/panels/decision-queue" class="btn-ghost text-sm">Decisions →</a>
 </PanelHeader>
 
 {#if projectError}
@@ -141,7 +157,7 @@
         <li
           class="rounded-full px-3 py-1 font-medium"
           class:bg-accent={state === 'active'}
-          class:text-white={state === 'active'}
+          class:text-white={state === 'active' || state === 'done'}
           class:bg-severity-info={state === 'done'}
           class:bg-surface-200={state === 'pending'}
           class:text-surface-700={state === 'pending'}
@@ -159,14 +175,14 @@
 
   {#if project.current_phase === 'intake'}
     <!-- Intake chat -->
-    <section class="panel-card flex flex-col gap-3" style="min-height: 28rem;">
+    <section class="panel-card flex flex-col gap-3 mb-6" style="min-height: 28rem;">
       <header class="flex items-center justify-between">
         <h2 class="text-sm font-semibold text-surface-900 dark:text-surface-50">
           Intake with the product role
         </h2>
         {#if intakeDone}
           <span class="rounded-full bg-severity-info px-3 py-1 text-xs text-white">
-            ✓ Intake complete — drafting PRD next
+            ✓ Intake complete — drafting PRD…
           </span>
         {/if}
       </header>
@@ -178,9 +194,7 @@
         data-testid="intake-transcript"
       >
         {#if transcript.length === 0}
-          <p class="text-sm text-surface-700/70 dark:text-surface-200/70">
-            Starting intake…
-          </p>
+          <p class="text-sm text-surface-700/70 dark:text-surface-200/70">Starting intake…</p>
         {/if}
         {#each transcript as turn, i (i)}
           <div class="mb-3 flex gap-2" class:justify-end={turn.role === 'user'}>
@@ -230,32 +244,58 @@
             }}
             data-testid="intake-input"
           ></textarea>
-          <button
-            type="submit"
-            class="btn-primary"
-            disabled={chatBusy || !userInput.trim()}
-            data-testid="intake-send"
-          >
+          <button type="submit" class="btn-primary" disabled={chatBusy || !userInput.trim()} data-testid="intake-send">
             {chatBusy ? '…' : 'Send'}
           </button>
         </form>
       {:else}
         <div class="rounded-md border border-severity-info/30 bg-severity-info/10 p-3 text-sm">
-          The product role has enough to draft a PRD. PRD generation +
-          approval card lands in the next iteration — for now the
-          transcript above is the requirements record. Refresh
-          <a href="{base}/panels/decision-queue" class="text-accent underline">decisions</a>
-          shortly.
+          PRD draft running in the background. You'll see an approval card
+          in <a href="{base}/panels/decision-queue" class="text-accent underline">decisions</a>
+          in a few seconds. Approve to advance to the architect.
         </div>
       {/if}
     </section>
-  {:else}
-    <section class="panel-card">
-      <p class="text-sm text-surface-700 dark:text-surface-200">
-        Workspace view for phase <strong>{project.current_phase}</strong> not yet
-        implemented in this iteration. Use the
-        <a href="{base}/panels/decision-queue" class="text-accent underline">decision queue</a>
-        to see what's pending.
+  {/if}
+
+  <!-- Artifacts panel (PRD/TRD/IMPL/QA shown as they appear) -->
+  {#if artifacts.length > 0}
+    <section class="mb-6">
+      <h2 class="mb-3 text-sm font-semibold text-surface-900 dark:text-surface-50">
+        Artifacts produced
+      </h2>
+      <div class="space-y-3">
+        {#each artifacts as art (art.key)}
+          <details class="panel-card" open={art.key === artifacts[artifacts.length - 1].key}>
+            <summary class="cursor-pointer text-sm font-semibold text-surface-900 dark:text-surface-50">
+              {art.label}
+              <span class="ml-2 text-xs font-normal text-surface-700/70 dark:text-surface-200/70">
+                ({art.md.length.toLocaleString()} chars)
+              </span>
+            </summary>
+            <pre class="mt-3 whitespace-pre-wrap rounded-md bg-surface-50 p-3 text-xs leading-relaxed text-surface-900 dark:bg-surface-900 dark:text-surface-50">{art.md}</pre>
+          </details>
+        {/each}
+      </div>
+    </section>
+  {/if}
+
+  <!-- Status hint when between phases (artifact generated but no card yet visible) -->
+  {#if project.current_phase !== 'intake' && project.current_phase !== 'release'}
+    <section class="panel-card text-sm">
+      <p class="text-surface-700 dark:text-surface-200">
+        Phase: <strong>{project.current_phase}</strong>. Look in
+        <a href="{base}/panels/decision-queue" class="text-accent underline">decisions</a>
+        for the next approval card. The page auto-refreshes every 4s.
+      </p>
+    </section>
+  {/if}
+
+  {#if project.current_phase === 'release'}
+    <section class="panel-card text-sm">
+      <p class="text-surface-700 dark:text-surface-200">
+        🎉 <strong>{project.name}</strong> reached the <strong>release</strong> phase.
+        All four roles signed off; artifacts above are the trail.
       </p>
     </section>
   {/if}

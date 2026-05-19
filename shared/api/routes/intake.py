@@ -116,6 +116,151 @@ class IntakeChatResponse(BaseModel):
 _INTAKE_COMPLETE_SENTINEL = "[INTAKE_COMPLETE]"
 
 
+_PRD_SYNTHESIS_PROMPT = """
+You are the Spine **product** role. The intake conversation just
+completed. Synthesize a Product Requirements Document from the
+transcript.
+
+PRD structure (markdown — start with `# <Project Name>` heading):
+  1. **Problem** — one paragraph describing the user need + the
+     opportunity in JTBD terms (when X happens, the user wants to Y so
+     they can Z).
+  2. **Users** — who this is for; primary + secondary segments.
+  3. **Desired outcome** — what "done" looks like from the user's POV.
+  4. **Functional requirements** — bullet list, numbered FR-1, FR-2…
+  5. **Non-functional requirements** — perf, security, accessibility,
+     scale targets. Numbered NFR-1, NFR-2…
+  6. **Out of scope** — explicit non-goals; what we are NOT building.
+  7. **Constraints** — deadlines / budget / stack / regulatory.
+  8. **Open risks** — top 3-5; for each note value/usability/feasibility/
+     viability framing per Cagan.
+  9. **Success metrics** — leading + lagging indicators.
+ 10. **Next decisions** — what the next role (architect) needs to pick.
+
+Tight prose. No filler. Use the user's own words where useful. Mark
+anything you had to infer with `[INFERRED]`.
+
+Do NOT include the intake transcript in the PRD. Do NOT include this
+prompt. Output ONLY the PRD markdown, starting with `# `.
+""".strip()
+
+
+async def _synthesize_prd_and_seed_approval(
+    *,
+    project_id: str,
+    project_name: str,
+    project_type: str,
+    greenfield: bool,
+    transcript: list[TranscriptTurn],
+    actor: str,
+) -> None:
+    """Background task fired when intake completes.
+
+    Calls the LLM again to draft a full PRD from the transcript, then
+    enqueues an approval DecisionCard so the user can ack/reject the
+    PRD. Best-effort — failures are logged and do not surface to the
+    user (the chat-turn reply has already returned).
+    """
+    import uuid as _uuid
+
+    try:
+        product_charter = _load_charter("product")
+        transcript_text = "\n\n".join(
+            f"**{t.role.upper()}:** {t.content}" for t in transcript
+        )
+        system = (
+            _PRD_SYNTHESIS_PROMPT
+            + "\n\n---\n\n## Project metadata\n"
+            + f"- Name: **{project_name}**\n"
+            + f"- Type: **{project_type}**\n"
+            + f"- Greenfield: **{greenfield}**\n\n"
+            + "---\n\n## Your charter (product role)\n\n"
+            + product_charter
+            + "\n\n---\n\n## Intake transcript\n\n"
+            + transcript_text
+        )
+        resp = await call_async(LLMRequest(
+            model=_DEFAULT_MODEL,
+            messages=[Message(role="user", content="Draft the PRD now.")],
+            system=system,
+            max_tokens=8000,
+            temperature=0.3,
+        ))
+        prd_md = resp.content.strip()
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("prd_synthesis_failed", extra={"project_id": project_id})
+        # Seed a stub approval card so the user sees SOMETHING about the
+        # failure rather than silently sitting on intake.
+        prd_md = (
+            f"# {project_name}\n\n"
+            f"_PRD generation failed: {type(exc).__name__}_\n\n"
+            f"The intake transcript is preserved on the workspace page; "
+            f"re-run intake or contact support."
+        )
+
+    # Persist PRD into project.metadata.
+    try:
+        import json as _json
+        from shared.api.dependencies import get_db_pool_raw
+        pool = get_db_pool_raw()
+        if pool is not None:
+            project_pk: Optional[int] = None
+            if project_id.isdigit():
+                project_pk = int(project_id)
+            else:
+                async with pool.acquire() as conn:
+                    row = await conn.fetchrow(
+                        "SELECT id FROM spine_lifecycle.project WHERE project_uuid::text = $1",
+                        project_id,
+                    )
+                    if row:
+                        project_pk = int(row["id"])
+            if project_pk is not None:
+                async with pool.acquire() as conn:
+                    await conn.execute(
+                        "UPDATE spine_lifecycle.project SET metadata = "
+                        "COALESCE(metadata, '{}'::jsonb) || $1::jsonb WHERE id = $2",
+                        _json.dumps({"prd_md": prd_md}),
+                        project_pk,
+                    )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("prd_persist_failed", extra={"project_id": project_id, "error": str(exc)})
+
+    # Push approval card.
+    try:
+        from shared.api.routes.decisions import DecisionCard, enqueue_decision
+        card = DecisionCard(
+            decision_id=str(_uuid.uuid4()),
+            decision_class="approval",
+            project_id=project_id,
+            title=f"Approve PRD — {project_name}",
+            body=(
+                "The product role drafted this PRD from the intake "
+                "conversation. Approve to advance the project to the "
+                "**plan** phase and dispatch the architect role for a "
+                "TRD. Reject to send the product role back for another "
+                "intake pass.\n\n---\n\n" + prd_md
+            ),
+            severity="info",
+            actions=["ack", "reject"],
+            metadata={
+                "kind": "prd_approval",
+                "project_name": project_name,
+                "project_type": project_type,
+                "greenfield": bool(greenfield),
+                "advances_phase_to": "plan",
+            },
+        )
+        enqueue_decision(card)
+        logger.info("prd_approval_card_enqueued", extra={
+            "project_id": project_id, "decision_id": card.decision_id,
+            "prd_chars": len(prd_md),
+        })
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("prd_approval_card_enqueue_failed",
+                         extra={"project_id": project_id})
+
+
 @router.post(
     "/{project_id}/intake/chat",
     response_model=IntakeChatResponse,
@@ -178,6 +323,20 @@ async def intake_chat(
     if done:
         # Strip the sentinel from the user-visible reply.
         reply = reply.replace(_INTAKE_COMPLETE_SENTINEL, "").strip()
+        # Fire-and-forget PRD synthesis + approval card; non-blocking so
+        # the chat reply lands fast even when PRD generation is slow.
+        import asyncio as _asyncio
+        _asyncio.create_task(_synthesize_prd_and_seed_approval(
+            project_id=project_id,
+            project_name=body.project_name,
+            project_type=body.project_type,
+            greenfield=body.greenfield,
+            transcript=list(body.transcript) + [
+                TranscriptTurn(role="user", content=body.message),
+                TranscriptTurn(role="assistant", content=reply),
+            ],
+            actor=actor,
+        ))
 
     # Updated transcript = previous + user turn + assistant reply.
     new_transcript = list(body.transcript) + [
