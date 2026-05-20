@@ -356,6 +356,16 @@ Hard contract drawn from the directives:
   - Structured JSON logs with trace_id / user_id / request_id; no
     `console.log`; no `catch {}` swallows.
 
+Runtime-compat rules (so the local deploy actually boots):
+  - Next.js: config file MUST be `next.config.mjs` (NOT `.ts` — Next
+    14 rejects a TypeScript config and crashes on boot). Pin `next`
+    to a real published version.
+  - Provide a `dev` script. Local deploy runs `npm run dev` with
+    host/port flags injected — read `process.env.PORT`, don't
+    hardcode.
+  - Every import resolves to a file you produced OR a real published
+    dependency listed in package.json.
+
 If a directive CAN'T be satisfied in a given file (legit reason),
 emit on its own line in that file:
     // BLOCKED: <directive #> — <one-line reason + escalation path>
@@ -788,11 +798,23 @@ async def _dispatch_local_deploy(*, project: dict[str, Any]) -> None:
 
     md = project.get("metadata", {}) or {}
     start_cmds: list[str] = md.get("devops_start_cmds") or []
-    if not start_cmds:
-        # Fall back: try common defaults based on file presence.
-        if (workspace / "package.json").exists():
+    # For local review we ALWAYS prefer the dev server over a prod start
+    # (prod `next start` / `vite preview` need a build first). Detect the
+    # framework from package.json scripts + pick the dev script.
+    pkg_path = workspace / "package.json"
+    if pkg_path.exists():
+        try:
+            import json as _json
+            scripts = (_json.loads(pkg_path.read_text()).get("scripts") or {})
+        except Exception:  # noqa: BLE001
+            scripts = {}
+        if "dev" in scripts:
+            # Next.js / Vite / Astro all expose `dev`; force dev for review.
+            start_cmds = ["npm run dev"]
+        elif not start_cmds:
             start_cmds = ["npm start"]
-        elif (workspace / "app.py").exists() or (workspace / "main.py").exists():
+    if not start_cmds:
+        if (workspace / "app.py").exists() or (workspace / "main.py").exists():
             start_cmds = ["python app.py" if (workspace / "app.py").exists() else "python main.py"]
         else:
             _emit("role_failed", project_uuid=project_id, role="devops_release",
@@ -846,21 +868,39 @@ async def _dispatch_local_deploy(*, project: dict[str, Any]) -> None:
         # Spine generates.
     }
 
+    is_next = (workspace / "next.config.ts").exists() or (workspace / "next.config.js").exists() \
+        or (workspace / "next.config.mjs").exists()
+
     def _harden(cmd: str) -> str:
-        """Append `--host 0.0.0.0` / `--hostname 0.0.0.0` where the
-        framework's CLI wants it. Best-effort string mutation."""
+        """Append host/port flags the framework's CLI actually wants.
+        Best-effort string mutation; env vars cover the rest."""
         lower = cmd.lower()
-        if "npm run dev" in lower or "vite" in lower or "astro dev" in lower:
+        if "npm run dev" in lower or "npm start" in lower:
+            if is_next:
+                # Next.js dev/start: -H hostname, -p port (NOT --host).
+                cmd = cmd + f" -- -H 0.0.0.0 -p {port}"
+            elif "--host" not in lower:
+                # Vite / Astro accept --host + --port after `--`.
+                cmd = cmd + f" -- --host 0.0.0.0 --port {port}"
+        elif "vite" in lower or "astro dev" in lower:
             if "--host" not in lower:
-                cmd = cmd + " -- --host 0.0.0.0"
+                cmd = cmd + f" --host 0.0.0.0 --port {port}"
         elif "flask run" in lower and "--host" not in lower:
-            cmd = cmd + " --host 0.0.0.0"
+            cmd = cmd + f" --host 0.0.0.0 --port {port}"
         elif "uvicorn" in lower and "--host" not in lower:
             cmd = cmd + f" --host 0.0.0.0 --port {port}"
         return cmd
 
     hardened = [_harden(c) for c in start_cmds]
-    full_cmd = " && ".join(hardened)
+    # Auto-install deps if missing — deploys often run after a Hub
+    # rebuild wiped node_modules (it lives in the bind-mounted workspace
+    # but npm install may never have run, or a fresh clone needs it).
+    prelude: list[str] = []
+    if (workspace / "package.json").exists() and not (workspace / "node_modules").exists():
+        prelude.append("npm install --no-audit --no-fund")
+    elif (workspace / "requirements.txt").exists():
+        prelude.append("pip install -q -r requirements.txt")
+    full_cmd = " && ".join(prelude + hardened)
     try:
         proc = await asyncio.create_subprocess_shell(
             full_cmd,

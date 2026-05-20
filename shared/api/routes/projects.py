@@ -387,6 +387,7 @@ async def download_workspace_zip(project_id: str) -> StreamingResponse:
 async def deployment_status(project_id: str) -> dict[str, Any]:
     """Return the live deployment state for a project (in-memory)."""
     from shared.api.routes._post_ack import get_deployment
+    project_id = await _resolve_workspace_uuid(project_id)
     info = get_deployment(project_id)
     if info is None:
         return {"running": False}
@@ -406,6 +407,7 @@ async def deployment_status(project_id: str) -> dict[str, Any]:
 async def deployment_stop(project_id: str) -> dict[str, Any]:
     """Kill the project's running subprocess."""
     from shared.api.routes._post_ack import stop_deployment
+    project_id = await _resolve_workspace_uuid(project_id)
     ok = await stop_deployment(project_id)
     return {"ok": ok, "project_id": project_id}
 
