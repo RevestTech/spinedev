@@ -261,6 +261,15 @@ Be ruthless. Look specifically for:
   - Missing CSRF on state-changing endpoints
   - Cookie/SameSite/Secure flags
 
+Also flag COMPLETENESS defects as HIGH (they break the app on first
+click, so they block):
+  - Dangling route links — `<Link href="/x">` / router push to a
+    route with no page file produced.
+  - Dangling asset refs — favicon / manifest icons / og:image / CSS
+    url() pointing at files not produced under public/.
+  - Imports that resolve to nothing.
+  - Nav menus pointing at unbuilt pages.
+
 Output ONLY the markdown.
 """.strip()
 
@@ -365,6 +374,16 @@ Runtime-compat rules (so the local deploy actually boots):
     hardcode.
   - Every import resolves to a file you produced OR a real published
     dependency listed in package.json.
+  - NO DANGLING REFERENCES. Every `<Link href>` / `<a href>` / router
+    push target → a real page/route file you produced. Every asset
+    reference (favicon, manifest icons, og:image, CSS url()) → a real
+    file you produced under public/ (or remove the reference). If the
+    manifest lists `icons/icon-192.png`, you MUST emit that file
+    (a tiny valid PNG placeholder is acceptable) OR drop it from the
+    manifest. A 404 on first click is a generation defect.
+  - Provide every nav-target page. If the homepage links to /species,
+    /stores, /orders — emit app/species/page.tsx etc. Don't ship a nav
+    that points at routes you didn't build.
 
 If a directive CAN'T be satisfied in a given file (legit reason),
 emit on its own line in that file:
