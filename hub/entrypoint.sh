@@ -108,6 +108,12 @@ finally:
 
 # ---------- step 3: wait for keycloak ----------------------------------------
 wait_for_keycloak() {
+  # Dev mode (or explicit skip) bypasses Keycloak entirely — the API
+  # synthesizes a dev-user. No point waiting for an IdP nothing calls.
+  if [[ "$SPINE_HUB_DEV" == "1" || "$SPINE_HUB_SKIP_KEYCLOAK" == "1" ]]; then
+    log "Skipping keycloak wait (dev mode / SPINE_HUB_SKIP_KEYCLOAK=1)."
+    return 0
+  fi
   local ready="${SPINE_KEYCLOAK_URL%/}/health/ready"
   local disco="${SPINE_KEYCLOAK_URL%/}/realms/${SPINE_KEYCLOAK_REALM}/.well-known/openid-configuration"
   local master="${SPINE_KEYCLOAK_URL%/}/realms/master/.well-known/openid-configuration"

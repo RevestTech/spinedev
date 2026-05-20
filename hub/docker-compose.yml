@@ -80,6 +80,9 @@ services:
     image: postgres:16-alpine
     container_name: spine-hub-keycloak-db
     restart: unless-stopped
+    # Only starts under the `identity` profile. Dev mode bypasses
+    # Keycloak (synthetic dev-user), so by default this stays down.
+    profiles: ["identity"]
     environment:
       POSTGRES_DB: keycloak
       POSTGRES_USER: keycloak
@@ -101,6 +104,9 @@ services:
     image: ${SPINE_KEYCLOAK_IMAGE:-quay.io/keycloak/keycloak:26.0.7}
     container_name: spine-hub-keycloak
     restart: unless-stopped
+    # Only starts under the `identity` profile (prod / OIDC testing).
+    # Dev mode skips it entirely; hub/entrypoint.sh skips the wait too.
+    profiles: ["identity"]
     depends_on:
       keycloak-db:
         condition: service_healthy
@@ -201,8 +207,10 @@ services:
     depends_on:
       vault:
         condition: service_healthy
-      keycloak:
-        condition: service_started
+      # keycloak intentionally NOT a hard dependency — it's profile-gated
+      # (identity). In dev it never starts; the entrypoint skips the
+      # keycloak wait. In prod (--profile identity) it starts + the
+      # entrypoint's HTTP wait gates readiness.
       postgres:
         condition: service_healthy
       flyway:
