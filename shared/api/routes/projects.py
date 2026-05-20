@@ -8,6 +8,7 @@ detail stay cheap and don't need an MCP round-trip.
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Annotated, Any, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -300,11 +301,29 @@ async def get_project_full(project_id: str) -> dict[str, Any]:
     }
 
 
+async def _resolve_workspace_uuid(project_id: str) -> str:
+    """Workspace dirs are keyed by project UUID. If the caller passed an
+    integer PK (the list endpoint returns id::text), look up the UUID."""
+    if not project_id.isdigit():
+        return project_id
+    from shared.api.dependencies import get_db_pool_raw
+    pool = get_db_pool_raw()
+    if pool is None:
+        return project_id
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT project_uuid::text AS u FROM spine_lifecycle.project WHERE id = $1",
+            int(project_id),
+        )
+    return row["u"] if row else project_id
+
+
 @router.get("/{project_id}/workspace/files")
 async def list_workspace_files(project_id: str) -> dict[str, Any]:
     """Return a tree of files the engineer wrote into the project's
     workspace dir (/var/lib/spine/projects/{uuid}/)."""
     import os as _os
+    project_id = await _resolve_workspace_uuid(project_id)
     root = Path(_os.environ.get("SPINE_PROJECTS_ROOT", "/var/lib/spine/projects"))
     pdir = (root / project_id).resolve()
     if not pdir.exists() or not pdir.is_dir():
@@ -324,6 +343,7 @@ async def read_workspace_file(project_id: str, path: str) -> dict[str, Any]:
     Path traversal-safe (resolve must stay under project root).
     """
     import os as _os
+    project_id = await _resolve_workspace_uuid(project_id)
     root = Path(_os.environ.get("SPINE_PROJECTS_ROOT", "/var/lib/spine/projects"))
     pdir = (root / project_id).resolve()
     target = (pdir / path).resolve()
@@ -346,6 +366,7 @@ import zipfile
 async def download_workspace_zip(project_id: str) -> StreamingResponse:
     """Stream the project's workspace dir as a zip."""
     import os as _os
+    project_id = await _resolve_workspace_uuid(project_id)
     root = Path(_os.environ.get("SPINE_PROJECTS_ROOT", "/var/lib/spine/projects"))
     pdir = (root / project_id).resolve()
     if not pdir.exists() or not pdir.is_dir():
