@@ -192,6 +192,8 @@ WORKDIR /app
 COPY --chown=spine:spine shared/       /app/shared/
 COPY --chown=spine:spine plan/         /app/plan/
 COPY --chown=spine:spine build/        /app/build/
+COPY --chown=spine:spine verify/__init__.py /app/verify/__init__.py
+COPY --chown=spine:spine verify/runtime/  /app/verify/runtime/
 COPY --chown=spine:spine verify/tron/  /app/verify/tron/
 COPY --chown=spine:spine orchestrator/ /app/orchestrator/
 COPY --chown=spine:spine devops/       /app/devops/

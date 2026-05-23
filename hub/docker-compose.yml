@@ -249,6 +249,8 @@ services:
       # actually call out. Prod uses vault directly (no env touch).
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      SPINE_ENGINEER_SQUAD: ${SPINE_ENGINEER_SQUAD:-0}
+      SPINE_ENGINEER_HYBRID: ${SPINE_ENGINEER_HYBRID:-0}
       # Host-side projects directory — surfaced in the workspace UI so
       # the user knows where to find generated files on their laptop.
       # Inside the container the path stays /var/lib/spine/projects;

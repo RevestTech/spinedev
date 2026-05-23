@@ -1,8 +1,12 @@
 # Spine — Status & Handoff
 
-> **Last updated:** 2026-05-18 (Wave 0 complete — v3 rebuild started)
+> **Last updated:** 2026-05-21
 > **Branch:** `main`
 > **For:** anyone picking up Spine development.
+>
+> **Start here instead:** [`docs/SPINE_MASTER.md`](SPINE_MASTER.md) — vision,
+> component registry, gap matrix, and current execution priorities. This file
+> is a **historical wave log**, not the "what to build next" list.
 
 ---
 
@@ -353,7 +357,7 @@ spine/                                    # repo root
     ├── research/                         # competitive landscape
     ├── diagrams/lifecycle.md             # ASCII + mermaid diagrams
     ├── reqs/                             # (removed — merged into PRD.md)
-    └── IMPROVEMENT_CHECKLIST.md          # maintenance checklist (separate scope)
+    └── v1-IMPROVEMENT_CHECKLIST.md       # archived maintainer checklist
 ```
 
 ## 2. What's Done vs Pending (49 stories remain)

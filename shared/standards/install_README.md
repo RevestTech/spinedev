@@ -78,11 +78,11 @@ $ bash shared/standards/install_bundle.sh install \
 {"ok":true,"bundle_id":"regulated-enterprise-reference","bundle_version":1,
  "source_url":"file:///.../bundle-regulated-enterprise.yaml",
  "sha256":"e3b0…","dest":"/Users/me/.spine/bundles/regulated-enterprise-reference/v1",
- "role_prompts_modified":["/Users/me/.../lib/role-prompts/engineer.md", …],
+ "role_prompts_modified":["/Users/me/.../shared/charters/engineer.md", …],
  "counts":{"grants":3,"banned_patterns":7,"compliance_packs":4}}
 ```
 
-After the run, `lib/role-prompts/engineer.md` gains a block like:
+After the run, `shared/charters/engineer.md` gains a block like:
 
 ```yaml
 <!-- SPINE-BUNDLE-INJECT-BEGIN bundle_id=regulated-enterprise-reference -->

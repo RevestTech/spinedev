@@ -35,8 +35,15 @@
   const PHASES = ['intake', 'plan', 'build', 'verify', 'release'] as const;
   type Phase = (typeof PHASES)[number];
 
-  function phaseIndex(p: string | undefined): number {
-    return p ? (PHASES as readonly string[]).indexOf(p) : -1;
+  function phaseIndex(phase: string | undefined): number {
+    if (!phase) return -1;
+    const p = phase.toLowerCase();
+    if (p === 'intake') return 0;
+    if (p.startsWith('plan')) return 1;
+    if (p.startsWith('build')) return 2;
+    if (p.startsWith('verify') || p === 'acceptance') return 3;
+    if (p === 'released' || p === 'release' || p === 'operate' || p === 'retro') return 4;
+    return -1;
   }
 
   interface Turn {
@@ -328,6 +335,8 @@
   // Deployment status — polls /deployment for live process state.
   interface Deployment {
     running: boolean;
+    cli_mode?: boolean;
+    deploy_ok?: boolean | null;
     port?: number;
     url?: string;
     pid?: number;
@@ -611,15 +620,15 @@
     </section>
   {/if}
 
-  <!-- Live deployment -->
+  <!-- Live deployment / container CLI run -->
   {#if codeFiles.length > 0}
     <section class="panel-card mb-6">
       <header class="mb-3 flex items-center justify-between">
         <h2 class="text-sm font-semibold text-surface-900 dark:text-surface-50">
-          Live deployment
+          {deployment.cli_mode ? 'Container CLI run' : 'Live deployment'}
         </h2>
         <div class="flex items-center gap-2">
-          {#if deployment.running}
+          {#if deployment.running && deployment.url}
             <a
               href={deployment.url}
               target="_blank"
@@ -643,12 +652,28 @@
               on:click={startDeployment}
               disabled={deployActionBusy}
             >
-              {deployActionBusy ? 'Starting…' : 'Deploy locally'}
+              {deployActionBusy ? 'Running…' : deployment.cli_mode ? 'Run in container' : 'Deploy locally'}
             </button>
           {/if}
         </div>
       </header>
-      {#if deployment.running}
+      {#if deployment.cli_mode && deployment.log_tail}
+        <p class="mb-2 text-xs text-surface-700 dark:text-surface-200">
+          {#if deployment.deploy_ok}
+            Last container run <strong class="text-severity-info">passed</strong>.
+          {:else}
+            Last container run <strong class="text-severity-warning">failed</strong>
+            {#if deployment.rc !== null && deployment.rc !== undefined}
+              (exit {deployment.rc}).
+            {/if}
+          {/if}
+          CLI apps have no URL — output is shown below.
+        </p>
+        {#if deployment.cmd}
+          <p class="text-xs">Command: <code class="font-mono">{deployment.cmd}</code></p>
+        {/if}
+        <pre class="mt-3 max-h-64 overflow-auto rounded-md bg-surface-900 p-3 text-xs text-green-400">{deployment.log_tail}</pre>
+      {:else if deployment.running}
         <dl class="grid grid-cols-2 gap-1 text-xs text-surface-700 dark:text-surface-200 md:grid-cols-4">
           <dt>URL</dt><dd class="font-mono">{deployment.url}</dd>
           <dt>Port</dt><dd class="font-mono">{deployment.port}</dd>
@@ -666,9 +691,14 @@
         {/if}
       {:else}
         <p class="text-sm text-surface-700/70 dark:text-surface-200/70">
-          Not running. Click <strong>Deploy locally</strong> to start the
-          project as a subprocess in the Hub container (port range 18000-18019).
-          {#if deployment.rc !== null && deployment.rc !== undefined}
+          {#if deployment.cli_mode}
+            Click <strong>Run in container</strong> to execute the CLI smoke script inside
+            the Hub container and see output here.
+          {:else}
+            Not running. Click <strong>Deploy locally</strong> to start the
+            project as a subprocess in the Hub container (port range 18000-18019).
+          {/if}
+          {#if deployment.rc !== null && deployment.rc !== undefined && !deployment.cli_mode}
             Last run exited with code <code>{deployment.rc}</code>.
           {/if}
         </p>
@@ -743,7 +773,7 @@
   {/if}
 
   <!-- Status hint when between phases (artifact generated but no card yet visible) -->
-  {#if project.current_phase !== 'intake' && project.current_phase !== 'release'}
+  {#if project.current_phase !== 'intake' && phaseIndex(project.current_phase) < 4}
     <section class="panel-card text-sm">
       <p class="text-surface-700 dark:text-surface-200">
         Phase: <strong>{project.current_phase}</strong>. Look in
@@ -753,11 +783,11 @@
     </section>
   {/if}
 
-  {#if project.current_phase === 'release'}
+  {#if phaseIndex(project.current_phase) >= 4}
     <section class="panel-card text-sm">
       <p class="text-surface-700 dark:text-surface-200">
-        🎉 <strong>{project.name}</strong> reached the <strong>release</strong> phase.
-        All four roles signed off; artifacts above are the trail.
+        🎉 <strong>{project.name}</strong> reached the <strong>release</strong> bucket
+        ({project.current_phase}). Artifacts above are the audit trail.
       </p>
     </section>
   {/if}

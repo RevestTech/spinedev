@@ -111,7 +111,7 @@ surfaces shipped, smoke 99/0 maintained.
 - Squad A — Hub-to-Hub federation (`64db848`). Closes #4 + #10 + #16. hub_registry (consumes `hub/_state/hub_id.txt`) + upstream_client (mTLS + bearer via vault) + downstream_router + update_cascade (signed bundle distribution + per-tier approval gate) + consent engine + 4 MCP tools.
 - Squad C — Evidence Store (`f366a11`). Closes #24. 5 collectors (audit_chain / role_decision / vault_access / deploy / approval) + 3 real exporters (Vanta / Drata / Secureframe) + 3 v1.1 stubs (Tugboat / StrikeGraph / Thoropass) + two-party SHA-256 attestation per V25 + 4 MCP tools.
 - Squad B — Feature-flag licensing (`c96f23a`). Closes #23. Ed25519 signed bundle verifier with `TRUSTED_VENDOR_FINGERPRINT` trust anchor + periodic re-verify + feature_flags evaluator + hash-chained quota ledger + `tools/license-sign.sh` (vendor-side per Part 4.3 Shamir 3-of-5) + 3 MCP tools.
-- Housekeeping — `test_server_smoke` `EXPECTED_TOOL_COUNT` 27→42 + WAVE-* story-id prefix accepted alongside STORY-* (`7c3f8e0`).
+- Housekeeping — `test_server_smoke` `EXPECTED_TOOL_COUNT` 27→42 + WAVE-*story-id prefix accepted alongside STORY-* (`7c3f8e0`).
 
 **Wave 4 totals:** +11,590 net lines, 189 new tests, 15 new MCP tools.
 

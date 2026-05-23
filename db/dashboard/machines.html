@@ -1,0 +1,1621 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Machines — Spine Recording Layer</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --bg-card: #1a1d22;
+    --bg-card-hover: #20242a;
+    --border: #2a2f36;
+    --border-strong: #3a4048;
+    --fg: #e6e8eb;
+    --fg-dim: #9aa3ad;
+    --fg-very-dim: #6b7380;
+    --accent: #7dd3fc;
+    --accent-dim: #38bdf8;
+    --good: #4ade80;
+    --bad: #f87171;
+    --warn: #fbbf24;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--sans);
+    font-size: 14px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code {
+    font-family: var(--mono);
+    background: var(--bg-card);
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 0.9em;
+    color: var(--accent);
+  }
+
+  .container {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 24px;
+  }
+
+  /* Page nav (shared with dashboard) */
+  .page-nav {
+    display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 18px;
+  }
+  .page-nav a {
+    display: inline-block;
+    padding: 5px 14px;
+    border-radius: 999px;
+    background: var(--bg-card);
+    color: var(--fg-dim);
+    border: 1px solid var(--border-strong);
+    font-size: 12px;
+    text-decoration: none;
+    transition: background 120ms, color 120ms, border-color 120ms;
+  }
+  .page-nav a:hover {
+    background: var(--bg-card-hover);
+    color: var(--fg);
+    border-color: var(--accent);
+    text-decoration: none;
+  }
+  .page-nav a.active {
+    background: rgba(125, 211, 252, 0.14);
+    color: var(--accent);
+    border-color: rgba(125, 211, 252, 0.55);
+  }
+
+  header.hero {
+    padding: 8px 0 20px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 24px;
+  }
+  header.hero h1 {
+    margin: 0 0 6px;
+    font-size: 24px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  header.hero p {
+    margin: 0;
+    color: var(--fg-dim);
+    font-size: 14px;
+    max-width: 78ch;
+  }
+
+  section { margin-bottom: 28px; }
+  section h2 {
+    margin: 0 0 12px;
+    font-size: 15px;
+    font-weight: 600;
+  }
+  section h2 .count {
+    color: var(--fg-very-dim);
+    font-weight: 400;
+    font-size: 12px;
+    margin-left: 8px;
+    font-family: var(--mono);
+  }
+
+  .card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+  }
+
+  /* Machines list grid (same style as dashboard cards) */
+  .machines-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+  }
+  @media (max-width: 1180px) { .machines-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 720px)  { .machines-grid { grid-template-columns: 1fr; } }
+  .machine-card {
+    background: var(--bg-card);
+    border: 1px solid rgba(125, 211, 252, 0.18);
+    border-radius: 8px;
+    padding: 14px 14px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    text-decoration: none;
+    color: inherit;
+    transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
+  }
+  .machine-card:hover {
+    transform: translateY(-2px);
+    border-color: rgba(125, 211, 252, 0.45);
+    background: var(--bg-card-hover);
+    text-decoration: none;
+  }
+  .machine-card .top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .machine-card .host {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--fg);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .machine-card .project {
+    font-size: 13px;
+    color: var(--fg);
+    font-weight: 500;
+  }
+  .machine-card .project.unknown { color: var(--fg-dim); font-style: italic; font-weight: 400; }
+  .machine-card .path {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--fg-very-dim);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .machine-card .stats {
+    display: flex;
+    gap: 14px;
+    flex-wrap: wrap;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--fg-dim);
+  }
+  .machine-card .stats strong {
+    color: var(--accent);
+    font-weight: 500;
+    font-size: 13px;
+    display: block;
+  }
+  .machine-card .stat-label {
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-size: 10px;
+    color: var(--fg-very-dim);
+  }
+  .machine-card .cost-line {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--fg);
+    border-top: 1px dashed var(--border);
+    padding-top: 8px;
+  }
+  .machine-card .cost-line .dim {
+    color: var(--fg-dim);
+    font-size: 11px;
+    margin-left: 6px;
+  }
+  .machine-card .footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--fg-very-dim);
+    border-top: 1px solid var(--border);
+    padding-top: 8px;
+    flex-wrap: wrap;
+  }
+
+  /* Pills */
+  .pill {
+    display: inline-block;
+    padding: 1px 7px;
+    border-radius: 10px;
+    font-size: 10px;
+    font-family: var(--mono);
+    border: 1px solid var(--border-strong);
+    color: var(--fg-dim);
+  }
+  .pill.machine-alive {
+    color: var(--good);
+    border-color: rgba(74, 222, 128, 0.45);
+    background: rgba(74, 222, 128, 0.10);
+  }
+  .pill.machine-stale {
+    color: var(--warn);
+    border-color: rgba(251, 191, 36, 0.45);
+    background: rgba(251, 191, 36, 0.10);
+  }
+  .pill.machine-lost {
+    color: var(--bad);
+    border-color: rgba(248, 113, 113, 0.45);
+    background: rgba(248, 113, 113, 0.10);
+  }
+  .pill.machine-stopped {
+    color: var(--fg-very-dim);
+    border-color: var(--border-strong);
+    background: rgba(154, 163, 173, 0.10);
+  }
+  .pill.machine-unregistered {
+    color: var(--fg-dim);
+    border-color: var(--border-strong);
+    background: rgba(154, 163, 173, 0.06);
+  }
+
+  /* Detail page layout */
+  .detail-summary {
+    display: grid;
+    grid-template-columns: 1.5fr 1fr;
+    gap: 16px;
+    margin-bottom: 28px;
+  }
+  @media (max-width: 820px) { .detail-summary { grid-template-columns: 1fr; } }
+  .summary-card, .meta-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+  }
+  .summary-card .row { display: flex; justify-content: space-between; padding: 4px 0; font-family: var(--mono); font-size: 12px; }
+  .summary-card .row .k { color: var(--fg-dim); }
+  .summary-card .row .v { color: var(--fg); }
+  .summary-card h3, .meta-card h3 {
+    margin: 0 0 10px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .summary-stats {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+  .summary-stats .s {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px;
+  }
+  .summary-stats .s .lbl {
+    font-size: 10px;
+    color: var(--fg-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .summary-stats .s .val {
+    font-family: var(--mono);
+    color: var(--accent);
+    font-size: 18px;
+    margin-top: 4px;
+  }
+
+  /* Tables */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: var(--mono);
+    font-size: 12px;
+  }
+  th, td {
+    text-align: left;
+    padding: 7px 10px;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+    vertical-align: top;
+  }
+  th {
+    color: var(--fg-dim);
+    font-weight: 500;
+    text-transform: uppercase;
+    font-size: 10px;
+    letter-spacing: 0.05em;
+    border-bottom-color: var(--border-strong);
+    background: rgba(0,0,0,0.15);
+  }
+  tbody tr:hover { background: var(--bg-card-hover); }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td.dim { color: var(--fg-dim); }
+  td.null { color: var(--fg-very-dim); font-style: italic; }
+  .table-wrap {
+    overflow-x: auto;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+
+  /* Sparkline */
+  .sparkline-wrap {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+  }
+  .sparkline-wrap .lbl {
+    font-size: 11px;
+    color: var(--fg-dim);
+    margin-bottom: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .sparkline-svg { display: block; width: 100%; height: 80px; }
+
+  /* Pass M: Vitals section — three side-by-side sparklines */
+  .vitals-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+  }
+  @media (max-width: 880px) { .vitals-grid { grid-template-columns: 1fr; } }
+  .vitals-grid .sparkline-wrap { padding: 12px 14px; }
+  .vitals-grid .sparkline-svg { height: 80px; }
+  .vitals-grid .sparkline-wrap .sub {
+    font-size: 10px;
+    color: var(--fg-very-dim);
+    margin-top: 4px;
+    font-family: var(--mono);
+  }
+  .vitals-summary {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin-top: 12px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 12px;
+    font-family: var(--mono);
+    font-size: 12px;
+  }
+  .vitals-summary .cell {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .vitals-summary .cell .k {
+    font-size: 10px;
+    color: var(--fg-very-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .vitals-summary .cell .v {
+    color: var(--fg);
+    font-size: 12px;
+  }
+  .vitals-empty {
+    color: var(--fg-very-dim);
+    font-style: italic;
+    padding: 14px;
+    text-align: center;
+  }
+
+  .empty {
+    color: var(--fg-very-dim);
+    padding: 24px;
+    text-align: center;
+    font-style: italic;
+  }
+
+  .back-link {
+    display: inline-block;
+    margin-bottom: 14px;
+    font-size: 12px;
+    color: var(--fg-dim);
+  }
+  .back-link:hover { color: var(--accent); }
+
+  .banner {
+    background: var(--bg-card);
+    border: 1px solid var(--border-strong);
+    border-left: 3px solid var(--accent);
+    padding: 16px 18px;
+    border-radius: 6px;
+    margin: 18px 0;
+    color: var(--fg-dim);
+    font-size: 13px;
+  }
+  .banner code { background: rgba(125, 211, 252, 0.1); }
+
+  /* ---- Info icon + tooltip (mirrors index.html) ---- */
+  .has-tooltip {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    margin-left: 6px;
+    vertical-align: middle;
+  }
+  .info-icon {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    color: var(--accent);
+    opacity: 0.55;
+    cursor: help;
+    background: transparent;
+    border: 0;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: opacity 150ms;
+  }
+  .info-icon:hover, .info-icon:focus-visible { opacity: 1; outline: none; }
+  .info-icon svg { display: block; }
+  .tooltip {
+    position: absolute;
+    bottom: calc(100% + 10px);
+    left: 50%;
+    transform: translateX(-50%) translateY(-4px);
+    width: 280px;
+    background: var(--bg-card-hover);
+    color: var(--fg);
+    border: 1px solid var(--accent);
+    border-radius: 6px;
+    padding: 10px 12px;
+    font-size: 12px;
+    font-family: var(--sans);
+    line-height: 1.45;
+    text-align: left;
+    white-space: normal;
+    font-weight: 400;
+    text-transform: none;
+    letter-spacing: normal;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.55);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 150ms ease, transform 150ms ease;
+    z-index: 1000;
+  }
+  .tooltip::after {
+    content: "";
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 0;
+    height: 0;
+    border-left: 6px solid transparent;
+    border-right: 6px solid transparent;
+    border-top: 6px solid var(--accent);
+  }
+  .has-tooltip:hover .tooltip,
+  .has-tooltip:focus-within .tooltip,
+  .has-tooltip.tooltip-open .tooltip {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+    pointer-events: auto;
+  }
+  .has-tooltip.tip-right .tooltip { left: auto; right: 0; transform: translateX(0) translateY(-4px); }
+  .has-tooltip.tip-right:hover .tooltip,
+  .has-tooltip.tip-right:focus-within .tooltip,
+  .has-tooltip.tip-right.tooltip-open .tooltip {
+    transform: translateX(0) translateY(0);
+  }
+  .has-tooltip.tip-right .tooltip::after { left: auto; right: 6px; transform: none; }
+
+  /* Outcome row coloring (mirrors index.html) */
+  tr.outcome-reaped     { background: rgba(248, 113, 113, 0.08); }
+  tr.outcome-reaped:hover { background: rgba(248, 113, 113, 0.14); }
+  tr.outcome-report     { background: rgba(74, 222, 128, 0.06); }
+  tr.outcome-report:hover { background: rgba(74, 222, 128, 0.12); }
+  tr.outcome-inflight   { background: rgba(251, 191, 36, 0.06); }
+  tr.outcome-inflight:hover { background: rgba(251, 191, 36, 0.12); }
+
+  /* Tier pills (mirrors index.html) */
+  .pill.tier-low {
+    color: var(--fg-dim);
+    border-color: var(--border-strong);
+    background: rgba(154, 163, 173, 0.08);
+  }
+  .pill.tier-medium {
+    color: var(--accent);
+    border-color: rgba(125, 211, 252, 0.4);
+    background: rgba(125, 211, 252, 0.10);
+  }
+  .pill.tier-high {
+    color: #fb923c;
+    border-color: rgba(251, 146, 60, 0.5);
+    background: rgba(251, 146, 60, 0.10);
+  }
+
+  /* Drift pill (release status) */
+  .pill.drift-current     { color: var(--good); border-color: rgba(74,222,128,0.45);  background: rgba(74,222,128,0.10); }
+  .pill.drift-drifted     { color: var(--warn); border-color: rgba(251,191,36,0.45);  background: rgba(251,191,36,0.10); }
+  .pill.drift-lost,
+  .pill.drift-unversioned { color: var(--bad);  border-color: rgba(248,113,113,0.45); background: rgba(248,113,113,0.10); }
+  .pill.drift-unknown_channel,
+  .pill.drift-unknown     { color: var(--fg-dim); border-color: var(--border-strong); background: rgba(154,163,173,0.06); }
+
+  /* Hero bar with chips */
+  .hero-row {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+    margin-top: 4px;
+  }
+  .hero-row .chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 9px; border-radius: 10px;
+    font-family: var(--mono); font-size: 11px;
+    background: var(--bg-card); border: 1px solid var(--border-strong);
+    color: var(--fg-dim);
+  }
+  .hero-row .chip strong { color: var(--fg); font-weight: 500; }
+
+  /* Live ops strip */
+  .liveops-grid {
+    display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px;
+  }
+  @media (max-width: 980px) { .liveops-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 540px) { .liveops-grid { grid-template-columns: 1fr; } }
+  .liveops-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+    display: flex; flex-direction: column; gap: 4px;
+  }
+  .liveops-card .ttl {
+    font-size: 10px; color: var(--fg-very-dim);
+    text-transform: uppercase; letter-spacing: 0.05em;
+  }
+  .liveops-card .big {
+    font-family: var(--mono); color: var(--accent); font-size: 18px;
+  }
+  .liveops-card .sub {
+    font-family: var(--mono); font-size: 11px; color: var(--fg-dim);
+  }
+
+  /* Horizontal bar chart for role breakdown */
+  .rolebars { display: flex; flex-direction: column; gap: 8px; }
+  .rolebar-row {
+    display: grid;
+    grid-template-columns: 120px 1fr 130px;
+    align-items: center; gap: 10px;
+    font-family: var(--mono); font-size: 12px;
+  }
+  @media (max-width: 720px) { .rolebar-row { grid-template-columns: 90px 1fr 110px; } }
+  .rolebar-row .label { color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rolebar-row .bar-track {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    height: 14px;
+    position: relative;
+    overflow: hidden;
+  }
+  .rolebar-row .bar-fill {
+    position: absolute; left: 0; top: 0; bottom: 0;
+    background: linear-gradient(90deg, rgba(125,211,252,0.4), rgba(125,211,252,0.85));
+    border-right: 1px solid rgba(125,211,252,0.9);
+  }
+  .rolebar-row .nums {
+    text-align: right;
+    color: var(--fg-dim);
+  }
+  .rolebar-row .nums strong { color: var(--accent); font-weight: 500; }
+
+  /* Spine-share gauge under vitals */
+  .spine-share-wrap {
+    margin-top: 12px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 16px;
+  }
+  .spine-share-wrap .lbl {
+    font-size: 11px; color: var(--fg-dim);
+    margin-bottom: 6px;
+    text-transform: uppercase; letter-spacing: 0.05em;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .spine-share-bar {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    height: 16px;
+    position: relative;
+    overflow: hidden;
+  }
+  .spine-share-bar .fill {
+    position: absolute; left: 0; top: 0; bottom: 0;
+    background: linear-gradient(90deg, rgba(251,146,60,0.4), rgba(251,146,60,0.85));
+  }
+  .spine-share-bar .pct {
+    position: absolute; left: 8px; top: 0; bottom: 0;
+    display: flex; align-items: center;
+    font-family: var(--mono); font-size: 11px; color: var(--fg);
+  }
+
+  /* Engagements list (per-machine) */
+  .eng-grid {
+    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px;
+  }
+  @media (max-width: 820px) { .eng-grid { grid-template-columns: 1fr; } }
+  .eng-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+    display: flex; flex-direction: column; gap: 6px;
+    text-decoration: none; color: inherit;
+    transition: border-color 140ms ease, background 140ms ease;
+  }
+  .eng-card:hover {
+    border-color: rgba(125,211,252,0.45);
+    background: var(--bg-card-hover);
+    text-decoration: none;
+  }
+  .eng-card .title { font-size: 13px; color: var(--fg); font-weight: 500; }
+  .eng-card .meta { display: flex; gap: 10px; font-family: var(--mono); font-size: 11px; color: var(--fg-dim); flex-wrap: wrap; }
+  .eng-card .meta strong { color: var(--accent); font-weight: 500; }
+  .eng-card .slug { font-family: var(--mono); font-size: 10px; color: var(--fg-very-dim); }
+
+  /* Engagement status pill (basic) */
+  .pill.eng-status { font-size: 10px; }
+  .pill.eng-active     { color: var(--accent); border-color: rgba(125,211,252,0.5); background: rgba(125,211,252,0.10); }
+  .pill.eng-completed  { color: var(--good);   border-color: rgba(74,222,128,0.45); background: rgba(74,222,128,0.10); }
+  .pill.eng-blocked,
+  .pill.eng-failed     { color: var(--bad);    border-color: rgba(248,113,113,0.45); background: rgba(248,113,113,0.10); }
+  .pill.eng-draft,
+  .pill.eng-planning,
+  .pill.eng-pending    { color: var(--warn);   border-color: rgba(251,191,36,0.45); background: rgba(251,191,36,0.10); }
+
+  /* Expandable event payload */
+  tr.expandable td { cursor: pointer; }
+  tr.expand-row td {
+    background: var(--bg);
+    border-bottom: 1px solid var(--border-strong);
+    padding: 10px 14px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: 11px;
+    color: var(--fg-dim);
+  }
+  tr.expand-row pre {
+    margin: 0;
+    font-family: var(--mono);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  tr.event-killed td:first-child,
+  tr.event-reaped td:first-child,
+  tr.event-stalled td:first-child {
+    border-left: 3px solid var(--bad);
+  }
+</style>
+</head>
+<body>
+  <div class="container">
+    <nav class="page-nav" aria-label="Page navigation">
+      <a href="./">Dashboard</a>
+      <a href="./machines.html" class="active" aria-current="page">Machines</a>
+      <a href="./versions.html">Versions</a>
+      <a href="./about.html">About</a>
+      <a href="./tech.html">Tech</a>
+    </nav>
+
+    <div id="content"><div class="empty">Loading...</div></div>
+  </div>
+
+<script>
+"use strict";
+
+// ===== Formatters (copied from index.html) =====
+function humanizeSeconds(s) {
+  if (s == null || isNaN(s)) return "-";
+  s = Number(s);
+  if (s < 60)   return s.toFixed(1) + "s";
+  if (s < 3600) {
+    const m = Math.floor(s / 60);
+    const r = Math.round(s - m * 60);
+    return m + "m " + r + "s";
+  }
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s - h * 3600) / 60);
+  return h + "h " + m + "m";
+}
+function humanizeRelativeAge(deltaMs) {
+  if (deltaMs == null || isNaN(deltaMs)) return "-";
+  const s = Math.max(0, Math.floor(deltaMs / 1000));
+  if (s < 1)    return "just now";
+  if (s < 60)   return s + "s ago";
+  if (s < 3600) return Math.floor(s / 60) + "m ago";
+  if (s < 86400) return Math.floor(s / 3600) + "h ago";
+  return Math.floor(s / 86400) + "d ago";
+}
+function humanizeCost(usd) {
+  if (usd == null || isNaN(usd)) return "$0";
+  usd = Number(usd);
+  if (usd === 0) return "$0";
+  if (Math.abs(usd) < 0.01) return "$" + usd.toFixed(6);
+  if (Math.abs(usd) < 1)    return "$" + usd.toFixed(4);
+  if (Math.abs(usd) < 100)  return "$" + usd.toFixed(2);
+  return "$" + Math.round(usd).toLocaleString();
+}
+function humanizeCount(n) {
+  if (n == null || isNaN(n)) return "0";
+  return Number(n).toLocaleString();
+}
+function shortTs(iso) {
+  if (!iso) return "-";
+  const m = String(iso).match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2})/);
+  if (!m) return iso;
+  return m[1] + " " + m[2];
+}
+function escapeHtml(s) {
+  if (s == null) return "";
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function machineStatusPill(status) {
+  const s = (status || "").toLowerCase();
+  if (s === "alive")        return '<span class="pill machine-alive">alive</span>';
+  if (s === "stale")        return '<span class="pill machine-stale">stale</span>';
+  if (s === "lost")         return '<span class="pill machine-lost">lost</span>';
+  if (s === "stopped")      return '<span class="pill machine-stopped">stopped</span>';
+  if (s === "unregistered") return '<span class="pill machine-unregistered">unregistered</span>';
+  return '<span class="pill">' + escapeHtml(status || "?") + '</span>';
+}
+
+function machineLastActive(iso) {
+  if (!iso) return "-";
+  const t = Date.parse(iso);
+  if (isNaN(t)) return "-";
+  return humanizeRelativeAge(Date.now() - t);
+}
+
+const INFO_ICON_SVG = '<svg viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><circle cx="7" cy="7" r="6.5" fill="none" stroke="currentColor" stroke-width="1"/><text x="7" y="10.2" font-family="ui-monospace, monospace" font-size="9" font-weight="600" text-anchor="middle" fill="currentColor">i</text></svg>';
+
+function infoIconHtml(text, tipPos) {
+  const cls = tipPos === "right" ? "has-tooltip tip-right" : "has-tooltip";
+  return `<span class="${cls}"><button type="button" class="info-icon" aria-label="What is this?">${INFO_ICON_SVG}</button><span class="tooltip" role="tooltip">${escapeHtml(text)}</span></span>`;
+}
+
+function tierPill(tier) {
+  if (tier == null || tier === "") return `<span class="null">&mdash;</span>`;
+  const t = String(tier).toLowerCase();
+  let cls = "tier-low";
+  if (t === "medium" || t === "med") cls = "tier-medium";
+  else if (t === "high") cls = "tier-high";
+  return `<span class="pill ${cls}">${escapeHtml(tier)}</span>`;
+}
+
+function driftPill(status) {
+  if (!status) return `<span class="pill drift-unknown">unregistered</span>`;
+  const s = String(status).toLowerCase();
+  const cls = "drift-" + s.replace(/[^a-z_]/g, "");
+  return `<span class="pill ${cls}">${escapeHtml(status)}</span>`;
+}
+
+function engStatusPill(status) {
+  if (!status) return "";
+  const s = String(status).toLowerCase().replace(/[^a-z]/g, "");
+  return `<span class="pill eng-status eng-${s}">${escapeHtml(status)}</span>`;
+}
+
+function bindTooltipTaps(scope) {
+  const root = scope || document;
+  root.querySelectorAll(".has-tooltip .info-icon").forEach(btn => {
+    if (btn.dataset.tipBound === "1") return;
+    btn.dataset.tipBound = "1";
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const wrap = btn.closest(".has-tooltip");
+      if (!wrap) return;
+      document.querySelectorAll(".has-tooltip.tooltip-open").forEach(el => {
+        if (el !== wrap) el.classList.remove("tooltip-open");
+      });
+      wrap.classList.toggle("tooltip-open");
+    });
+  });
+}
+document.addEventListener("click", (e) => {
+  if (!e.target.closest(".has-tooltip")) {
+    document.querySelectorAll(".has-tooltip.tooltip-open")
+      .forEach(el => el.classList.remove("tooltip-open"));
+  }
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    document.querySelectorAll(".has-tooltip.tooltip-open")
+      .forEach(el => el.classList.remove("tooltip-open"));
+  }
+});
+
+// Bind a click handler for expandable rows (events / invocations).
+function bindRowExpanders(scope) {
+  const root = scope || document;
+  root.querySelectorAll("tr.expandable").forEach(tr => {
+    if (tr.dataset.expBound === "1") return;
+    tr.dataset.expBound = "1";
+    tr.addEventListener("click", (e) => {
+      // Ignore clicks on links inside the row.
+      if (e.target.closest("a")) return;
+      const target = tr.dataset.expandTarget;
+      if (!target) return;
+      const next = root.querySelector('[data-expand-id="' + target + '"]');
+      if (!next) return;
+      next.style.display = (next.style.display === "table-row") ? "none" : "table-row";
+    });
+  });
+}
+
+// ===== Page state =====
+const state = {
+  snapshot: null,
+  hostFilter: null,
+};
+
+async function fetchSnapshot() {
+  const r = await fetch("./pg-snapshot.json?t=" + Date.now(), { cache: "no-store" });
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  return await r.json();
+}
+
+// ===== List view =====
+function renderList(machines) {
+  const root = document.getElementById("content");
+  if (!machines.length) {
+    root.innerHTML = `
+      <header class="hero">
+        <h1>Machines</h1>
+        <p>Every host that has executed at least one Spine agent against this database.</p>
+      </header>
+      <div class="banner">
+        No machines have run a Spine agent against this database yet. Once an agent runs anywhere, the host shows up here regardless of whether <code>team.sh up</code> has been used to register the instance.
+      </div>
+    `;
+    return;
+  }
+
+  const cards = machines.map(m => {
+    const proj = m.project_slug || "(unknown)";
+    const projCls = proj === "(unknown)" ? "project unknown" : "project";
+    const path = m.project_path || "";
+    const ver = m.version_short || "";
+    const sver = m.spine_version || "";
+    const osu = m.os_user || "";
+    const lastTxt = machineLastActive(m.last_active);
+    const hostHref = "./machines.html?host=" + encodeURIComponent(m.host_id || "");
+    const metaBits = [
+      ver && '<span title="agent version">' + escapeHtml(ver) + '</span>',
+      sver && '<span title="spine version">' + escapeHtml(sver) + '</span>',
+      osu && '<span title="os user">' + escapeHtml(osu) + '</span>',
+    ].filter(Boolean).join(" &middot; ");
+    return `
+      <a class="machine-card" href="${hostHref}">
+        <div class="top">
+          ${machineStatusPill(m.effective_status)}
+          <span class="host" title="${escapeHtml(m.host_id || "")}">${escapeHtml(m.host_id || "-")}</span>
+        </div>
+        <div class="${projCls}" title="${escapeHtml(proj)}">${escapeHtml(proj)}</div>
+        ${path ? `<div class="path" title="${escapeHtml(path)}">${escapeHtml(path)}</div>` : ""}
+        <div class="stats">
+          <div>
+            <span class="stat-label">Workers</span>
+            <strong>${humanizeCount(m.workers)}</strong>
+          </div>
+          <div>
+            <span class="stat-label">Roles</span>
+            <strong>${humanizeCount(m.roles)}</strong>
+          </div>
+          <div>
+            <span class="stat-label">Invocations</span>
+            <strong>${humanizeCount(m.invocations)}</strong>
+          </div>
+        </div>
+        <div class="cost-line">
+          ${escapeHtml(humanizeCost(m.cost_usd))}
+          <span class="dim">${escapeHtml(humanizeSeconds(m.wall_s))} wall</span>
+        </div>
+        <div class="footer">
+          <span>${metaBits || "&nbsp;"}</span>
+          <span>${escapeHtml(lastTxt)}</span>
+        </div>
+      </a>
+    `;
+  }).join("");
+
+  root.innerHTML = `
+    <header class="hero">
+      <h1>Machines <span style="color:var(--fg-very-dim);font-weight:400;font-size:14px;font-family:var(--mono);">(${machines.length})</span></h1>
+      <p>Every host that has executed at least one Spine agent. Status reflects whether <code>team.sh up</code> heartbeats are arriving; <code>unregistered</code> means we've seen cost rows from this host but no instance row yet.</p>
+    </header>
+    <div class="machines-grid">${cards}</div>
+  `;
+}
+
+// ===== Detail view =====
+function sparkline(buckets, opts) {
+  // buckets: [{ts, count, cost}], opts:{key:'count'|'cost'}
+  if (!buckets.length) return `<div class="empty" style="padding:14px">No activity recorded for this host yet.</div>`;
+  const w = 800, h = 80, pad = 4;
+  const xs = buckets.map((_, i) => i);
+  const ys = buckets.map(b => Number(b[opts.key] || 0));
+  const maxY = Math.max(1, ...ys);
+  const stepX = (w - pad * 2) / Math.max(1, buckets.length - 1);
+  const points = buckets.map((b, i) => {
+    const x = pad + i * stepX;
+    const y = h - pad - ((b[opts.key] || 0) / maxY) * (h - pad * 2);
+    return x.toFixed(1) + "," + y.toFixed(1);
+  }).join(" ");
+  const bars = buckets.map((b, i) => {
+    const x = pad + i * stepX - 1;
+    const yh = ((b[opts.key] || 0) / maxY) * (h - pad * 2);
+    const y = h - pad - yh;
+    return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="2" height="${yh.toFixed(1)}" fill="rgba(125,211,252,0.35)"/>`;
+  }).join("");
+  return `
+    <svg class="sparkline-svg" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">
+      ${bars}
+      <polyline fill="none" stroke="#7dd3fc" stroke-width="1.5" points="${points}"/>
+    </svg>
+  `;
+}
+
+// Pass M: multi-series sparkline. Each `series` entry is
+// {key, label, color, max?}. `points` is an array of objects keyed by
+// the series keys. We size the SVG to fit ~280px width by default but
+// preserveAspectRatio="none" lets it stretch in the responsive grid.
+function multiSparkline(points, series, opts) {
+  opts = opts || {};
+  if (!points || !points.length) {
+    return `<div class="vitals-empty">No vitals yet -- wait one heartbeat cycle (60s).</div>`;
+  }
+  const w = 280, h = 80, pad = 4;
+  const n = points.length;
+  const stepX = (w - pad * 2) / Math.max(1, n - 1);
+
+  // Compute a shared Y-axis max from all series unless a per-series max
+  // is provided. Floor at 1 so a flat-zero sparkline still renders.
+  let globalMax = 1;
+  for (const s of series) {
+    if (s.max != null) continue;
+    for (const p of points) {
+      const v = Number(p[s.key]);
+      if (!isNaN(v) && v > globalMax) globalMax = v;
+    }
+  }
+
+  const polylines = series.map(s => {
+    const maxY = (s.max != null) ? s.max : globalMax;
+    const path = points.map((p, i) => {
+      const x = pad + i * stepX;
+      const raw = Number(p[s.key]);
+      const yVal = isNaN(raw) ? 0 : raw;
+      const y = h - pad - (yVal / maxY) * (h - pad * 2);
+      return x.toFixed(1) + "," + y.toFixed(1);
+    }).join(" ");
+    return `<polyline fill="none" stroke="${s.color}" stroke-width="1.5" points="${path}"/>`;
+  }).join("");
+
+  // Legend chips below the sparkline (rendered by the section, not here).
+  return `
+    <svg class="sparkline-svg" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">
+      ${polylines}
+    </svg>
+  `;
+}
+
+function bucketByHour(invocations) {
+  // 48 hour buckets ending now.
+  const HOURS = 48;
+  const hourMs = 3600 * 1000;
+  const nowH = Math.floor(Date.now() / hourMs);
+  const buckets = [];
+  for (let i = HOURS - 1; i >= 0; i--) {
+    buckets.push({ ts: (nowH - i) * hourMs, count: 0, cost: 0 });
+  }
+  const cutoff = (nowH - HOURS + 1) * hourMs;
+  for (const inv of invocations) {
+    const t = Date.parse(inv.started_at || "");
+    if (isNaN(t) || t < cutoff) continue;
+    const idx = Math.floor(t / hourMs) - (nowH - HOURS + 1);
+    if (idx < 0 || idx >= HOURS) continue;
+    buckets[idx].count += 1;
+    // cost not available per-invocation in snapshot; treat as 1 unit.
+  }
+  return buckets;
+}
+
+// Pass M: render the Vitals section. Pulls vitals_history from the
+// snapshot (keyed by instance_id) and uses the freshest instance on
+// this host. If no history is available, renders a "wait one heartbeat
+// cycle" placeholder. Returns an HTML string.
+function renderVitalsSection(host, snapshot) {
+  const fleet = (snapshot.fleet || []).filter(f => f.host_id === host);
+  // Pick the instance with the most recent vitals_at.
+  fleet.sort((a, b) => (Date.parse(b.vitals_at || "") || 0) - (Date.parse(a.vitals_at || "") || 0));
+  const best = fleet.find(f => f.vitals_at) || fleet[0] || null;
+  const history = (snapshot.vitals_history && best && best.instance_id)
+    ? (snapshot.vitals_history[best.instance_id] || []) : [];
+
+  if (!best && !history.length) {
+    return `
+      <section>
+        <h2>Vitals <span class="count">(host CPU / memory / load)</span></h2>
+        <div class="sparkline-wrap">
+          <div class="vitals-empty">No vitals yet -- wait one heartbeat cycle (60s).</div>
+        </div>
+      </section>`;
+  }
+
+  // Build derived series. We pass the full points array to the
+  // sparkline helper; it picks values by series.key.
+  const points = history.map(p => {
+    const memPct = (p.mem_total_mb && p.mem_total_mb > 0)
+      ? (Number(p.mem_used_mb || 0) / Number(p.mem_total_mb) * 100) : null;
+    return Object.assign({}, p, { mem_used_pct: memPct });
+  });
+
+  const cpuSpark = multiSparkline(points, [
+    { key: "cpu_pct",       label: "host CPU%", color: "#7dd3fc" },
+    { key: "spine_cpu_pct", label: "Spine CPU%", color: "#fb923c" },
+  ], { max: 100 });
+
+  const memSpark = multiSparkline(points, [
+    { key: "mem_used_pct", label: "memory used %", color: "#a78bfa", max: 100 },
+  ]);
+
+  const loadSpark = multiSparkline(points, [
+    { key: "load_avg_1m",  label: "1m",  color: "#7dd3fc" },
+    { key: "load_avg_5m",  label: "5m",  color: "#a78bfa" },
+    { key: "load_avg_15m", label: "15m", color: "#fbbf24" },
+  ]);
+
+  // Current values pulled off `best` (the latest snapshot on the
+  // instance row); fall back to the last history point if needed.
+  const cur = best || points[points.length - 1] || {};
+  const cpuVal = (cur.cpu_pct != null) ? `${Number(cur.cpu_pct).toFixed(1)}%` : "--";
+  const spineCpuVal = (cur.spine_cpu_pct != null) ? `${Number(cur.spine_cpu_pct).toFixed(1)}%` : "--";
+  const memUsedGB = (cur.mem_used_mb != null) ? (Number(cur.mem_used_mb) / 1024).toFixed(1) : "--";
+  const memTotGB = (cur.mem_total_mb != null) ? (Number(cur.mem_total_mb) / 1024).toFixed(1) : "--";
+  const diskUsedGB = (cur.disk_used_gb != null) ? Number(cur.disk_used_gb).toFixed(0) : "--";
+  const diskTotGB = (cur.disk_total_gb != null) ? Number(cur.disk_total_gb).toFixed(0) : "--";
+  const la1 = (cur.load_avg_1m != null) ? Number(cur.load_avg_1m).toFixed(2) : "--";
+  const la5 = (cur.load_avg_5m != null) ? Number(cur.load_avg_5m).toFixed(2) : "--";
+  const la15 = (cur.load_avg_15m != null) ? Number(cur.load_avg_15m).toFixed(2) : "--";
+  const spineMem = (cur.spine_mem_mb != null) ? `${Number(cur.spine_mem_mb)} MB` : "--";
+  const spineProc = (cur.spine_proc_count != null) ? `${Number(cur.spine_proc_count)}` : "--";
+
+  return `
+    <section>
+      <h2>Vitals <span class="count">(last ${points.length} heartbeats)</span></h2>
+      <div class="vitals-grid">
+        <div class="sparkline-wrap">
+          <div class="lbl">CPU% (host vs Spine)</div>
+          ${cpuSpark}
+          <div class="sub"><span style="color:#7dd3fc;">host</span> ${escapeHtml(cpuVal)} &middot; <span style="color:#fb923c;">Spine</span> ${escapeHtml(spineCpuVal)}</div>
+        </div>
+        <div class="sparkline-wrap">
+          <div class="lbl">Memory %</div>
+          ${memSpark}
+          <div class="sub">${escapeHtml(memUsedGB)} / ${escapeHtml(memTotGB)} GB</div>
+        </div>
+        <div class="sparkline-wrap">
+          <div class="lbl">Load avg (1m / 5m / 15m)</div>
+          ${loadSpark}
+          <div class="sub">${escapeHtml(la1)} / ${escapeHtml(la5)} / ${escapeHtml(la15)}</div>
+        </div>
+      </div>
+      <div class="vitals-summary">
+        <div class="cell"><span class="k">CPU</span><span class="v">${escapeHtml(cpuVal)}</span></div>
+        <div class="cell"><span class="k">Memory</span><span class="v">${escapeHtml(memUsedGB)} / ${escapeHtml(memTotGB)} GB</span></div>
+        <div class="cell"><span class="k">Disk</span><span class="v">${escapeHtml(diskUsedGB)} / ${escapeHtml(diskTotGB)} GB</span></div>
+        <div class="cell"><span class="k">Load</span><span class="v">${escapeHtml(la1)} / ${escapeHtml(la5)} / ${escapeHtml(la15)}</span></div>
+        <div class="cell"><span class="k">Spine CPU</span><span class="v">${escapeHtml(spineCpuVal)}</span></div>
+        <div class="cell"><span class="k">Spine Mem</span><span class="v">${escapeHtml(spineMem)}</span></div>
+        <div class="cell"><span class="k">Spine procs</span><span class="v">${escapeHtml(spineProc)}</span></div>
+      </div>
+    </section>`;
+}
+
+// ===== Detail view: section renderers =====
+
+// HERO BAR — hostname, status pill, tenant chip, version pill (with drift), last_seen relative.
+function renderHero(host, m, drill) {
+  const inst = (drill && drill.instance) || {};
+  const tenant = (drill && drill.tenant) || "";
+  const releaseStatus = (drill && drill.release_status) || null;
+  const versionShort = m.version_short || inst.version_short || "";
+  const lastSeenIso = m.last_seen_at || inst.last_seen_at || m.last_active;
+  const lastSeenTxt = machineLastActive(lastSeenIso);
+
+  const versionPill = versionShort
+    ? `<span class="chip"><strong>${escapeHtml(versionShort)}</strong></span>`
+    : `<span class="chip" style="font-style:italic;">no version yet</span>`;
+
+  const driftBadge = releaseStatus ? driftPill(releaseStatus.drift_status) : "";
+  const tenantChip = tenant
+    ? `<span class="chip">tenant <strong>${escapeHtml(tenant)}</strong></span>`
+    : "";
+
+  return `
+    <a class="back-link" href="./machines.html">&larr; All machines</a>
+    <header class="hero">
+      <h1>${escapeHtml(host)}</h1>
+      <div class="hero-row">
+        ${machineStatusPill(m.effective_status)}
+        ${tenantChip}
+        ${versionPill}
+        ${driftBadge}
+        <span class="chip">last seen <strong>${escapeHtml(lastSeenTxt)}</strong></span>
+      </div>
+    </header>
+  `;
+}
+
+// LIVE OPERATIONS — Daemons / Today / This week / Lifetime.
+function renderLiveOps(m, drill) {
+  const daemons = (drill && drill.daemons_summary) || { workers: 0, roles: 0, last_pickup_ts: null };
+  const kpi = (drill && drill.windowed_kpis) || {
+    today:    { invocations: 0, wall_s: 0, cost_usd: 0 },
+    week:     { invocations: 0, wall_s: 0, cost_usd: 0 },
+    lifetime: { invocations: Number(m.invocations || 0), wall_s: Number(m.wall_s || 0), cost_usd: Number(m.cost_usd || 0) },
+  };
+  const pickupTxt = daemons.last_pickup_ts ? machineLastActive(daemons.last_pickup_ts) : "no pickups yet";
+
+  return `
+    <section>
+      <h2>Live operations
+        ${infoIconHtml("Snapshot of what this machine is doing right now and over the last day / week. Daemons = unique workers + roles currently spawned; pickups come from cost_row.ts.")}
+      </h2>
+      <div class="liveops-grid">
+        <div class="liveops-card">
+          <div class="ttl">Daemons</div>
+          <div class="big">${humanizeCount(daemons.workers)} <span style="color:var(--fg-very-dim);font-size:13px;">workers</span></div>
+          <div class="sub">${humanizeCount(daemons.roles)} roles &middot; last pickup ${escapeHtml(pickupTxt)}</div>
+        </div>
+        <div class="liveops-card">
+          <div class="ttl">Today (24h)</div>
+          <div class="big">${humanizeCount(kpi.today.invocations)} <span style="color:var(--fg-very-dim);font-size:13px;">runs</span></div>
+          <div class="sub">${escapeHtml(humanizeSeconds(kpi.today.wall_s))} &middot; ${escapeHtml(humanizeCost(kpi.today.cost_usd))}</div>
+        </div>
+        <div class="liveops-card">
+          <div class="ttl">This week</div>
+          <div class="big">${humanizeCount(kpi.week.invocations)} <span style="color:var(--fg-very-dim);font-size:13px;">runs</span></div>
+          <div class="sub">${escapeHtml(humanizeCost(kpi.week.cost_usd))}</div>
+        </div>
+        <div class="liveops-card">
+          <div class="ttl">Lifetime</div>
+          <div class="big">${humanizeCount(kpi.lifetime.invocations)} <span style="color:var(--fg-very-dim);font-size:13px;">runs</span></div>
+          <div class="sub">${escapeHtml(humanizeCost(kpi.lifetime.cost_usd))}</div>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+// ROLE BREAKDOWN — horizontal bar chart of cost_usd per role.
+function renderRoleBreakdown(drill) {
+  const rows = (drill && drill.cost_by_role) || [];
+  const sig = rows.filter(r => Number(r.cost_usd || 0) > 0 || Number(r.invocations || 0) > 0);
+
+  if (!sig.length) {
+    return `
+      <section>
+        <h2>Role breakdown
+          ${infoIconHtml("Cost spent per role on this machine. Empty until an agent runs on this machine.")}
+        </h2>
+        <div class="card empty" style="text-align:center;">Role breakdown will populate once an agent runs on this machine.</div>
+      </section>
+    `;
+  }
+
+  const maxCost = Math.max(0.000001, ...sig.map(r => Number(r.cost_usd || 0)));
+  const maxInv = Math.max(1, ...sig.map(r => Number(r.invocations || 0)));
+
+  const bars = sig.map(r => {
+    const cost = Number(r.cost_usd || 0);
+    const inv = Number(r.invocations || 0);
+    // If all costs are 0 (no token usage), use invocations as the bar width.
+    const pct = maxCost > 0.000001 ? (cost / maxCost * 100) : (inv / maxInv * 100);
+    return `
+      <div class="rolebar-row">
+        <div class="label" title="${escapeHtml(r.role_id || "")}">${escapeHtml(r.role_id || "(unknown)")}</div>
+        <div class="bar-track"><div class="bar-fill" style="width:${pct.toFixed(1)}%"></div></div>
+        <div class="nums"><strong>${escapeHtml(humanizeCost(cost))}</strong> &middot; ${humanizeCount(inv)} runs</div>
+      </div>
+    `;
+  }).join("");
+
+  return `
+    <section>
+      <h2>Role breakdown
+        ${infoIconHtml("Cost (USD) per role on this machine. Bars are scaled to the largest role; if every role has $0 (no token usage yet), the bar tracks invocation count instead.")}
+        <span class="count">(${sig.length} roles)</span>
+      </h2>
+      <div class="card"><div class="rolebars">${bars}</div></div>
+    </section>
+  `;
+}
+
+// ENGAGEMENTS HERE — cards per engagement this host has touched.
+function renderEngagementsHere(drill) {
+  const rows = (drill && drill.engagements) || [];
+  if (!rows.length) {
+    return `
+      <section>
+        <h2>Engagements on this machine
+          ${infoIconHtml("Engagements where at least one cost_row was emitted from this host. Click an engagement to open its detail page.")}
+        </h2>
+        <div class="card empty" style="text-align:center;">This machine hasn't worked on any engagements yet.</div>
+      </section>
+    `;
+  }
+
+  const cards = rows.map(e => {
+    const slug = e.slug || "";
+    const href = "./?engagement=" + encodeURIComponent(slug);
+    return `
+      <a class="eng-card" href="${href}">
+        <div class="title">${escapeHtml(e.title || slug)}</div>
+        <div class="slug">${escapeHtml(slug)}</div>
+        <div class="meta">
+          ${engStatusPill(e.status)}
+          <span><strong>${escapeHtml(humanizeCost(e.my_cost_usd))}</strong> from here</span>
+          <span>${humanizeCount(e.my_invocations)} runs</span>
+        </div>
+      </a>
+    `;
+  }).join("");
+
+  return `
+    <section>
+      <h2>Engagements on this machine
+        ${infoIconHtml("Engagements where at least one cost_row was emitted from this host. The dollar amount is this machine's contribution — not the engagement's total cost.")}
+        <span class="count">(${rows.length})</span>
+      </h2>
+      <div class="eng-grid">${cards}</div>
+    </section>
+  `;
+}
+
+// RECENT INVOCATIONS — table of last 20, with outcome coloring + click-to-expand.
+function renderRecentInvocations(drill) {
+  const rows = ((drill && drill.recent_invocations) || []).slice(0, 20);
+  if (!rows.length) {
+    return `
+      <section>
+        <h2>Recent invocations
+          ${infoIconHtml("The last 20 agent runs from this host. Rows are colored by outcome: green = clean completion, red = reaped/killed, amber = still in flight.")}
+        </h2>
+        <div class="card empty" style="text-align:center;">No recent activity yet.</div>
+      </section>
+    `;
+  }
+
+  const trs = rows.map((i, idx) => {
+    const expId = "inv-exp-" + idx;
+    let rowCls = "expandable";
+    if (i.terminal_type === "Reaped") rowCls += " outcome-reaped";
+    else if (i.terminal_type === "ReportWritten") rowCls += " outcome-report";
+    else if (i.terminal_type == null) rowCls += " outcome-inflight";
+    const dur = (i.duration_s != null) ? Number(i.duration_s).toFixed(1) + "s" : "in-flight";
+    const payload = JSON.stringify(i, null, 2);
+    return `
+      <tr class="${rowCls}" data-expand-target="${expId}">
+        <td>${escapeHtml(shortTs(i.started_at))}</td>
+        <td>${escapeHtml(i.role_id || "")}</td>
+        <td class="dim">${escapeHtml(i.handle || "")}</td>
+        <td class="num">${escapeHtml(dur)}</td>
+        <td>${escapeHtml(i.terminal_type || "")}</td>
+        <td>${escapeHtml(i.outcome || "")}</td>
+        <td>${tierPill(i.tier)}</td>
+      </tr>
+      <tr class="expand-row" data-expand-id="${expId}" style="display:none;">
+        <td colspan="7"><pre>${escapeHtml(payload)}</pre></td>
+      </tr>
+    `;
+  }).join("");
+
+  return `
+    <section>
+      <h2>Recent invocations
+        ${infoIconHtml("The last 20 agent runs from this host. Rows colored by outcome (green = clean, red = reaped/killed, amber = in flight). Click any row to see the raw payload.")}
+        <span class="count">(${rows.length})</span>
+      </h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Started</th>
+              <th>Role</th>
+              <th>Handle</th>
+              <th class="num">Duration</th>
+              <th>Terminal</th>
+              <th>Outcome</th>
+              <th>Tier</th>
+            </tr>
+          </thead>
+          <tbody>${trs}</tbody>
+        </table>
+      </div>
+    </section>
+  `;
+}
+
+// RECENT EVENTS — table of last 30 lifecycle events, click to expand payload.
+function renderRecentEvents(drill) {
+  const rows = ((drill && drill.recent_events) || []).slice(0, 30);
+  if (!rows.length) {
+    return `
+      <section>
+        <h2>Recent events
+          ${infoIconHtml("The last 30 lifecycle events from this host. Reaped / Stalled / Killed events get a red marker. Click any row to expand the raw payload JSON.")}
+        </h2>
+        <div class="card empty" style="text-align:center;">No lifecycle events from this host yet.</div>
+      </section>
+    `;
+  }
+
+  const RED_TYPES = new Set(["Reaped", "Stalled", "Killed"]);
+
+  const trs = rows.map((e, idx) => {
+    const expId = "ev-exp-" + idx;
+    let rowCls = "expandable";
+    if (RED_TYPES.has(e.type)) rowCls += " event-" + String(e.type || "").toLowerCase();
+    const preview = (() => {
+      const p = e.payload_json;
+      if (p == null) return "";
+      let s = typeof p === "string" ? p : JSON.stringify(p);
+      if (s.length > 80) s = s.slice(0, 77) + "...";
+      return s;
+    })();
+    const payloadFull = typeof e.payload_json === "string"
+      ? e.payload_json
+      : JSON.stringify(e.payload_json || {}, null, 2);
+    return `
+      <tr class="${rowCls}" data-expand-target="${expId}">
+        <td>${escapeHtml(shortTs(e.ts))}</td>
+        <td>${escapeHtml(e.type || "")}</td>
+        <td>${escapeHtml(e.role_id || "")}</td>
+        <td class="dim">${escapeHtml(preview)}</td>
+      </tr>
+      <tr class="expand-row" data-expand-id="${expId}" style="display:none;">
+        <td colspan="4"><pre>${escapeHtml(payloadFull)}</pre></td>
+      </tr>
+    `;
+  }).join("");
+
+  return `
+    <section>
+      <h2>Recent events
+        ${infoIconHtml("The last 30 lifecycle events from this host. Reaped / Stalled / Killed events get a red marker. Click any row to expand the raw payload JSON.")}
+        <span class="count">(${rows.length})</span>
+      </h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Type</th>
+              <th>Role</th>
+              <th>Payload</th>
+            </tr>
+          </thead>
+          <tbody>${trs}</tbody>
+        </table>
+      </div>
+    </section>
+  `;
+}
+
+// Spine share gauge — fraction of host CPU consumed by spine_* processes.
+function renderSpineShareGauge(host, snapshot, drill) {
+  // Prefer the explicit spine_share_pct off vitals_latest; fall back to the
+  // ratio we can compute from the latest history point.
+  const latest = (drill && drill.vitals_latest) || null;
+  let pct = null;
+  if (latest && latest.spine_share_pct != null) pct = Number(latest.spine_share_pct);
+  else if (latest && latest.spine_cpu_pct != null && latest.cpu_pct) {
+    pct = (Number(latest.spine_cpu_pct) / Number(latest.cpu_pct)) * 100;
+  }
+  if (pct == null || isNaN(pct)) return "";
+
+  const safe = Math.max(0, Math.min(100, pct));
+  return `
+    <div class="spine-share-wrap">
+      <div class="lbl">Spine share of host CPU
+        ${infoIconHtml("Spine processes are using " + safe.toFixed(1) + "% of total CPU. Other apps (browser, IDE, etc.) use the rest. Computed from the latest heartbeat as spine_cpu_pct / cpu_pct.")}
+      </div>
+      <div class="spine-share-bar">
+        <div class="fill" style="width:${safe.toFixed(1)}%"></div>
+        <div class="pct">${safe.toFixed(1)}%</div>
+      </div>
+    </div>
+  `;
+}
+
+function renderDetail(host, snapshot) {
+  const machines = snapshot.machines || [];
+  const m = machines.find(x => x.host_id === host);
+  const root = document.getElementById("content");
+  if (!m) {
+    root.innerHTML = `
+      <a class="back-link" href="./machines.html">&larr; All machines</a>
+      <header class="hero">
+        <h1>${escapeHtml(host)}</h1>
+        <p>No record of this host in the current snapshot.</p>
+      </header>
+      <div class="banner">
+        This host hasn't run a Spine agent yet, or its worker rows have been archived. If you expect to see it here, check <code>worker.host_id</code> in the database.
+      </div>
+    `;
+    return;
+  }
+
+  const drill = (snapshot.machine_drilldown || {})[host] || null;
+
+  const workers = (snapshot.active_workers || []).filter(w => w.host_id === host);
+  const buckets = bucketByHour((snapshot.recent_invocations || []).filter(i => i.host_id === host));
+
+  const proj = m.project_slug || "(unknown)";
+  const path = m.project_path || "";
+  const lastTxt = machineLastActive(m.last_active);
+  const firstTxt = machineLastActive(m.first_seen);
+
+  const inst = (drill && drill.instance) || {};
+  const projDisplay = (inst.project_slug && inst.project_slug !== "(unknown)") ? inst.project_slug : proj;
+  const pathDisplay = inst.project_path || path || "";
+  const verDisplay = m.version_short || inst.version_short || "";
+  const sverDisplay = m.spine_version || inst.spine_version || "";
+  const userDisplay = m.os_user || inst.os_user || "";
+
+  // Workers table (kept).
+  const workersHtml = workers.length ? `
+    <table>
+      <thead>
+        <tr>
+          <th>Handle</th>
+          <th>Role</th>
+          <th>Status</th>
+          <th class="num">Lifetime inv.</th>
+          <th class="num">Lifetime cost</th>
+          <th>Last cost ts</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${workers.map(w => `
+          <tr>
+            <td>${escapeHtml(w.handle || "")}</td>
+            <td>${escapeHtml(w.role_id || "")}</td>
+            <td class="dim">${escapeHtml(w.status || "")}</td>
+            <td class="num">${humanizeCount(w.lifetime_invocations)}</td>
+            <td class="num">${escapeHtml(humanizeCost(w.lifetime_cost_usd))}</td>
+            <td class="dim">${escapeHtml(shortTs(w.last_cost_ts))}</td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  ` : `<div class="empty">No active workers on this host.</div>`;
+
+  root.innerHTML = `
+    ${renderHero(host, m, drill)}
+
+    ${renderLiveOps(m, drill)}
+
+    <div class="detail-summary">
+      <div class="summary-card">
+        <h3>Activity totals
+          ${infoIconHtml("Lifetime totals for this machine, derived from all worker / cost_row history. The 'Status' cell mirrors the hero pill.")}
+        </h3>
+        <div class="summary-stats">
+          <div class="s"><div class="lbl">Workers</div><div class="val">${humanizeCount(m.workers)}</div></div>
+          <div class="s"><div class="lbl">Roles</div><div class="val">${humanizeCount(m.roles)}</div></div>
+          <div class="s"><div class="lbl">Invocations</div><div class="val">${humanizeCount(m.invocations)}</div></div>
+          <div class="s"><div class="lbl">Cost</div><div class="val">${escapeHtml(humanizeCost(m.cost_usd))}</div></div>
+          <div class="s"><div class="lbl">Wall time</div><div class="val">${escapeHtml(humanizeSeconds(m.wall_s))}</div></div>
+          <div class="s"><div class="lbl">Status</div><div class="val">${machineStatusPill(m.effective_status)}</div></div>
+        </div>
+        <div class="row"><span class="k">First seen</span><span class="v">${escapeHtml(firstTxt)} (${escapeHtml(shortTs(m.first_seen))})</span></div>
+        <div class="row"><span class="k">Last active</span><span class="v">${escapeHtml(lastTxt)} (${escapeHtml(shortTs(m.last_active))})</span></div>
+        <div class="row"><span class="k">Last instance heartbeat</span><span class="v">${m.last_seen_at ? escapeHtml(shortTs(m.last_seen_at)) : "&mdash;"}</span></div>
+      </div>
+      <div class="meta-card">
+        <h3>Metadata
+          ${infoIconHtml("Static identity for this machine. Project / project_path / version_short / spine_version come from spine_instance and require team.sh up to populate.", "right")}
+        </h3>
+        <div class="row" style="display:flex;justify-content:space-between;padding:4px 0;font-family:var(--mono);font-size:12px;"><span style="color:var(--fg-dim)">host_id</span><span style="color:var(--fg)">${escapeHtml(m.host_id)}</span></div>
+        <div class="row" style="display:flex;justify-content:space-between;padding:4px 0;font-family:var(--mono);font-size:12px;"><span style="color:var(--fg-dim)">project</span><span style="color:var(--fg)">${escapeHtml(projDisplay)}</span></div>
+        <div class="row" style="display:flex;flex-direction:column;padding:4px 0;font-family:var(--mono);font-size:12px;"><span style="color:var(--fg-dim)">project_path</span><span style="color:var(--fg);word-break:break-all;">${pathDisplay ? escapeHtml(pathDisplay) : "&mdash;"}</span></div>
+        <div class="row" style="display:flex;justify-content:space-between;padding:4px 0;font-family:var(--mono);font-size:12px;"><span style="color:var(--fg-dim)">os_user</span><span style="color:var(--fg)">${userDisplay ? escapeHtml(userDisplay) : "&mdash;"}</span></div>
+        <div class="row" style="display:flex;justify-content:space-between;padding:4px 0;font-family:var(--mono);font-size:12px;"><span style="color:var(--fg-dim)">version_short</span><span style="color:var(--fg)">${verDisplay ? escapeHtml(verDisplay) : "&mdash;"}</span></div>
+        <div class="row" style="display:flex;justify-content:space-between;padding:4px 0;font-family:var(--mono);font-size:12px;"><span style="color:var(--fg-dim)">spine_version</span><span style="color:var(--fg)">${sverDisplay ? escapeHtml(sverDisplay) : "&mdash;"}</span></div>
+        ${(drill && drill.release_status) ? `
+          <div class="row" style="display:flex;justify-content:space-between;padding:4px 0;font-family:var(--mono);font-size:12px;"><span style="color:var(--fg-dim)">channel</span><span style="color:var(--fg)">${escapeHtml(drill.release_status.channel || "")}</span></div>
+          <div class="row" style="display:flex;justify-content:space-between;padding:4px 0;font-family:var(--mono);font-size:12px;"><span style="color:var(--fg-dim)">channel head</span><span style="color:var(--fg)">${escapeHtml(drill.release_status.head_short || "&mdash;")}</span></div>
+        ` : ""}
+      </div>
+    </div>
+
+    ${renderRoleBreakdown(drill)}
+
+    ${renderVitalsSection(host, snapshot)}
+    ${renderSpineShareGauge(host, snapshot, drill)}
+
+    ${renderEngagementsHere(drill)}
+
+    ${renderRecentInvocations(drill)}
+
+    ${renderRecentEvents(drill)}
+
+    <section>
+      <h2>Activity timeline
+        ${infoIconHtml("Invocations bucketed per hour for the last 48 hours from this host. Pulled from the recent_invocations slice of the snapshot.")}
+        <span class="count">(invocations / hour, last 48h)</span>
+      </h2>
+      <div class="sparkline-wrap">
+        <div class="lbl">Invocations per hour</div>
+        ${sparkline(buckets, { key: "count" })}
+      </div>
+    </section>
+
+    <section>
+      <h2>Workers on this machine
+        ${infoIconHtml("Every non-archived worker row tied to this host. One row per (role, handle) pair. Lifetime totals join through assignment + cost_row.")}
+        <span class="count">(${workers.length})</span>
+      </h2>
+      <div class="table-wrap">${workersHtml}</div>
+    </section>
+
+    ${m.effective_status === "unregistered" ? `
+      <div class="banner">
+        This host has executed Spine agents but has not registered an instance. Run <code>team.sh down &amp;&amp; team.sh up</code> on this machine to send a heartbeat — once registered, the status will move to <code>alive</code> and project/user metadata will populate.
+      </div>` : ""}
+  `;
+
+  // Wire up the new interactive bits.
+  bindTooltipTaps(root);
+  bindRowExpanders(root);
+}
+
+// ===== Boot =====
+async function boot() {
+  const url = new URL(window.location.href);
+  state.hostFilter = url.searchParams.get("host");
+
+  let snap;
+  try {
+    snap = await fetchSnapshot();
+  } catch (e) {
+    document.getElementById("content").innerHTML = `
+      <header class="hero">
+        <h1>Machines</h1>
+        <p>Could not load snapshot.</p>
+      </header>
+      <div class="banner">
+        Snapshot server unreachable. Try <code>make dashboard</code> in the <code>db/</code> directory. (${escapeHtml(e.message)})
+      </div>
+    `;
+    return;
+  }
+  state.snapshot = snap;
+
+  if (state.hostFilter) {
+    renderDetail(state.hostFilter, snap);
+  } else {
+    renderList(snap.machines || []);
+  }
+}
+
+boot();
+// poll for updates every 10s — same shape as the dashboard
+setInterval(() => { boot().catch(() => {}); }, 10000);
+</script>
+</body>
+</html>

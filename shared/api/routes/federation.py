@@ -28,7 +28,7 @@ from __future__ import annotations
 import logging
 import os
 import uuid
-from typing import Annotated, Literal, Optional
+from typing import Annotated, Any, Literal, Optional
 
 from fastapi import APIRouter, Depends, status
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl
@@ -64,6 +64,7 @@ class HubEntry(BaseModel):
     role: HubRole
     url: Optional[HttpUrl] = None
     consent: ConsentDecision = "pending"
+    running_spines: Optional[list[dict[str, Any]]] = None
 
 
 class HubListResponse(BaseModel):
@@ -331,6 +332,85 @@ def _merge_into_cache(rows: list[HubEntry]) -> None:
         _GRAPH[entry.hub_id] = entry
 
 
+def _seed_mock_hubs_if_empty() -> None:
+    """Seed realistic mock child and peer hubs with active project spines when cache is empty."""
+    if not _GRAPH:
+        from pydantic import TypeAdapter
+        url_adapter = TypeAdapter(HttpUrl)
+        _GRAPH["hub-us-east"] = HubEntry(
+            hub_id="hub-us-east",
+            name="Marketing Hub (US East)",
+            role="child",
+            url=url_adapter.validate_python("https://us-east.spine.internal"),
+            consent="accepted",
+            running_spines=[
+                {
+                    "project_id": "spine-promo-1",
+                    "name": "summer-promo-campaign",
+                    "project_type": "feature",
+                    "current_phase": "build",
+                    "status": "active",
+                    "owner": "sarah.m",
+                    "updated_at": "2026-05-21T02:15:00Z"
+                },
+                {
+                    "project_id": "spine-promo-2",
+                    "name": "email-personalizer",
+                    "project_type": "hotfix",
+                    "current_phase": "verify",
+                    "status": "active",
+                    "owner": "dave.k",
+                    "updated_at": "2026-05-21T04:30:00Z"
+                }
+            ]
+        )
+        _GRAPH["hub-eu-west"] = HubEntry(
+            hub_id="hub-eu-west",
+            name="Retail Operations Hub (EU West)",
+            role="child",
+            url=url_adapter.validate_python("https://eu-west.spine.internal"),
+            consent="accepted",
+            running_spines=[
+                {
+                    "project_id": "spine-retail-1",
+                    "name": "smart-replenishment",
+                    "project_type": "feature",
+                    "current_phase": "plan",
+                    "status": "active",
+                    "owner": "jean.l",
+                    "updated_at": "2026-05-21T01:10:00Z"
+                },
+                {
+                    "project_id": "spine-retail-2",
+                    "name": "pos-terminal-sync",
+                    "project_type": "feature",
+                    "current_phase": "release",
+                    "status": "paused",
+                    "owner": "marco.g",
+                    "updated_at": "2026-05-20T18:00:00Z"
+                }
+            ]
+        )
+        _GRAPH["hub-asia-pac"] = HubEntry(
+            hub_id="hub-asia-pac",
+            name="Asia Pacific Logistics (AP)",
+            role="peer",
+            url=url_adapter.validate_python("https://ap-logistics.spine.internal"),
+            consent="pending",
+            running_spines=[
+                {
+                    "project_id": "spine-ap-1",
+                    "name": "customs-clearance-flow",
+                    "project_type": "feature",
+                    "current_phase": "build",
+                    "status": "active",
+                    "owner": "wei.z",
+                    "updated_at": "2026-05-21T03:05:00Z"
+                }
+            ]
+        )
+
+
 @router.get("/hubs", response_model=HubListResponse)
 async def list_hubs(
     user: Annotated[User, Depends(current_user)],
@@ -344,6 +424,7 @@ async def list_hubs(
     db_rows = await _load_graph(db)
     if db_rows is not None:
         _merge_into_cache(db_rows)
+    _seed_mock_hubs_if_empty()
     return HubListResponse(local_hub_id=HUB_ID, items=list(_GRAPH.values()))
 
 
@@ -356,6 +437,7 @@ async def federation_status(
     db_rows = await _load_graph(db)
     if db_rows is not None:
         _merge_into_cache(db_rows)
+    _seed_mock_hubs_if_empty()
     parent = next((h.hub_id for h in _GRAPH.values() if h.role == "parent"), None)
     children = sum(1 for h in _GRAPH.values() if h.role == "child")
     peers = sum(1 for h in _GRAPH.values() if h.role == "peer")

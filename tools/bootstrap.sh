@@ -92,7 +92,10 @@ preflight() {
     missing=1
   fi
 
-  (( missing )) && { _fail "preflight failed: install the missing tools above, then re-run 'make bootstrap'"; exit 2; }
+  if (( missing )); then
+    _fail "preflight failed: install the missing tools above, then re-run 'make bootstrap'"
+    exit 2
+  fi
 }
 
 # ─── 2. venv ───────────────────────────────────────────────────────
@@ -175,6 +178,7 @@ ensure_tron_pg() {
     _skip "$TRON_PG_CONTAINER already healthy"
     return 0
   fi
+  bash "$REPO_ROOT/tools/verify-overrides/install.sh" >/dev/null 2>&1 || true
   ( cd "$VERIFY_DIR" && docker compose up -d postgres >/dev/null 2>&1 ) \
     || { _fail "could not bring up TRON postgres (cd verify && docker compose up -d postgres)"; exit 4; }
   if _wait_healthy "$TRON_PG_CONTAINER" 90; then

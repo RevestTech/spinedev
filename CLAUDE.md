@@ -1,14 +1,17 @@
 # Spine — Claude Code primer
 
 This file orients Claude Code (and other agentic IDE tools) to the Spine
-repository as it stands today. Read it first; everything else assumes you
-understand what's in here.
+repository as it stands today.
 
-> **Status as of 2026-05-18.** v3 build is **code-complete** (57 commits
-> since `1da7148`). Remaining v1.0 work is operational — see
-> [`docs/V1_SHIP_CHECKLIST.md`](docs/V1_SHIP_CHECKLIST.md). The v1 / v2
-> "file-bus orchestration framework" framing in older docs is historical;
-> do not extend it.
+> **Read first:** [`docs/SPINE_MASTER.md`](docs/SPINE_MASTER.md) — single
+> source of truth for what Spine must do, component registry, gap matrix,
+> and doc hierarchy. Origin: [`docs/_archived/chatsession-2026-05-17.md`](docs/_archived/chatsession-2026-05-17.md).
+>
+> **Status as of 2026-05-21.** v3 **scaffolding** is largely built; the
+> **operating company loop** (orchestrator + role daemons + KG wiring) is
+> still unwired — see SPINE_MASTER §4. Launch ops gates:
+> [`docs/V1_SHIP_CHECKLIST.md`](docs/V1_SHIP_CHECKLIST.md). v1/v2 file-bus
+> framing is historical; do not extend it.
 
 ---
 
@@ -74,8 +77,6 @@ db/flyway/sql/            # V1–V36 migrations
 tools/                    # smoke-test.sh + bootstrap.sh + license-sign.sh + byoc/ + dr-test.sh
 
 docs/                     # Canonical product/architecture docs
-lib/                      # Mostly retired (Wave 6). Only lib/role-prompts/ remains —
-                          # deprecated readable reference; canonical charters live in shared/charters/
 
 .spine/work/              # Per-agent workspace dirs (#34) — sweep with `make hygiene`
 .spine/archive/           # Compressed completed-run archives
@@ -162,7 +163,7 @@ Per **#7** (industry-anchored) + **#19** (work-item type coverage):
 4. **Wire in the dispatcher** if the role is dispatchable from `build_dispatcher.py` or routes from a work-item type per **#19**.
 5. **Update `docs/V3_DESIGN_DECISIONS.md` quick index** if this is a new top-level role concern. Most aren't.
 6. **Master roles** are Director-level (per **#8** two-tier hybrid authority) — they aggregate across project Spines within a Hub. Don't conflate Master roles with project-level roles.
-7. **Do NOT add to `lib/role-prompts/`** — that's the deprecated v1/v2 readable reference. Canonical home is `shared/charters/`.
+7. **Do NOT add role prompts under a legacy `lib/` tree** — canonical charters live in `shared/charters/`.
 
 ---
 
@@ -180,15 +181,18 @@ Per **#12** (Cite-or-Refuse for verify-class) + **#30** (API+MCP heavier scaffol
 
 ---
 
-## Doc trinity (read these before changing architecture)
+## Doc hierarchy (read these before changing architecture)
 
 | Doc | Purpose |
 |---|---|
-| [`docs/V3_DESIGN_DECISIONS.md`](docs/V3_DESIGN_DECISIONS.md) | 34 locked decisions. Source of truth. If anything else conflicts, this wins until ratified otherwise. |
-| [`docs/V3_TRIAGE.md`](docs/V3_TRIAGE.md) | Per-artifact KEEP / REFACTOR / REBUILD / BUILD-NEW / DELETE marks driving the v3 rebuild. |
-| [`docs/V3_BUILD_SEQUENCE.md`](docs/V3_BUILD_SEQUENCE.md) | 7-wave dependency-ordered execution plan. |
-| [`docs/V1_SHIP_CHECKLIST.md`](docs/V1_SHIP_CHECKLIST.md) | Canonical pre-launch checklist. Single launch gate. |
-| [`docs/STATUS.md`](docs/STATUS.md) | Where Spine is today; wave-by-wave commit log; v2 history preserved below v3 section. |
+| [`docs/SPINE_MASTER.md`](docs/SPINE_MASTER.md) | **Start here.** Vision, golden path, component registry, gap matrix, hygiene rules. |
+| [`docs/V3_DESIGN_DECISIONS.md`](docs/V3_DESIGN_DECISIONS.md) | 34 locked decisions. If anything else conflicts, this wins until ratified. |
+| [`docs/PRD.md`](docs/PRD.md) | REQ-level acceptance criteria. |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Subsystem boundaries and data flow. |
+| [`docs/V3_TRIAGE.md`](docs/V3_TRIAGE.md) | Per-artifact KEEP / REFACTOR / REBUILD marks (historical triage). |
+| [`docs/V3_BUILD_SEQUENCE.md`](docs/V3_BUILD_SEQUENCE.md) | 7-wave execution plan (historical). |
+| [`docs/V1_SHIP_CHECKLIST.md`](docs/V1_SHIP_CHECKLIST.md) | Customer launch gate (operational only). |
+| [`docs/STATUS.md`](docs/STATUS.md) | Wave commit log — not the "what to build next" list. |
 
 Supporting (per-subsystem READMEs, operational guides, runbooks):
 
@@ -200,19 +204,18 @@ Supporting (per-subsystem READMEs, operational guides, runbooks):
 
 ## Historical / deprecated framings
 
-**Pre-v3 docs preserved for reference:** `PROTOCOL.md`, `REQUIREMENTS.md`,
-`docs/IMPROVEMENT_CHECKLIST.md`, `docs/SPINE_PRACTICES.md`,
-`docs/EXTENSIONS.md`, `docs/PROGRAM_DELIVERY.md`, `docs/naming-decision.md`.
+**Pre-v3 docs preserved for reference:** see `docs/_archived/` (`v1-PROTOCOL.md`,
+`v1-REQUIREMENTS.md`, `v1-IMPROVEMENT_CHECKLIST.md`, `v1-PRACTICES.md`, `v2-*.md`, design session).
 These describe the v1/v2 file-bus orchestration framework + the
 `scripts/roles.sh` 15-manager roster + the `.planning/orchestration/`
 directory contract. **They are not the v3 product.** If you find yourself
 about to extend any of these to add functionality, stop and route through
 the v3 doc trinity instead.
 
-**`lib/` is mostly retired.** Wave 6 (`19f745f`) deleted 17 file-bus
-daemon files; only `lib/role-prompts/` remains as deprecated readable
-reference. Canonical role charters now live in `shared/charters/`.
-`lib/role-prompts/` will be `git rm`'d post-v1.0.
+**`lib/` is fully retired.** Wave 6 (`19f745f`) deleted the file-bus daemons;
+the remaining `lib/role-prompts/` reference tree was removed once
+`shared/charters/` became canonical. Canonical role charters now live in
+`shared/charters/`.
 
 ---
 

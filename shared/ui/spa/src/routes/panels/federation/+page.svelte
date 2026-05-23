@@ -27,6 +27,7 @@
 -->
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { base } from '$app/paths';
   import PanelHeader from '$lib/components/PanelHeader.svelte';
   import LoadingSpinner from '$lib/components/LoadingSpinner.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
@@ -40,12 +41,23 @@
   type HubRole = 'root' | 'parent' | 'peer' | 'child';
   type ConsentDecision = 'accepted' | 'rejected' | 'pending';
 
+  interface SpineEntry {
+    project_id: string;
+    name: string;
+    project_type: string;
+    current_phase: string;
+    status: string;
+    owner?: string;
+    updated_at?: string;
+  }
+
   interface HubEntry {
     hub_id: string;
     name: string;
     role: HubRole;
     url?: string | null;
     consent: ConsentDecision;
+    running_spines?: SpineEntry[];
   }
   interface HubListResponse {
     ok: boolean;
@@ -65,6 +77,16 @@
   let hubs: HubEntry[] = [];
   let posture: FederationStatusResponse | null = null;
 
+  let localProjects: SpineEntry[] = [];
+  let showAutomatedLocalSpines = false;
+
+  $: filteredLocalSpines = localProjects.filter(p => {
+    if (showAutomatedLocalSpines) return true;
+    const isSmokeOwner = p.owner === 'smoke-harness';
+    const isSmokeName = p.name ? p.name.startsWith('smoke-') : false;
+    return !isSmokeOwner && !isSmokeName;
+  });
+
   // Register-child form state
   let showRegisterForm = false;
   let form = { hub_id: '', name: '', url: '', rationale: '' };
@@ -75,16 +97,21 @@
     loading = true;
     error = null;
     try {
-      const [list, stat] = await Promise.all([
+      const [list, stat, projRes] = await Promise.all([
         api.get<HubListResponse>('/api/v2/federation/hubs'),
-        api.get<FederationStatusResponse>('/api/v2/federation/status')
+        api.get<FederationStatusResponse>('/api/v2/federation/status'),
+        api.get<{ items: (string | SpineEntry)[] }>('/api/v2/projects?limit=200')
       ]);
       hubs = list.items ?? [];
       posture = stat;
+      localProjects = (projRes.items ?? []).map((it) =>
+        typeof it === 'string' ? (JSON.parse(it) as SpineEntry) : it
+      );
     } catch (err) {
       error = (err as Error).message || 'failed to load federation graph';
       hubs = [];
       posture = null;
+      localProjects = [];
     } finally {
       loading = false;
     }
@@ -257,6 +284,41 @@
           <span>children: <b>{posture.children_count}</b></span>
         </div>
       </div>
+
+      <!-- Local running spines list -->
+      <div class="mt-4 border-t border-surface-200 pt-3 dark:border-surface-700">
+        <div class="flex flex-col xs:flex-row xs:items-center justify-between gap-2 mb-2">
+          <h3 class="text-[0.7rem] font-bold uppercase tracking-wider text-surface-700/80 dark:text-surface-200/80">
+            Local Running Spines
+          </h3>
+          <label class="flex items-center gap-1.5 text-[0.65rem] text-surface-700/80 dark:text-surface-200/80 cursor-pointer">
+            <input type="checkbox" bind:checked={showAutomatedLocalSpines} class="rounded border-surface-300 text-accent focus:ring-accent" />
+            Show automated runs
+          </label>
+        </div>
+        {#if filteredLocalSpines.length === 0}
+          <p class="text-xs text-surface-700/60 dark:text-surface-200/60 italic">No running spines</p>
+        {:else}
+          <div class="grid grid-cols-1 gap-2 sm:grid-cols-2 md:grid-cols-3">
+            {#each filteredLocalSpines as spine}
+              <div class="flex flex-col justify-between rounded bg-surface-50 p-2 text-xs dark:bg-surface-800 border border-surface-200 dark:border-surface-700">
+                <div class="flex items-center justify-between gap-2 mb-1">
+                  <a href="{base}/projects/{spine.project_id}" class="font-semibold text-accent hover:underline truncate max-w-[140px]" title={spine.name}>
+                    {spine.name}
+                  </a>
+                  <span class="rounded px-1.5 py-0.5 text-[0.6rem] bg-accent/10 text-accent font-mono uppercase font-bold">
+                    {spine.current_phase}
+                  </span>
+                </div>
+                <div class="flex items-center justify-between text-[0.65rem] text-surface-700/60 dark:text-surface-200/60">
+                  <span class="capitalize">{spine.project_type} · {spine.status}</span>
+                  <span>{spine.owner || ''}</span>
+                </div>
+              </div>
+            {/each}
+          </div>
+        {/if}
+      </div>
     </div>
 
     <!-- Peers tier -->
@@ -267,7 +329,7 @@
         </h2>
         <ul class="grid grid-cols-1 gap-2 md:grid-cols-2 lg:grid-cols-3">
           {#each peers as p (p.hub_id)}
-            <li class="panel-card" data-testid="hub-node" data-role={p.role}>
+            <li class="panel-card border-l-4 border-l-blue-400" data-testid="hub-node" data-role={p.role}>
               <div class="flex items-center justify-between gap-2">
                 <span class="font-mono text-sm">{p.hub_id}</span>
                 <span class="rounded-full px-2 py-0.5 text-[0.65rem] uppercase {consentTone[p.consent]}">
@@ -275,6 +337,30 @@
                 </span>
               </div>
               <p class="text-xs text-surface-700 dark:text-surface-200">{p.name}</p>
+
+              <!-- Federated peer spines -->
+              {#if p.running_spines && p.running_spines.length > 0}
+                <div class="mt-3 border-t border-surface-200 pt-2 dark:border-surface-700">
+                  <h4 class="text-[0.65rem] font-bold uppercase tracking-wider text-surface-700/80 dark:text-surface-200/80 mb-1.5">
+                    Federated Spines
+                  </h4>
+                  <div class="flex flex-col gap-1.5">
+                    {#each p.running_spines as spine}
+                      <div class="flex items-center justify-between rounded bg-surface-50 p-1.5 text-[0.7rem] dark:bg-surface-800 border border-surface-200 dark:border-surface-700">
+                        <span class="font-medium truncate max-w-[120px] text-surface-700 dark:text-surface-200" title={spine.name}>
+                          {spine.name}
+                        </span>
+                        <div class="flex items-center gap-1.5">
+                          <span class="rounded px-1.5 py-0.5 text-[0.55rem] bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300 font-mono uppercase font-bold">
+                            {spine.current_phase}
+                          </span>
+                        </div>
+                      </div>
+                    {/each}
+                  </div>
+                </div>
+              {/if}
+
               {#if p.consent === 'pending'}
                 <div class="mt-2 flex flex-col gap-1 xs:flex-row">
                   <button class="btn-ghost text-xs" on:click={() => decideConsent(p, 'accepted')}
@@ -310,6 +396,30 @@
                   {c.url}
                 </p>
               {/if}
+
+              <!-- Federated child spines -->
+              {#if c.running_spines && c.running_spines.length > 0}
+                <div class="mt-3 border-t border-surface-200 pt-2 dark:border-surface-700">
+                  <h4 class="text-[0.65rem] font-bold uppercase tracking-wider text-surface-700/80 dark:text-surface-200/80 mb-1.5">
+                    Federated Spines
+                  </h4>
+                  <div class="flex flex-col gap-1.5">
+                    {#each c.running_spines as spine}
+                      <div class="flex items-center justify-between rounded bg-surface-50 p-1.5 text-[0.7rem] dark:bg-surface-800 border border-surface-200 dark:border-surface-700">
+                        <span class="font-medium truncate max-w-[120px] text-surface-700 dark:text-surface-200" title={spine.name}>
+                          {spine.name}
+                        </span>
+                        <div class="flex items-center gap-1.5">
+                          <span class="rounded px-1.5 py-0.5 text-[0.55rem] bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300 font-mono uppercase font-bold">
+                            {spine.current_phase}
+                          </span>
+                        </div>
+                      </div>
+                    {/each}
+                  </div>
+                </div>
+              {/if}
+
               {#if c.consent === 'pending'}
                 <div class="mt-2 flex flex-col gap-1 xs:flex-row">
                   <button class="btn-ghost text-xs" on:click={() => decideConsent(c, 'accepted')}

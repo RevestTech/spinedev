@@ -13,7 +13,7 @@ pre-split layout (17 tools across 6 modules) was outdated as soon as
 * orchestrator.py — 4  (project_create, project_status, phase_advance, approval_grant)
 * plan.py         — 1  (plan_dispatch)
 * build.py        — 2  (build_dispatch, build_completed)
-* verify.py       — 1  (verify_audit)
+* verify.py       — 2  (verify_audit, verify_hub_review)
 * iso.py          — 7  (iso_invoke + 6 *_iso_scan convenience tools)
 * sandbox.py      — 1  (sandbox_run)
 * auditor.py      — 1  (verify_build_artifact)
@@ -32,7 +32,7 @@ import importlib
 import pytest
 from pydantic import BaseModel
 
-EXPECTED_TOOL_COUNT: int = 54
+EXPECTED_TOOL_COUNT: int = 55
 
 EXPECTED_TOOLS_BY_MODULE: dict[str, set[str]] = {
     "shared.mcp.tools.orchestrator": {
@@ -43,7 +43,7 @@ EXPECTED_TOOLS_BY_MODULE: dict[str, set[str]] = {
     },
     "shared.mcp.tools.plan": {"plan_dispatch"},
     "shared.mcp.tools.build": {"build_dispatch", "build_completed"},
-    "shared.mcp.tools.verify": {"verify_audit"},
+    "shared.mcp.tools.verify": {"verify_audit", "verify_hub_review"},
     "shared.mcp.tools.iso": {
         "iso_invoke",
         "security_iso_scan",

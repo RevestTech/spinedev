@@ -665,7 +665,10 @@ def synthesize_prd_draft(
     prd_pt = _PRD_PROJECT_TYPE_BY_TEMPLATE.get(template_name, PRDProjectType.CUSTOM)
 
     primary_job = (answers.get("primary_job") or "").strip()
-    audience = answers.get("audience") or answers.get("consumers") or ""
+    audience = answers.get("audience") or answers.get("consumers") or answers.get("target_users") or ""
+
+    if not primary_job and template_name == "web-app":
+        primary_job = f"Serve custom aquarium shopping needs for {audience or 'the target audience'}"
 
     problem = (
         primary_job
@@ -695,7 +698,7 @@ def synthesize_prd_draft(
     in_scope: list[str] = []
     if primary_job:
         in_scope.append(f"Primary command/job: {primary_job}")
-    for key in ("install_method", "output_formats", "cross_platform"):
+    for key in ("install_method", "output_formats", "cross_platform", "auth_model", "data_persistence", "hosting_target", "rendering_model", "responsive_mobile"):
         vals = answers.get(key)
         if isinstance(vals, list) and vals:
             in_scope.append(f"{key.replace('_', ' ')}: {', '.join(vals)}")

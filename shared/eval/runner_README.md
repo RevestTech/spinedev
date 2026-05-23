@@ -20,19 +20,19 @@
 ```bash
 # Full run — score candidate prompt against every case in the dataset.
 python -m shared.eval.cli run shared/eval/example_engineer.yaml \
-    --prompt lib/role-prompts/engineer.md \
+    --prompt shared/charters/engineer.md \
     --model claude-opus-4-7 \
     --format text --threshold 0.7
 
 # Regression — diff candidate scores vs dataset.baseline.recorded_scores.
 python -m shared.eval.cli regression shared/eval/example_engineer.yaml \
-    --prompt lib/role-prompts/engineer.md \
+    --prompt shared/charters/engineer.md \
     --model claude-opus-4-7 \
     --tolerance 0.05
 
 # A/B — paired run on `--fraction` of cases; reports wins / p-value.
 python -m shared.eval.cli ab shared/eval/example_engineer.yaml \
-    --baseline-prompt lib/role-prompts/engineer.md \
+    --baseline-prompt shared/charters/engineer.md \
     --candidate-prompt /tmp/engineer-v2.md \
     --baseline-model claude-opus-4-7 \
     --candidate-model claude-opus-4-7 \
@@ -40,7 +40,7 @@ python -m shared.eval.cli ab shared/eval/example_engineer.yaml \
 
 # Smoke — single random case, no DB writes; CI-friendly.
 python -m shared.eval.cli smoke shared/eval/example_engineer.yaml \
-    --prompt lib/role-prompts/engineer.md --model claude-haiku-4-5
+    --prompt shared/charters/engineer.md --model claude-haiku-4-5
 
 # Status / registry
 python -m shared.eval.cli status engineer-core-v1
@@ -104,7 +104,7 @@ from starving real projects.
 - name: spine eval regression
   run: |
     python -m shared.eval.cli regression shared/eval/example_engineer.yaml \
-      --prompt lib/role-prompts/engineer.md --model claude-opus-4-7 \
+      --prompt shared/charters/engineer.md --model claude-opus-4-7 \
       --format junit > eval-results.xml
 - uses: mikepenz/action-junit-report@v4
   if: always()

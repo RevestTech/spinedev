@@ -1,0 +1,497 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Tech — Spine Recording Layer</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --bg-card: #1a1d22;
+    --bg-card-hover: #20242a;
+    --border: #2a2f36;
+    --border-strong: #3a4048;
+    --fg: #e6e8eb;
+    --fg-dim: #9aa3ad;
+    --fg-very-dim: #6b7380;
+    --accent: #7dd3fc;
+    --accent-dim: #38bdf8;
+    --good: #4ade80;
+    --bad: #f87171;
+    --warn: #fbbf24;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--sans);
+    font-size: 14px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code {
+    font-family: var(--mono);
+    background: var(--bg-card);
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 0.9em;
+    color: var(--accent);
+  }
+
+  .container {
+    max-width: 980px;
+    margin: 0 auto;
+    padding: 24px;
+  }
+
+  .page-nav {
+    display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 18px;
+  }
+  .page-nav a {
+    display: inline-block;
+    padding: 5px 14px;
+    border-radius: 999px;
+    background: var(--bg-card);
+    color: var(--fg-dim);
+    border: 1px solid var(--border-strong);
+    font-size: 12px;
+    text-decoration: none;
+    transition: background 120ms, color 120ms, border-color 120ms;
+  }
+  .page-nav a:hover {
+    background: var(--bg-card-hover);
+    color: var(--fg);
+    border-color: var(--accent);
+    text-decoration: none;
+  }
+  .page-nav a.active {
+    background: rgba(125, 211, 252, 0.14);
+    color: var(--accent);
+    border-color: rgba(125, 211, 252, 0.55);
+  }
+
+  header.hero {
+    padding: 8px 0 24px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 28px;
+  }
+  header.hero h1 {
+    margin: 0 0 8px;
+    font-size: 28px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  header.hero p {
+    margin: 0;
+    color: var(--fg-dim);
+    font-size: 15px;
+    max-width: 70ch;
+  }
+
+  h2 {
+    margin: 36px 0 12px;
+    font-size: 18px;
+    font-weight: 600;
+    letter-spacing: -0.005em;
+  }
+  h3 {
+    margin: 22px 0 6px;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--accent);
+  }
+  p { margin: 0 0 12px; max-width: 78ch; }
+  ul { padding-left: 22px; margin: 0 0 14px; max-width: 78ch; }
+  li { margin-bottom: 6px; }
+
+  /* Diagram container */
+  .diagram-wrap {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 18px;
+    margin: 12px 0 24px;
+    overflow-x: auto;
+  }
+  .diagram-wrap svg {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    margin: 0 auto;
+  }
+
+  /* Numbered step list */
+  .steps {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    counter-reset: step;
+  }
+  .steps li {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px 14px 56px;
+    margin-bottom: 12px;
+    position: relative;
+    counter-increment: step;
+  }
+  .steps li::before {
+    content: counter(step);
+    position: absolute;
+    left: 14px;
+    top: 14px;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: rgba(125, 211, 252, 0.14);
+    color: var(--accent);
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid rgba(125, 211, 252, 0.4);
+  }
+  .steps h3 {
+    margin: 0 0 6px;
+    color: var(--fg);
+    font-size: 14px;
+  }
+  .steps p {
+    margin: 0;
+    color: var(--fg-dim);
+    font-size: 13px;
+    line-height: 1.55;
+  }
+
+  /* Tech-choices table */
+  table.tech {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    font-size: 13px;
+    margin: 6px 0 20px;
+  }
+  table.tech th, table.tech td {
+    padding: 10px 14px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  table.tech th {
+    color: var(--fg-dim);
+    font-weight: 500;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    background: rgba(0,0,0,0.15);
+  }
+  table.tech tr:last-child td { border-bottom: 0; }
+  table.tech td.layer { color: var(--fg); font-weight: 500; width: 140px; }
+  table.tech td.tool { color: var(--accent); font-family: var(--mono); width: 200px; }
+  table.tech td.why { color: var(--fg-dim); }
+
+  .callout {
+    background: var(--bg-card);
+    border: 1px solid var(--border-strong);
+    border-left: 3px solid var(--accent);
+    padding: 14px 18px;
+    border-radius: 6px;
+    margin: 12px 0 20px;
+    color: var(--fg-dim);
+    font-size: 13px;
+    max-width: 78ch;
+  }
+  .callout strong { color: var(--fg); }
+
+  .paths {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 18px 14px 36px;
+    margin: 8px 0 24px;
+  }
+  .paths li { color: var(--fg-dim); font-size: 13px; }
+  .paths li strong { color: var(--fg); font-weight: 500; }
+
+  footer {
+    margin-top: 48px;
+    padding-top: 18px;
+    border-top: 1px solid var(--border);
+    color: var(--fg-very-dim);
+    font-size: 12px;
+    font-family: var(--mono);
+  }
+</style>
+</head>
+<body>
+  <div class="container">
+    <nav class="page-nav" aria-label="Page navigation">
+      <a href="./">Dashboard</a>
+      <a href="./machines.html">Machines</a>
+      <a href="./versions.html">Versions</a>
+      <a href="./about.html">About</a>
+      <a href="./tech.html" class="active" aria-current="page">Tech</a>
+    </nav>
+
+    <header class="hero">
+      <h1>How it works</h1>
+      <p>The data path from agent invocation to dashboard pixel, end-to-end.</p>
+    </header>
+
+    <h2>Data flow</h2>
+    <div class="diagram-wrap" role="img" aria-label="Data flow from agent CLI through bash daemon, outbox JSONL, Python watcher, Postgres, views, and dashboard.">
+      <svg viewBox="0 0 940 320" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">
+        <defs>
+          <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#7dd3fc" />
+          </marker>
+          <marker id="arrow-dim" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#6b7380" />
+          </marker>
+        </defs>
+
+        <style>
+          .node-bg { fill: #1a1d22; stroke: #7dd3fc; stroke-width: 1.2; }
+          .node-bg-side { fill: #1a1d22; stroke: #3a4048; stroke-width: 1; }
+          .node-title { fill: #e6e8eb; font-family: -apple-system, system-ui, sans-serif; font-size: 12px; font-weight: 600; }
+          .node-sub { fill: #9aa3ad; font-family: ui-monospace, monospace; font-size: 10px; }
+          .edge { stroke: #7dd3fc; stroke-width: 1.4; fill: none; }
+          .edge-dim { stroke: #6b7380; stroke-width: 1.1; fill: none; stroke-dasharray: 4 4; }
+          .lane-label { fill: #6b7380; font-family: ui-monospace, monospace; font-size: 10px; }
+        </style>
+
+        <!-- Main horizontal flow -->
+        <!-- Agent CLI -->
+        <rect class="node-bg" x="10" y="120" width="118" height="58" rx="6" />
+        <text class="node-title" x="69" y="146" text-anchor="middle">Agent CLI</text>
+        <text class="node-sub"   x="69" y="163" text-anchor="middle">claude / cursor</text>
+
+        <!-- Bash Daemon -->
+        <rect class="node-bg" x="148" y="120" width="128" height="58" rx="6" />
+        <text class="node-title" x="212" y="146" text-anchor="middle">Bash Daemon</text>
+        <text class="node-sub"   x="212" y="163" text-anchor="middle">team-agent-daemon</text>
+
+        <!-- outbox.jsonl -->
+        <rect class="node-bg" x="296" y="120" width="118" height="58" rx="6" />
+        <text class="node-title" x="355" y="146" text-anchor="middle">outbox.jsonl</text>
+        <text class="node-sub"   x="355" y="163" text-anchor="middle">append-only</text>
+
+        <!-- Python Watcher -->
+        <rect class="node-bg" x="434" y="120" width="138" height="58" rx="6" />
+        <text class="node-title" x="503" y="146" text-anchor="middle">Python Watcher</text>
+        <text class="node-sub"   x="503" y="163" text-anchor="middle">spine_watcher.py</text>
+
+        <!-- Postgres -->
+        <rect class="node-bg" x="592" y="120" width="100" height="58" rx="6" />
+        <text class="node-title" x="642" y="146" text-anchor="middle">Postgres</text>
+        <text class="node-sub"   x="642" y="163" text-anchor="middle">port 33000</text>
+
+        <!-- Views -->
+        <rect class="node-bg" x="712" y="120" width="88" height="58" rx="6" />
+        <text class="node-title" x="756" y="146" text-anchor="middle">Views</text>
+        <text class="node-sub"   x="756" y="163" text-anchor="middle">6 of them</text>
+
+        <!-- Dashboard -->
+        <rect class="node-bg" x="820" y="120" width="110" height="58" rx="6" />
+        <text class="node-title" x="875" y="146" text-anchor="middle">Dashboard</text>
+        <text class="node-sub"   x="875" y="163" text-anchor="middle">serve.py</text>
+
+        <!-- Arrows between main nodes -->
+        <line class="edge" x1="128" y1="149" x2="148" y2="149" marker-end="url(#arrow)" />
+        <line class="edge" x1="276" y1="149" x2="296" y2="149" marker-end="url(#arrow)" />
+        <line class="edge" x1="414" y1="149" x2="434" y2="149" marker-end="url(#arrow)" />
+        <line class="edge" x1="572" y1="149" x2="592" y2="149" marker-end="url(#arrow)" />
+        <line class="edge" x1="692" y1="149" x2="712" y2="149" marker-end="url(#arrow)" />
+        <line class="edge" x1="800" y1="149" x2="820" y2="149" marker-end="url(#arrow)" />
+
+        <!-- Side branch: Bash Daemon -> costs.csv -->
+        <line class="edge-dim" x1="212" y1="178" x2="212" y2="232" marker-end="url(#arrow-dim)" />
+        <rect class="node-bg-side" x="148" y="232" width="128" height="48" rx="6" />
+        <text class="node-title" x="212" y="254" text-anchor="middle" style="fill:#9aa3ad;">costs.csv</text>
+        <text class="node-sub"   x="212" y="270" text-anchor="middle">legacy source</text>
+
+        <!-- Side branch: Watcher -> cursor file -->
+        <line class="edge-dim" x1="503" y1="178" x2="503" y2="232" marker-end="url(#arrow-dim)" />
+        <rect class="node-bg-side" x="434" y="232" width="138" height="48" rx="6" />
+        <text class="node-title" x="503" y="254" text-anchor="middle" style="fill:#9aa3ad;">cursor file</text>
+        <text class="node-sub"   x="503" y="270" text-anchor="middle">byte offset</text>
+
+        <!-- Top lane label -->
+        <text class="lane-label" x="10" y="100">main path</text>
+        <text class="lane-label" x="10" y="218">side outputs</text>
+      </svg>
+    </div>
+
+    <h2>Step by step</h2>
+    <ol class="steps">
+      <li>
+        <h3>Agent CLI (Claude Code / cursor-agent / aider)</h3>
+        <p>
+          The actual AI model invocation. Reads a prompt via stdin, writes its
+          response to stdout (and back to the directive file). Wall clock, exit
+          code, and — for Claude Code — a JSON envelope with token usage are
+          captured by the daemon that launched it.
+        </p>
+      </li>
+      <li>
+        <h3>Bash daemon (<code>scripts/team-agent-daemon.sh</code>)</h3>
+        <p>
+          One daemon per role per slot. It polls a markdown file every 8
+          seconds. When it picks up a fresh <code># Directive</code>, it writes
+          the prompt to a temp file (so the content never leaks via
+          <code>argv</code>), invokes the agent through
+          <code>executor.sh</code>, and records the outcome.
+        </p>
+      </li>
+      <li>
+        <h3>Cost CSV + outbox JSONL (<code>teams/&lt;role&gt;/state/</code>)</h3>
+        <p>
+          The daemon writes two things on every invocation:
+          <code>costs.csv</code> (the original source of truth, 9 columns
+          including outcome) and <code>outbox.jsonl</code> (the new data path —
+          one JSON line per cost row plus one per lifecycle event). The outbox
+          uses <code>flock</code> on Linux and atomic <code>mkdir</code> on
+          macOS to handle concurrent appends safely.
+        </p>
+      </li>
+      <li>
+        <h3>Python watcher (<code>db/watcher/spine_watcher.py</code>)</h3>
+        <p>
+          Runs in Docker via <code>make watch</code>. Mounts the team workspaces
+          read-only. Every 5 seconds, opens each role's outbox, seeks to the
+          byte offset stored in <code>spine_cursors/&lt;role&gt;.cursor</code>,
+          and inserts any new lines into Postgres in single-row transactions.
+          The cursor only advances after a successful insert, so a crash never
+          loses data and a restart never replays it.
+        </p>
+      </li>
+      <li>
+        <h3>Postgres 16 (<code>db/docker-compose.yml</code>)</h3>
+        <p>
+          Bound to host port <code>33000</code>, schema in <code>public</code>.
+          Flyway 10 manages migrations. Deterministic UUIDs (uuid5 of a stable
+          namespace) so multiple watchers writing the same logical row converge
+          instead of conflict. ENUM types for status columns, JSONB for
+          payloads, TIMESTAMPTZ for every timestamp, and partial unique indexes
+          for invariants like "one active assignment per worker".
+        </p>
+      </li>
+      <li>
+        <h3>Views (<code>V4__views.sql</code>, <code>V5__invocation_durations.sql</code>)</h3>
+        <p>
+          Six views aggregate the raw rows into what the UI wants:
+          <code>v_cost_by_role_day</code>, <code>v_cost_by_model</code>,
+          <code>v_active_workers</code>, <code>v_recent_events</code>,
+          <code>v_cost_by_outcome</code>, and <code>v_invocation_durations</code>
+          (with a LATERAL join that pairs every
+          <code>InvocationStarted</code> event with its earliest terminal event
+          for accurate duration math).
+        </p>
+      </li>
+      <li>
+        <h3>Dashboard (<code>db/dashboard/serve.py</code> + <code>index.html</code>)</h3>
+        <p>
+          A stdlib Python HTTP server with one dynamic endpoint
+          (<code>/pg-snapshot.json</code>) that runs every view and returns the
+          combined JSON. A 2-second in-memory cache stops multiple browser tabs
+          from hammering Postgres. The HTML polls every 5 seconds, reconciles
+          changed rows with smooth animations, and persists filter state to
+          localStorage and the URL.
+        </p>
+      </li>
+    </ol>
+
+    <h2>Technology choices</h2>
+    <table class="tech">
+      <thead>
+        <tr><th>Layer</th><th>Tool</th><th>Why</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="layer">Database</td>
+          <td class="tool">Postgres 16</td>
+          <td class="why">Real ACID transactions, JSONB, partial indexes, ENUM types, LATERAL joins. SQLite was the v1 draft; Postgres wins for queries and multi-host.</td>
+        </tr>
+        <tr>
+          <td class="layer">Migrations</td>
+          <td class="tool">Flyway 10 OSS</td>
+          <td class="why">Versioned SQL files (<code>V1__...sql</code>) and repeatable migrations (<code>R__...sql</code>). Plain SQL, no DSL.</td>
+        </tr>
+        <tr>
+          <td class="layer">Container runtime</td>
+          <td class="tool">Docker Compose</td>
+          <td class="why">Postgres, Flyway, and the Watcher all in one declarative file. Team workspaces bind-mounted read-only.</td>
+        </tr>
+        <tr>
+          <td class="layer">Watcher</td>
+          <td class="tool">Python 3.12 + psycopg 3</td>
+          <td class="why">Single-file script. psycopg 3 supports server-side prepared statements and is the maintained client.</td>
+        </tr>
+        <tr>
+          <td class="layer">Outbox transport</td>
+          <td class="tool">Append-only JSONL</td>
+          <td class="why">Trivial to read, trivial to debug. No serialization library, no schema registry.</td>
+        </tr>
+        <tr>
+          <td class="layer">Cursor storage</td>
+          <td class="tool">Per-role byte offset</td>
+          <td class="why">Resumable, idempotent on replay. A single integer per role per host.</td>
+        </tr>
+        <tr>
+          <td class="layer">File locking</td>
+          <td class="tool">flock (Linux) / mkdir (macOS)</td>
+          <td class="why">Both atomic, both POSIX. Belt-and-braces for concurrent daemon appends.</td>
+        </tr>
+        <tr>
+          <td class="layer">Dashboard backend</td>
+          <td class="tool">stdlib http.server</td>
+          <td class="why">Zero dependencies beyond psycopg. ThreadingHTTPServer for parallel requests.</td>
+        </tr>
+        <tr>
+          <td class="layer">Dashboard frontend</td>
+          <td class="tool">Vanilla JS + Chart.js v4</td>
+          <td class="why">One file, one CDN load, no build step. Easy to read, easy to fork.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>Local vs central-server mode</h2>
+    <p class="callout">
+      Today the watcher and Postgres run on the same laptop as the daemons.
+      Nothing in the schema requires that — the V3 migration added
+      <code>host_id</code> and <code>instance_id</code> columns specifically so
+      multiple machines can write to the same Postgres without colliding on the
+      partial unique index. Moving to central mode is
+      <strong>"change DATABASE_URL, run the daemons on more boxes"</strong>.
+      The schema is the same.
+    </p>
+
+    <h2>Where to look in the codebase</h2>
+    <ul class="paths">
+      <li><strong>Bash daemon:</strong> <code>lib/team-agent-daemon.sh</code></li>
+      <li><strong>Outbox helper:</strong> <code>lib/db-outbox.sh</code></li>
+      <li><strong>Usage parsers:</strong> <code>lib/usage-parsers.sh</code></li>
+      <li><strong>Python watcher:</strong> <code>db/watcher/spine_watcher.py</code></li>
+      <li><strong>Schema:</strong> <code>db/flyway/sql/V*.sql</code></li>
+      <li><strong>Views:</strong> <code>db/flyway/sql/V4__views.sql</code>, <code>V5__invocation_durations.sql</code></li>
+      <li><strong>Dashboard server:</strong> <code>db/dashboard/serve.py</code></li>
+      <li><strong>Dashboard UI:</strong> <code>db/dashboard/index.html</code></li>
+    </ul>
+
+    <footer>
+      Spine recording layer — see About page for the high-level story.
+    </footer>
+  </div>
+</body>
+</html>

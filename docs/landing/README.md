@@ -64,7 +64,7 @@ The move indicator (`Move 0 / 5` → `Move 5 / 5`) tracks the active turn for si
 - `docs/naming-decision.md` — `STORY-5.1.3` decision doc; landing page uses "Spine" pending the recorded decision there.
 - `docs/research/COMPETITIVE_LANDSCAPE.md` — full competitive analysis the moat copy draws from.
 - `docs/PRD.md` REQ-INIT-1 FR-2 — the 5-move protocol the demo dramatizes.
-- `lib/role-prompts/product.md` — actual role prompt implementing those 5 moves.
+- `shared/charters/product.md` — charter implementing the 5-move intake protocol.
 - `plan/templates/intake/web-app.yaml` — intake template the demo references in move 4.
 
 ## Out of scope (for this page; do not add without a story)

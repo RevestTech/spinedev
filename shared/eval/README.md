@@ -45,7 +45,7 @@ pass/fail + score deltas vs the recorded baseline.
 spine eval validate <dataset>                          # static check schema
 spine eval run <dataset>                               # run against current baseline
 spine eval regression <dataset> \                      # run candidate; diff vs baseline
-  --candidate-prompt lib/role-prompts/engineer.md
+  --candidate-prompt shared/charters/engineer.md
 spine eval ab <role> --candidate-prompt <path> \       # STORY-3.4.4
   --traffic-fraction 0.1
 ```
@@ -71,7 +71,7 @@ behavioral regression** with real LLM calls — catches "did the prompt get wors
 The two complement each other and should coexist. Spine's harness deliberately
 lifts the *pattern* (per-role test directories, baseline diffs, CI workflow at
 `.github/workflows/prompt-regression.yml`) but generalizes from verify-specific
-ISO agents to any role in `lib/role-prompts/`.
+ISO agents to any role in `shared/charters/`.
 
 ## Cross-references
 

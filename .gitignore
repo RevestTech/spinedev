@@ -6,6 +6,14 @@
 # Local Spine install onto this repo (regenerate with: bash install.sh .)
 .planning/
 
+# v3 dogfood workspaces + scratch (#34) — never commit
+.spine/
+
+# Local agent IDE config (not platform code)
+.agents/
+.claude/
+skills-lock.json
+
 # Copies of lib/*.sh — created by install.sh into scripts/
 scripts/
 # SPA codegen scripts are tracked (per Wave 3 part 2 Squad SPA3)

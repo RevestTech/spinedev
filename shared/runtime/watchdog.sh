@@ -1,14 +1,10 @@
 #!/usr/bin/env bash
-# watchdog.sh — supervises every manager daemon in SPINE_TEAM_ROLES (from roles.sh).
+# watchdog.sh — v1 file-bus manager supervisor (legacy).
 #
-# Reads each manager's state/heartbeat file. If mtime > HEARTBEAT_TIMEOUT_S
-# old, presumes daemon dead and re-launches it. Workers are not directly
-# supervised — managers re-spawn workers as needed via the file bus.
-#
-# Idempotent: starts once on `team up`. Safe to kill and restart.
-#
-# Logs to .planning/orchestration/agent-handoff/watchdog.log
-# State at .planning/orchestration/agent-handoff/watchdog.pid
+# v3 Hub uses container lifecycle + shared/runtime/heartbeat.sh instead.
+# This script no-ops when `.planning/orchestration/` is absent (normal on
+# a platform-repo clone). Install the v1 template into a consumer project
+# to activate — see docs/_archived/v1-PROTOCOL.md.
 
 set -uo pipefail
 
@@ -18,26 +14,27 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$REPO_ROOT" || exit 1
 
-# Wave 6 Stream K: lib/ retired. roles.sh is now resolved from a
-# co-located copy (if vendored) or from the installer-produced scripts/
-# directory. The lib/ fallback was removed when lib/roles.sh was deleted.
-# Future Wave 4 federation rebuild will replace run-standalone-watcher.sh
-# with a federation client (see WATCHER_LAUNCHER below for the surviving
-# transitional fallback).
+TEAM_BASE=".planning/orchestration/agent-handoff/teams"
+HANDOFF_BASE=".planning/orchestration/agent-handoff"
+if [[ ! -d "$HANDOFF_BASE" ]]; then
+  echo "watchdog: v1 file-bus not present (.planning/ absent) — idle (v3 uses Hub)" >&2
+  exit 0
+fi
+
+# Wave 6 Stream K: lib/ retired. roles.sh is resolved from scripts/ in
+# consumer installs only.
 if [[ -f "$SCRIPT_DIR/roles.sh" ]]; then
   ROLES_SH="$SCRIPT_DIR/roles.sh"
 elif [[ -f "$REPO_ROOT/scripts/roles.sh" ]]; then
   ROLES_SH="$REPO_ROOT/scripts/roles.sh"
 else
-  echo "✗ roles.sh missing — re-run SpineDevelopment installer." >&2
-  exit 1
+  echo "✗ roles.sh missing — v1 file-bus not installed (see docs/_archived/v1-PROTOCOL.md)." >&2
+  exit 0
 fi
 # shellcheck source=/dev/null
 source "$ROLES_SH"
 ROLES=("${SPINE_TEAM_ROLES[@]}")
 
-TEAM_BASE=".planning/orchestration/agent-handoff/teams"
-HANDOFF_BASE=".planning/orchestration/agent-handoff"
 DAEMON_PATH="scripts/team-agent-daemon.sh"
 WATCHDOG_LOG="$HANDOFF_BASE/watchdog.log"
 WATCHDOG_PID="$HANDOFF_BASE/watchdog.pid"

@@ -104,7 +104,7 @@ New schema `spine_eval`:
 
 GitHub Actions workflow at `.github/workflows/prompt-regression.yml` adopts
 TRON's pattern (`verify/.github/workflows/prompt-regression.yml`) but
-generalizes the trigger: any PR touching `lib/role-prompts/<role>.md` runs
+generalizes the trigger: any PR touching `shared/charters/<role>.md` runs
 the eval dataset for that role; PR fails on regression. The same workflow
 runs nightly across all role datasets so model-side drift is caught.
 

@@ -1,6 +1,7 @@
 # Spine — Product Requirements (PRD)
 
-> Canonical product requirements document for **"AI software company in a box"** (per [`V3_DESIGN_DECISIONS.md`](V3_DESIGN_DECISIONS.md) **#1**).
+> **Read first:** [`SPINE_MASTER.md`](SPINE_MASTER.md) for golden path and gap matrix.
+> This file is the **REQ-level spec**. Decisions: [`V3_DESIGN_DECISIONS.md`](V3_DESIGN_DECISIONS.md).
 >
 > Each REQ has a stable section anchor (`#req-init-N`). Cross-references from `BACKLOG.md`, `ARCHITECTURE.md`, and elsewhere link directly to those anchors.
 >

@@ -1,0 +1,428 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Versions — Spine Recording Layer</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --bg-card: #1a1d22;
+    --bg-card-hover: #20242a;
+    --border: #2a2f36;
+    --border-strong: #3a4048;
+    --fg: #e6e8eb;
+    --fg-dim: #9aa3ad;
+    --fg-very-dim: #6b7380;
+    --accent: #7dd3fc;
+    --accent-dim: #38bdf8;
+    --good: #4ade80;
+    --bad: #f87171;
+    --warn: #fbbf24;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg); color: var(--fg);
+    font-family: var(--sans);
+    font-size: 14px; line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code {
+    font-family: var(--mono);
+    background: var(--bg-card);
+    padding: 1px 6px; border-radius: 3px;
+    font-size: 0.9em; color: var(--accent);
+  }
+  .container { max-width: 1280px; margin: 0 auto; padding: 24px; }
+
+  .page-nav { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 18px; }
+  .page-nav a {
+    display: inline-block; padding: 5px 14px; border-radius: 999px;
+    background: var(--bg-card); color: var(--fg-dim);
+    border: 1px solid var(--border-strong);
+    font-size: 12px; text-decoration: none;
+    transition: background 120ms, color 120ms, border-color 120ms;
+  }
+  .page-nav a:hover {
+    background: var(--bg-card-hover); color: var(--fg);
+    border-color: var(--accent); text-decoration: none;
+  }
+  .page-nav a.active {
+    background: rgba(125, 211, 252, 0.14);
+    color: var(--accent);
+    border-color: rgba(125, 211, 252, 0.55);
+  }
+
+  header.hero {
+    padding: 8px 0 20px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 24px;
+  }
+  header.hero h1 {
+    margin: 0 0 6px; font-size: 24px; font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  header.hero p {
+    margin: 0; color: var(--fg-dim); font-size: 14px;
+    max-width: 80ch;
+  }
+
+  section { margin-bottom: 28px; }
+  section h2 {
+    margin: 0 0 12px; font-size: 15px; font-weight: 600;
+    color: var(--fg);
+  }
+  section h2 .count {
+    color: var(--fg-very-dim); font-weight: 400;
+    font-size: 12px; margin-left: 8px; font-family: var(--mono);
+  }
+
+  .card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px; padding: 16px;
+  }
+
+  .table-wrap {
+    overflow-x: auto;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: var(--mono);
+    font-size: 12px;
+  }
+  th, td {
+    text-align: left;
+    padding: 7px 10px;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+    vertical-align: top;
+  }
+  th {
+    color: var(--fg-dim);
+    font-weight: 500;
+    text-transform: uppercase;
+    font-size: 10px;
+    letter-spacing: 0.05em;
+    border-bottom-color: var(--border-strong);
+    background: rgba(0,0,0,0.15);
+  }
+  tbody tr:hover { background: var(--bg-card-hover); }
+  td.dim { color: var(--fg-dim); }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+  .pill {
+    display: inline-block;
+    padding: 1px 7px;
+    border-radius: 10px;
+    font-size: 10px;
+    font-family: var(--mono);
+    border: 1px solid var(--border-strong);
+    color: var(--fg-dim);
+  }
+  .pill.drift-current {
+    color: var(--good);
+    border-color: rgba(74, 222, 128, 0.45);
+    background: rgba(74, 222, 128, 0.10);
+  }
+  .pill.drift-drifted {
+    color: var(--warn);
+    border-color: rgba(251, 191, 36, 0.45);
+    background: rgba(251, 191, 36, 0.10);
+  }
+  .pill.drift-unversioned {
+    color: var(--fg-dim);
+    border-color: var(--border-strong);
+    background: rgba(154, 163, 173, 0.10);
+  }
+  .pill.drift-unknown_channel {
+    color: var(--bad);
+    border-color: rgba(248, 113, 113, 0.45);
+    background: rgba(248, 113, 113, 0.10);
+  }
+  .pill.channel-stable {
+    color: var(--accent);
+    border-color: rgba(125, 211, 252, 0.45);
+    background: rgba(125, 211, 252, 0.08);
+  }
+  .pill.channel-beta {
+    color: var(--warn);
+    border-color: rgba(251, 191, 36, 0.45);
+    background: rgba(251, 191, 36, 0.08);
+  }
+  .pill.channel-canary {
+    color: #fb923c;
+    border-color: rgba(251, 146, 60, 0.50);
+    background: rgba(251, 146, 60, 0.08);
+  }
+
+  .channel-block { margin-bottom: 18px; }
+  .channel-block .channel-header {
+    display: flex; align-items: center; gap: 10px;
+    margin-bottom: 8px;
+  }
+  .channel-block .channel-header h3 {
+    margin: 0; font-size: 13px; font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--accent);
+  }
+  .channel-block .head {
+    font-family: var(--mono);
+    color: var(--fg-dim);
+    font-size: 11px;
+  }
+  .channel-block .head .sha {
+    color: var(--fg);
+  }
+
+  .empty {
+    color: var(--fg-very-dim);
+    padding: 24px; text-align: center;
+    font-style: italic;
+  }
+
+  .kpi-strip {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px; margin-bottom: 24px;
+  }
+  @media (max-width: 560px)  { .kpi-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  .kpi {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px; padding: 14px 16px;
+  }
+  .kpi .label {
+    font-size: 11px; color: var(--fg-dim);
+    text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px;
+  }
+  .kpi .value {
+    font-family: var(--mono); font-size: 22px;
+    color: var(--accent); font-weight: 500;
+  }
+
+  .banner {
+    background: var(--bg-card);
+    border: 1px solid var(--border-strong);
+    border-left: 3px solid var(--accent);
+    padding: 18px 20px; border-radius: 6px;
+    margin-bottom: 24px; color: var(--fg-dim);
+  }
+  .banner h3 { margin: 0 0 6px; color: var(--fg); font-size: 14px; font-weight: 600; }
+  .banner code {
+    background: rgba(125, 211, 252, 0.1); color: var(--accent);
+  }
+</style>
+</head>
+<body>
+  <div class="container">
+    <nav class="page-nav" aria-label="Page navigation">
+      <a href="./">Dashboard</a>
+      <a href="./machines.html">Machines</a>
+      <a href="./versions.html" class="active" aria-current="page">Versions</a>
+      <a href="./about.html">About</a>
+      <a href="./tech.html">Tech</a>
+    </nav>
+
+    <header class="hero">
+      <h1>Versions</h1>
+      <p>Spine Hub Pillar 2 (code distribution). An admin promotes commits of the SpineDevelopment template to a release channel. Fleet members' updater daemons fast-forward to whatever's pinned. This page shows release history per channel and which instances are running which sha.</p>
+    </header>
+
+    <div id="content"><div class="empty">Loading...</div></div>
+  </div>
+
+<script>
+"use strict";
+
+function escapeHtml(s) {
+  if (s == null) return "";
+  return String(s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+function shortTs(iso) {
+  if (!iso) return "-";
+  const m = String(iso).match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2})/);
+  if (!m) return iso;
+  return m[1] + " " + m[2];
+}
+function relTime(iso) {
+  if (!iso) return "-";
+  const t = Date.parse(iso);
+  if (isNaN(t)) return "-";
+  const s = Math.max(0, Math.floor((Date.now() - t) / 1000));
+  if (s < 60)    return s + "s ago";
+  if (s < 3600)  return Math.floor(s / 60) + "m ago";
+  if (s < 86400) return Math.floor(s / 3600) + "h ago";
+  return Math.floor(s / 86400) + "d ago";
+}
+function driftPill(status) {
+  const s = (status || "").toLowerCase();
+  const cls = "pill drift-" + s.replace(/[^a-z_]/g, "");
+  return '<span class="' + cls + '">' + escapeHtml(status || "?") + '</span>';
+}
+function channelPill(ch) {
+  const s = (ch || "").toLowerCase();
+  const cls = "pill channel-" + s.replace(/[^a-z]/g, "");
+  return '<span class="' + cls + '">' + escapeHtml(ch || "?") + '</span>';
+}
+
+async function fetchSnapshot() {
+  const r = await fetch("./pg-snapshot.json?t=" + Date.now(), { cache: "no-store" });
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  return await r.json();
+}
+
+function renderKpis(snap) {
+  const k = snap.drift_kpis || {};
+  return `
+    <div class="kpi-strip">
+      <div class="kpi"><div class="label">Current</div><div class="value">${k.current || 0}</div></div>
+      <div class="kpi"><div class="label">Drifted</div><div class="value">${k.drifted || 0}</div></div>
+      <div class="kpi"><div class="label">Unversioned</div><div class="value">${k.unversioned || 0}</div></div>
+      <div class="kpi"><div class="label">Unknown channel</div><div class="value">${k.unknown_channel || 0}</div></div>
+    </div>
+  `;
+}
+
+function renderChannel(channel, releases, head) {
+  const headHtml = head
+    ? `<span class="head">head: <span class="sha">${escapeHtml(head.short_sha || "")}</span> · ${escapeHtml(head.ref || "")} · promoted ${escapeHtml(relTime(head.promoted_at))} by ${escapeHtml(head.promoted_by || "")}</span>`
+    : `<span class="head">no release promoted yet</span>`;
+  let body;
+  if (!releases || releases.length === 0) {
+    body = `<div class="empty">No releases on this channel.</div>`;
+  } else {
+    const rows = releases.map(r => {
+      const archived = r.archived_at
+        ? '<span class="pill" style="opacity:0.7">archived</span>'
+        : (head && head.commit_sha === r.commit_sha
+            ? '<span class="pill drift-current">head</span>'
+            : '<span class="pill">historical</span>');
+      return `
+        <tr>
+          <td>${escapeHtml(r.short_sha || "")}</td>
+          <td class="dim">${escapeHtml(r.ref || "")}</td>
+          <td>${escapeHtml(r.promoted_by || "")}</td>
+          <td class="dim">${shortTs(r.promoted_at)}</td>
+          <td>${archived}</td>
+        </tr>
+      `;
+    }).join("");
+    body = `
+      <div class="table-wrap">
+        <table>
+          <thead><tr>
+            <th>Short SHA</th><th>Ref</th><th>Promoted by</th><th>Promoted at</th><th>State</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    `;
+  }
+  return `
+    <div class="channel-block">
+      <div class="channel-header">
+        ${channelPill(channel)}
+        ${headHtml}
+      </div>
+      ${body}
+    </div>
+  `;
+}
+
+function renderDrift(drift) {
+  if (!drift || drift.length === 0) {
+    return `<div class="empty">No active instances reporting yet.</div>`;
+  }
+  const rows = drift.map(d => `
+    <tr>
+      <td class="dim">${escapeHtml(d.host_id || "")}</td>
+      <td>${escapeHtml(d.project_slug || "(unknown)")}</td>
+      <td>${channelPill(d.channel)}</td>
+      <td>${escapeHtml(d.instance_short || "")}</td>
+      <td>${escapeHtml(d.head_short || "-")}</td>
+      <td>${driftPill(d.drift_status)}</td>
+      <td class="dim">${shortTs(d.last_seen_at)}</td>
+    </tr>
+  `).join("");
+  return `
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th>Host</th><th>Project</th><th>Channel</th>
+          <th>Instance SHA</th><th>Head SHA</th><th>Status</th><th>Last seen</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function render(snap) {
+  const root = document.getElementById("content");
+  const releasesByChannel = snap.releases_by_channel || {stable: [], beta: [], canary: []};
+  const heads = snap.release_heads || {};
+  const totalReleases =
+    (releasesByChannel.stable || []).length +
+    (releasesByChannel.beta || []).length +
+    (releasesByChannel.canary || []).length;
+
+  const noV12 = totalReleases === 0 && !heads.stable && !heads.beta && !heads.canary;
+  let banner = "";
+  if (noV12) {
+    banner = `
+      <div class="banner">
+        <h3>No releases promoted yet</h3>
+        <p>Spine Hub Pillar 2 lets an admin promote a specific commit of the SpineDevelopment template to a release channel. Fleet members' <code>updater.sh</code> daemons then fast-forward to that commit on every tick.</p>
+        <p>Promote one via the dashboard backend:</p>
+        <p><code>curl -X POST http://127.0.0.1:33002/api/releases -d '{"channel":"stable","commit_sha":"&lt;40-hex&gt;","ref":"main","promoted_by":"you"}' -H 'Content-Type: application/json'</code></p>
+      </div>
+    `;
+  }
+
+  const channels = ["stable", "beta", "canary"];
+  const channelHtml = channels
+    .map(ch => renderChannel(ch, releasesByChannel[ch] || [], heads[ch]))
+    .join("");
+
+  root.innerHTML = `
+    ${banner}
+    ${renderKpis(snap)}
+    <section>
+      <h2>Release channels<span class="count">${totalReleases}</span></h2>
+      ${channelHtml}
+    </section>
+    <section>
+      <h2>Version drift across the fleet<span class="count">${(snap.instance_drift || []).length}</span></h2>
+      ${renderDrift(snap.instance_drift || [])}
+    </section>
+  `;
+}
+
+async function tick() {
+  try {
+    const snap = await fetchSnapshot();
+    render(snap);
+  } catch (e) {
+    const root = document.getElementById("content");
+    root.innerHTML = `<div class="empty">Could not load snapshot: ${escapeHtml(String(e.message || e))}</div>`;
+  }
+}
+
+tick();
+setInterval(tick, 5000);
+</script>
+</body>
+</html>

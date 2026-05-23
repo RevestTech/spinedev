@@ -1,0 +1,1274 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Engagement — Spine Recording Database</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --bg-card: #1a1d22;
+    --bg-card-hover: #20242a;
+    --border: #2a2f36;
+    --border-strong: #3a4048;
+    --fg: #e6e8eb;
+    --fg-dim: #9aa3ad;
+    --fg-very-dim: #6b7380;
+    --accent: #7dd3fc;
+    --accent-dim: #38bdf8;
+    --good: #4ade80;
+    --bad: #f87171;
+    --warn: #fbbf24;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--sans);
+    font-size: 14px;
+    line-height: 1.6;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code, pre {
+    font-family: var(--mono);
+    background: var(--bg-card);
+    color: var(--accent);
+    border-radius: 3px;
+  }
+  code { padding: 1px 6px; font-size: 0.9em; }
+  pre {
+    padding: 12px 14px;
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    color: var(--fg);
+    font-size: 12.5px;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+  }
+  .container {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 24px;
+  }
+  .page-nav {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-bottom: 18px;
+    align-items: center;
+  }
+  .page-nav a {
+    display: inline-block;
+    padding: 5px 14px;
+    border-radius: 999px;
+    background: var(--bg-card);
+    color: var(--fg-dim);
+    border: 1px solid var(--border-strong);
+    font-size: 12px;
+    text-decoration: none;
+    transition: background 120ms, color 120ms, border-color 120ms;
+  }
+  .page-nav a:hover {
+    background: var(--bg-card-hover);
+    color: var(--fg);
+    border-color: var(--accent);
+    text-decoration: none;
+  }
+  .page-nav a.active {
+    background: rgba(125, 211, 252, 0.14);
+    color: var(--accent);
+    border-color: rgba(125, 211, 252, 0.55);
+  }
+  .live-indicator {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    font-family: var(--mono);
+    color: var(--fg-dim);
+  }
+  .live-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--good);
+    box-shadow: 0 0 6px rgba(74,222,128,0.6);
+    animation: pulse 2s infinite;
+  }
+  .live-dot.stale { background: var(--warn); box-shadow: 0 0 6px rgba(251,191,36,0.6); }
+  .live-dot.lost  { background: var(--bad);  box-shadow: 0 0 6px rgba(248,113,113,0.6); }
+  @keyframes pulse {
+    0%,100% { opacity: 1; }
+    50%     { opacity: 0.4; }
+  }
+  header.hero {
+    padding: 8px 0 16px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 20px;
+  }
+  header.hero h1 {
+    margin: 0 0 6px;
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  header.hero .sub {
+    color: var(--fg-dim);
+    font-size: 13px;
+    font-family: var(--mono);
+  }
+  .card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin-bottom: 16px;
+  }
+  .card h2 {
+    margin: 0 0 12px;
+    font-size: 13px;
+    font-weight: 600;
+    text-transform: uppercase;
+    color: var(--fg-dim);
+    letter-spacing: 0.04em;
+  }
+  .kv {
+    display: grid;
+    grid-template-columns: 130px 1fr;
+    row-gap: 6px;
+    column-gap: 16px;
+    font-family: var(--mono);
+    font-size: 12px;
+  }
+  .kv .k { color: var(--fg-dim); }
+  .kv .v { color: var(--fg); word-break: break-word; }
+  .pill {
+    display: inline-block;
+    padding: 1px 9px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-family: var(--mono);
+    border: 1px solid var(--border-strong);
+    color: var(--fg-dim);
+  }
+  .pill.eng-intake            { color: var(--accent); border-color: rgba(125,211,252,0.4); background: rgba(125,211,252,0.10); }
+  .pill.eng-hardening         { color: var(--warn);   border-color: rgba(251,191,36,0.45); background: rgba(251,191,36,0.10); }
+  .pill.eng-planning          { color: #a78bfa;       border-color: rgba(167,139,250,0.5); background: rgba(167,139,250,0.10); }
+  .pill.eng-awaiting_approval { color: #fb923c;       border-color: rgba(251,146,60,0.5);  background: rgba(251,146,60,0.10); }
+  .pill.eng-executing         { color: var(--good);   border-color: rgba(74,222,128,0.45); background: rgba(74,222,128,0.10); }
+  .pill.eng-delivered         { color: var(--good);   border-color: rgba(74,222,128,0.65); background: rgba(74,222,128,0.18); }
+  .pill.eng-cancelled         { color: var(--fg-very-dim); border-color: var(--border-strong); background: rgba(154,163,173,0.10); }
+
+  /* Status timeline */
+  .timeline {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 8px;
+    margin-top: 4px;
+  }
+  .timeline .step {
+    border: 1px solid var(--border-strong);
+    background: rgba(255,255,255,0.02);
+    border-radius: 6px;
+    padding: 10px 8px 8px;
+    text-align: center;
+    font-size: 11px;
+    font-family: var(--mono);
+    color: var(--fg-very-dim);
+    position: relative;
+  }
+  .timeline .step.done    { color: var(--fg-dim); border-color: var(--border); background: rgba(125,211,252,0.04); }
+  .timeline .step.current {
+    color: var(--fg);
+    background: rgba(125,211,252,0.12);
+    border-color: var(--accent);
+  }
+  .timeline .step .label {
+    display: block;
+    margin-bottom: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-size: 10.5px;
+  }
+  .timeline .step .promote-btn {
+    background: var(--bg-card);
+    border: 1px solid var(--border-strong);
+    color: var(--accent);
+    border-radius: 4px;
+    font-size: 10.5px;
+    padding: 2px 8px;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .timeline .step .promote-btn:hover {
+    background: var(--bg-card-hover);
+    border-color: var(--accent);
+  }
+  .timeline .step.cancelled-tag {
+    grid-column: span 6;
+    margin-top: 6px;
+    color: var(--bad);
+    border-color: rgba(248,113,113,0.45);
+    background: rgba(248,113,113,0.06);
+  }
+
+  /* Conversation */
+  .thread {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+  .bubble {
+    max-width: 78%;
+    padding: 10px 14px;
+    border-radius: 10px;
+    border: 1px solid var(--border-strong);
+    background: var(--bg-card);
+    font-size: 13px;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+  }
+  .bubble .meta {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--fg-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 6px;
+  }
+  .bubble.left  { align-self: flex-start; }
+  .bubble.right {
+    align-self: flex-end;
+    background: rgba(125,211,252,0.10);
+    border-color: rgba(125,211,252,0.45);
+    color: var(--fg);
+  }
+  .bubble.kind-question { border-color: rgba(251,191,36,0.6);   background: rgba(251,191,36,0.08); }
+  .bubble.kind-answer   { border-color: rgba(74,222,128,0.6);   background: rgba(74,222,128,0.08); }
+  .answer-form {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 10px;
+  }
+  .answer-form textarea {
+    width: 100%;
+    min-height: 92px;
+    background: var(--bg);
+    color: var(--fg);
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    padding: 10px 12px;
+    font-family: var(--mono);
+    font-size: 13px;
+    resize: vertical;
+  }
+  .answer-form textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+  .answer-form button {
+    align-self: flex-end;
+    background: var(--bg-card);
+    color: var(--accent);
+    border: 1px solid var(--accent);
+    border-radius: 6px;
+    padding: 6px 18px;
+    cursor: pointer;
+    font-size: 13px;
+    font-family: inherit;
+  }
+  .answer-form button:hover { background: var(--bg-card-hover); }
+  .answer-form button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .answer-form .err { color: var(--bad); font-size: 12px; min-height: 1em; }
+
+  /* Artifacts panel */
+  .artifact-list { display: grid; gap: 8px; }
+  .artifact-row {
+    display: grid;
+    grid-template-columns: 170px 1fr;
+    gap: 12px;
+    align-items: baseline;
+    padding: 6px 0;
+    border-bottom: 1px dashed var(--border);
+    font-size: 12.5px;
+  }
+  .artifact-row:last-child { border-bottom: none; }
+  .artifact-row .k { color: var(--fg-dim); font-family: var(--mono); font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.03em; }
+  .artifact-row .v { color: var(--fg); font-family: var(--mono); word-break: break-all; }
+  .artifact-row .v.dim { color: var(--fg-very-dim); font-style: italic; }
+
+  /* Pass J: Deliverables (agent-produced artifacts) */
+  .deliverable-list { display: grid; gap: 8px; }
+  .deliverable-card {
+    display: grid;
+    grid-template-columns: 90px 1fr auto;
+    gap: 10px;
+    align-items: center;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: rgba(255,255,255,0.015);
+    font-size: 12.5px;
+  }
+  .deliverable-card .kind-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 10.5px;
+    font-family: var(--mono);
+    text-align: center;
+    text-transform: lowercase;
+    border: 1px solid var(--border-strong);
+  }
+  .kind-badge.k-pr          { color: #a78bfa; border-color: rgba(167,139,250,0.5); background: rgba(167,139,250,0.10); }
+  .kind-badge.k-file        { color: var(--accent); border-color: rgba(125,211,252,0.4); background: rgba(125,211,252,0.10); }
+  .kind-badge.k-deploy      { color: var(--good); border-color: rgba(74,222,128,0.5); background: rgba(74,222,128,0.10); }
+  .kind-badge.k-test_report { color: var(--warn); border-color: rgba(251,191,36,0.5); background: rgba(251,191,36,0.10); }
+  .kind-badge.k-memo        { color: #fb923c; border-color: rgba(251,146,60,0.5); background: rgba(251,146,60,0.10); }
+  .kind-badge.k-other       { color: var(--fg-dim); }
+  .deliverable-card .title {
+    color: var(--fg);
+    font-family: var(--mono);
+    font-size: 12.5px;
+    word-break: break-all;
+  }
+  .deliverable-card .title a { color: var(--accent); }
+  .deliverable-card .meta {
+    color: var(--fg-very-dim);
+    font-family: var(--mono);
+    font-size: 11px;
+    text-align: right;
+    white-space: nowrap;
+  }
+  .deliverable-card .meta .role-badge {
+    display: inline-block;
+    padding: 1px 7px;
+    border-radius: 8px;
+    font-size: 10.5px;
+    background: rgba(125,211,252,0.10);
+    color: var(--accent);
+    border: 1px solid rgba(125,211,252,0.4);
+    margin-right: 4px;
+  }
+
+  .banner {
+    background: rgba(251,146,60,0.08);
+    border-left: 3px solid #fb923c;
+    color: var(--fg-dim);
+    padding: 10px 14px;
+    border-radius: 4px;
+    font-size: 13px;
+    margin-bottom: 14px;
+  }
+  .empty {
+    color: var(--fg-very-dim);
+    padding: 16px;
+    text-align: center;
+    font-style: italic;
+    font-size: 13px;
+  }
+  .note {
+    background: rgba(125, 211, 252, 0.06);
+    border-left: 3px solid var(--accent);
+    padding: 10px 14px;
+    border-radius: 4px;
+    color: var(--fg-dim);
+    font-size: 13px;
+    margin-bottom: 14px;
+  }
+
+  /* Pass I-3: approval UI + execution panels */
+  .approval-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 14px;
+    flex-wrap: wrap;
+  }
+  .btn {
+    border: 1px solid var(--border-strong);
+    background: var(--bg-card);
+    color: var(--fg);
+    padding: 8px 18px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .btn:hover { background: var(--bg-card-hover); }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn.btn-approve {
+    background: rgba(74,222,128,0.16);
+    border-color: var(--good);
+    color: var(--good);
+  }
+  .btn.btn-approve:hover { background: rgba(74,222,128,0.25); }
+  .btn.btn-reject {
+    background: rgba(248,113,113,0.14);
+    border-color: var(--bad);
+    color: var(--bad);
+  }
+  .btn.btn-reject:hover { background: rgba(248,113,113,0.22); }
+
+  .modal-backdrop {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.55);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 100;
+  }
+  .modal {
+    background: var(--bg-card);
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    padding: 20px 22px;
+    max-width: 480px;
+    width: calc(100% - 32px);
+    box-shadow: 0 8px 30px rgba(0,0,0,0.4);
+  }
+  .modal h3 {
+    margin: 0 0 10px;
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .modal p {
+    color: var(--fg-dim);
+    font-size: 13px;
+    line-height: 1.5;
+    margin: 0 0 14px;
+  }
+  .modal textarea {
+    width: 100%;
+    min-height: 90px;
+    background: var(--bg);
+    color: var(--fg);
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-family: var(--mono);
+    font-size: 13px;
+    resize: vertical;
+    margin-bottom: 6px;
+  }
+  .modal textarea:focus { outline: none; border-color: var(--accent); }
+  .modal .err {
+    color: var(--bad);
+    font-size: 12px;
+    min-height: 1em;
+    margin-bottom: 6px;
+  }
+  .modal-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+  }
+
+  .banner.good {
+    background: rgba(74,222,128,0.08);
+    border-left-color: var(--good);
+  }
+  .banner.bad {
+    background: rgba(248,113,113,0.08);
+    border-left-color: var(--bad);
+  }
+
+  /* Timeline */
+  .event-row {
+    display: grid;
+    grid-template-columns: 130px 100px 1fr;
+    gap: 10px;
+    padding: 8px 10px;
+    border-bottom: 1px dashed var(--border);
+    font-size: 12.5px;
+    align-items: baseline;
+    cursor: pointer;
+  }
+  .event-row:hover { background: rgba(255,255,255,0.02); }
+  .event-row:last-child { border-bottom: none; }
+  .event-row .ts {
+    font-family: var(--mono);
+    color: var(--fg-dim);
+    font-size: 11.5px;
+  }
+  .event-row .role-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 10.5px;
+    font-family: var(--mono);
+    background: rgba(125,211,252,0.10);
+    color: var(--accent);
+    border: 1px solid rgba(125,211,252,0.4);
+    text-align: center;
+    text-transform: lowercase;
+  }
+  .event-row .type {
+    color: var(--fg);
+    font-family: var(--mono);
+    font-size: 12px;
+  }
+  .event-row .payload-preview {
+    color: var(--fg-very-dim);
+    font-family: var(--mono);
+    font-size: 11.5px;
+    margin-top: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    grid-column: 3;
+  }
+  .event-row.expanded .payload-preview { display: none; }
+  .event-row .payload-full {
+    display: none;
+    grid-column: 1 / -1;
+    margin-top: 6px;
+    background: var(--bg);
+    padding: 8px 10px;
+    border-radius: 4px;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--fg);
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 280px;
+    overflow-y: auto;
+  }
+  .event-row.expanded .payload-full { display: block; }
+
+  /* Cost summary strip */
+  .cost-strip {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+    gap: 10px;
+    margin-bottom: 4px;
+  }
+  .cost-cell {
+    background: rgba(255,255,255,0.02);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 12px;
+  }
+  .cost-cell .num {
+    font-family: var(--mono);
+    font-size: 16px;
+    color: var(--fg);
+    margin-bottom: 2px;
+  }
+  .cost-cell .lbl {
+    color: var(--fg-dim);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+</style>
+</head>
+<body>
+  <div class="container">
+    <nav class="page-nav" aria-label="Page navigation">
+      <a href="./">Dashboard</a>
+      <a href="./machines.html">Machines</a>
+      <a href="./versions.html">Versions</a>
+      <a href="./about.html">About</a>
+      <a href="./tech.html">Tech</a>
+      <span class="live-indicator" id="live-indicator" title="Last refresh">
+        <span class="live-dot" id="live-dot"></span>
+        <span id="live-text">connecting...</span>
+      </span>
+    </nav>
+
+    <header class="hero">
+      <h1 id="title">Engagement</h1>
+      <div class="sub" id="sub">loading...</div>
+    </header>
+
+    <div id="content"><div class="empty">Loading...</div></div>
+  </div>
+
+<script>
+"use strict";
+
+// Pass I-2 engagement detail page. Renders the full clarification loop +
+// artifact panel + status timeline. Auto-refreshes every 5s while the
+// page is visible, same cadence as the main dashboard.
+
+const REFRESH_MS = 5000;
+const STATUSES = ["intake","hardening","planning","awaiting_approval","executing","delivered"];
+
+const state = {
+  slug: null,
+  engagement: null,
+  messages: [],
+  timeline: [],
+  costSummary: null,
+  // Pass J: agent-produced artifacts ("deliverables") attached to this
+  // engagement. Populated from the /api/engagements/<slug> response.
+  artifacts: [],
+  lastFetchOk: null,
+  inflight: null,
+};
+
+function escapeHtml(s) {
+  if (s == null) return "";
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function shortTs(iso) {
+  if (!iso) return "—";
+  const m = String(iso).match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2})/);
+  if (!m) return String(iso);
+  return `${m[1]} ${m[2]}`;
+}
+
+function statusPill(status) {
+  const s = (status || "").toLowerCase();
+  const known = STATUSES.concat(["cancelled"]);
+  const cls = known.indexOf(s) >= 0 ? `eng-${s}` : "";
+  return `<span class="pill ${cls}">${escapeHtml(status || "unknown")}</span>`;
+}
+
+function getParam(name) {
+  const u = new URL(window.location.href);
+  return u.searchParams.get(name);
+}
+
+function setLiveIndicator(kind, text) {
+  const dot = document.getElementById("live-dot");
+  const txt = document.getElementById("live-text");
+  dot.classList.remove("stale", "lost");
+  if (kind === "stale") dot.classList.add("stale");
+  if (kind === "lost")  dot.classList.add("lost");
+  txt.textContent = text;
+}
+
+// ---------------------------------------------------------------------------
+// Renderers
+// ---------------------------------------------------------------------------
+
+function renderTimeline(currentStatus) {
+  const lower = (currentStatus || "").toLowerCase();
+  const currentIdx = STATUSES.indexOf(lower);
+  const cells = STATUSES.map((s, i) => {
+    const done = currentIdx > i;
+    const current = currentIdx === i;
+    const cls = current ? "current" : (done ? "done" : "");
+    // promote button: show if this status is reachable from current
+    // (the backend validates again; this is just a hint).
+    const promote = (i > currentIdx && !["delivered","cancelled"].includes(lower))
+      ? `<button class="promote-btn" data-target="${s}">Promote</button>`
+      : "";
+    return `<div class="step ${cls}">
+      <span class="label">${s.replace(/_/g, " ")}</span>
+      ${promote}
+    </div>`;
+  }).join("");
+  const cancelledTag = (lower === "cancelled")
+    ? `<div class="step cancelled-tag">cancelled</div>` : "";
+  return `<div class="timeline">${cells}${cancelledTag}</div>`;
+}
+
+function renderHeader(eng) {
+  document.getElementById("title").textContent = eng.title || "(untitled)";
+  document.getElementById("sub").innerHTML =
+    `${escapeHtml(eng.slug || "")} &middot; ${statusPill(eng.status)} &middot; created ${escapeHtml(shortTs(eng.created_at))}`;
+}
+
+function renderArtifacts(eng) {
+  const status = (eng.status || "").toLowerCase();
+  const idx = STATUSES.indexOf(status);
+  // gating: artifacts only become "real" once their producing role has
+  // run. We still show requirements_uri unconditionally; req_uri once
+  // planning has started; plan_uri once awaiting_approval; ADRs whenever
+  // present.
+  const adrUris = Array.isArray(eng.architect_adr_uris) ? eng.architect_adr_uris : [];
+
+  function linkOrDim(uri, dimMsg) {
+    if (!uri) return `<span class="dim">${escapeHtml(dimMsg || "—")}</span>`;
+    return `<a href="${escapeHtml(uri)}" target="_blank" rel="noopener">${escapeHtml(uri)}</a>`;
+  }
+
+  const reqRow = `<div class="artifact-row">
+      <div class="k">Requirements (client brief)</div>
+      <div class="v">${linkOrDim(eng.requirements_uri, "not set")}</div>
+    </div>`;
+  const reqDocRow = `<div class="artifact-row">
+      <div class="k">REQ (finalized)</div>
+      <div class="v">${idx >= STATUSES.indexOf("planning")
+        ? linkOrDim(eng.req_uri, "pending (planning not started)")
+        : `<span class="dim">unlocks once hardening completes</span>`}</div>
+    </div>`;
+  const plannerRow = `<div class="artifact-row">
+      <div class="k">Planner notes</div>
+      <div class="v">${linkOrDim(eng.planner_report_uri, "not yet written")}</div>
+    </div>`;
+  const planRow = `<div class="artifact-row">
+      <div class="k">Unified plan</div>
+      <div class="v">${idx >= STATUSES.indexOf("awaiting_approval")
+        ? linkOrDim(eng.plan_uri, "pending")
+        : `<span class="dim">unlocks once planning completes</span>`}</div>
+    </div>`;
+  const adrRow = `<div class="artifact-row">
+      <div class="k">Architect ADRs</div>
+      <div class="v">${adrUris.length === 0
+        ? `<span class="dim">none yet</span>`
+        : adrUris.map(u => `<div>${linkOrDim(u)}</div>`).join("")}</div>
+    </div>`;
+
+  return `<div class="artifact-list">${reqRow}${reqDocRow}${plannerRow}${planRow}${adrRow}</div>`;
+}
+
+// Pass J: relative-time formatter for deliverable timestamps.
+function relativeTime(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  const seconds = Math.max(0, (Date.now() - d.getTime()) / 1000);
+  if (seconds < 45)        return "just now";
+  if (seconds < 90)        return "a minute ago";
+  const minutes = seconds / 60;
+  if (minutes < 45)        return `${Math.round(minutes)}m ago`;
+  const hours = minutes / 60;
+  if (hours < 24)          return `${Math.round(hours)}h ago`;
+  const days = hours / 24;
+  if (days < 30)           return `${Math.round(days)}d ago`;
+  const months = days / 30;
+  if (months < 12)         return `${Math.round(months)}mo ago`;
+  return `${Math.round(months / 12)}y ago`;
+}
+
+// Pass J: render the agent-produced artifact list as a stack of cards.
+// Sorted by created_at desc (the API already returns them in that order).
+// Each card has: kind badge | title (or URI) link | role + relative time.
+function renderDeliverables(artifacts) {
+  if (!artifacts || artifacts.length === 0) {
+    return `<div class="empty">No deliverables yet. Agents will report PRs, files, deploys, and test reports here as they produce them.</div>`;
+  }
+  const knownKinds = new Set(["pr","file","deploy","test_report","memo","other"]);
+  return `<div class="deliverable-list">${
+    artifacts.map(a => {
+      const rawKind = (a.kind || "other").toLowerCase();
+      const kind = knownKinds.has(rawKind) ? rawKind : "other";
+      const titleText = a.title || a.uri || "(unnamed)";
+      const uri = a.uri || "";
+      const isHttp = /^https?:\/\//i.test(uri);
+      const titleHtml = uri
+        ? (isHttp
+            ? `<a href="${escapeHtml(uri)}" target="_blank" rel="noopener">${escapeHtml(titleText)}</a>`
+            : escapeHtml(titleText))
+        : escapeHtml(titleText);
+      const role = a.role_id || a.handle || "";
+      const roleBadge = role
+        ? `<span class="role-badge">${escapeHtml(role)}</span>`
+        : "";
+      return `<div class="deliverable-card">
+        <span class="kind-badge k-${escapeHtml(kind)}">${escapeHtml(kind.replace("_", " "))}</span>
+        <span class="title">${titleHtml}</span>
+        <span class="meta">${roleBadge}${escapeHtml(relativeTime(a.created_at))}</span>
+      </div>`;
+    }).join("")
+  }</div>`;
+}
+
+function renderMessages(messages) {
+  if (!messages || messages.length === 0) {
+    return `<div class="empty">No messages yet. The product agent will ask clarifying questions here; your answers will be threaded below.</div>`;
+  }
+  return `<div class="thread">${
+    messages.map(m => {
+      const isHuman = m.role === "human";
+      const sideCls = isHuman ? "right" : "left";
+      const kindCls = m.kind ? `kind-${m.kind}` : "";
+      const roleLabel = `${escapeHtml(m.role || "?")} · ${escapeHtml(m.kind || "?")} · ${escapeHtml(shortTs(m.created_at))}`;
+      return `<div class="bubble ${sideCls} ${kindCls}">
+        <div class="meta">${roleLabel}</div>
+        <div>${escapeHtml(m.body_md || "")}</div>
+      </div>`;
+    }).join("")
+  }</div>`;
+}
+
+function renderApprovalBanner(eng) {
+  const status = (eng.status || "").toLowerCase();
+  if (status === "awaiting_approval") {
+    const planUri = eng.plan_uri
+      ? `<a href="${escapeHtml(eng.plan_uri.replace(/^file:\/\//, "/../"))}" target="_blank" rel="noopener">${escapeHtml(eng.plan_uri)}</a>`
+      : `<span class="dim">(no plan_uri set)</span>`;
+    return `<div class="banner">Engagement is awaiting approval. Review the plan at ${planUri} and approve to dispatch to the conductor, or reject with a reason.
+      <div class="approval-actions">
+        <button class="btn btn-approve" id="btn-approve">Approve and dispatch</button>
+        <button class="btn btn-reject"  id="btn-reject">Reject</button>
+      </div>
+    </div>`;
+  }
+  if (status === "executing") {
+    const tlCount = state.timeline.length;
+    const latest = tlCount > 0 ? state.timeline[0] : null;
+    const latestStr = latest
+      ? `Latest: ${escapeHtml(latest.type || "?")} at ${escapeHtml(shortTs(latest.ts))}`
+      : "Latest: (no events yet)";
+    return `<div class="banner good">In flight with the conductor. ${tlCount} event${tlCount === 1 ? "" : "s"} so far. ${latestStr}</div>`;
+  }
+  if (status === "delivered") {
+    const finalUri = eng.plan_uri
+      ? `<a href="${escapeHtml(eng.plan_uri.replace(/^file:\/\//, "/../"))}" target="_blank" rel="noopener">Final plan / report</a>`
+      : "";
+    return `<div class="banner good">Delivered ${eng.delivered_at ? `at ${escapeHtml(shortTs(eng.delivered_at))}` : ""}. ${finalUri}</div>`;
+  }
+  if (status === "cancelled") {
+    return `<div class="banner bad">Engagement was cancelled.</div>`;
+  }
+  return "";
+}
+
+function renderCostSummary() {
+  const c = state.costSummary;
+  if (!c) {
+    return `<div class="empty">No telemetry yet for this engagement.</div>`;
+  }
+  const cell = (num, lbl) => `<div class="cost-cell"><div class="num">${escapeHtml(String(num))}</div><div class="lbl">${escapeHtml(lbl)}</div></div>`;
+  const usd = (typeof c.cost_usd === "number") ? c.cost_usd.toFixed(4) : "0";
+  const wall = (typeof c.wall_s === "number") ? c.wall_s.toFixed(1) + "s" : "0s";
+  return `<div class="cost-strip">
+    ${cell(c.invocations || 0, "invocations")}
+    ${cell(wall, "wall time")}
+    ${cell((c.tokens_in || 0), "tokens in")}
+    ${cell((c.tokens_out || 0), "tokens out")}
+    ${cell("$" + usd, "USD")}
+    ${cell(c.roles_used || 0, "roles")}
+    ${cell(c.workers_used || 0, "workers")}
+  </div>`;
+}
+
+function renderTimelineCard() {
+  const events = state.timeline || [];
+  if (events.length === 0) {
+    return `<div class="empty">No events on the bus for this engagement yet.</div>`;
+  }
+  return events.map(ev => {
+    const role = ev.role_id || ev.handle || "?";
+    let preview = "";
+    try {
+      const p = ev.payload_json;
+      if (p && typeof p === "object") {
+        const ip = p.payload || p;
+        if (typeof ip === "object") {
+          preview = JSON.stringify(ip).slice(0, 180);
+        } else {
+          preview = String(ip).slice(0, 180);
+        }
+      }
+    } catch (e) { preview = ""; }
+    const full = (() => {
+      try { return JSON.stringify(ev.payload_json, null, 2); }
+      catch (e) { return String(ev.payload_json || ""); }
+    })();
+    return `<div class="event-row" data-evid="${escapeHtml(ev.event_id || "")}">
+      <div class="ts">${escapeHtml(shortTs(ev.ts))}</div>
+      <div><span class="role-badge">${escapeHtml(role)}</span></div>
+      <div class="type">${escapeHtml(ev.type || "?")}</div>
+      <div class="payload-preview">${escapeHtml(preview)}</div>
+      <div class="payload-full">${escapeHtml(full)}</div>
+    </div>`;
+  }).join("");
+}
+
+function renderKV(eng) {
+  return `<div class="kv">
+    <div class="k">Engagement id</div><div class="v">${escapeHtml(eng.engagement_id || "")}</div>
+    <div class="k">Slug</div>         <div class="v">${escapeHtml(eng.slug || "")}</div>
+    <div class="k">Client</div>       <div class="v">${escapeHtml(eng.client || "—")}</div>
+    <div class="k">Status</div>       <div class="v">${statusPill(eng.status)}</div>
+    <div class="k">Messages</div>     <div class="v">${Number(eng.message_count || 0)}</div>
+    <div class="k">Created</div>      <div class="v">${escapeHtml(shortTs(eng.created_at))}</div>
+    <div class="k">Updated</div>      <div class="v">${escapeHtml(shortTs(eng.updated_at))}</div>
+    <div class="k">Approved</div>     <div class="v">${escapeHtml(shortTs(eng.approved_at))}</div>
+    <div class="k">Delivered</div>    <div class="v">${escapeHtml(shortTs(eng.delivered_at))}</div>
+  </div>`;
+}
+
+let requirementsTextCache = { uri: null, text: null };
+async function fetchRequirementsText(uri) {
+  // Render requirements.md as plain <pre>. Per the brief, no markdown
+  // parsing — just escape & dump. We fetch the file URL (relative path
+  // from project root). If the server doesn't serve the engagements/
+  // tree, the fetch will 404; we render a placeholder.
+  if (!uri) return "";
+  if (requirementsTextCache.uri === uri && requirementsTextCache.text != null) {
+    return requirementsTextCache.text;
+  }
+  // Strip file:// prefix if present and treat as a path relative to the
+  // dashboard root (which is the project root via serve.py's static path).
+  let url = uri;
+  if (url.startsWith("file://")) url = url.replace(/^file:\/\//, "/../");
+  try {
+    const r = await fetch(url, { cache: "no-store" });
+    if (!r.ok) return "";
+    const t = await r.text();
+    requirementsTextCache = { uri, text: t };
+    return t;
+  } catch (e) {
+    return "";
+  }
+}
+
+function render() {
+  const eng = state.engagement;
+  const content = document.getElementById("content");
+  if (!eng) {
+    content.innerHTML = `<div class="empty">No engagement found for the given slug. <a href="./">Back to dashboard</a>.</div>`;
+    document.getElementById("title").textContent = "Engagement not found";
+    document.getElementById("sub").textContent = "";
+    return;
+  }
+  renderHeader(eng);
+
+  const status = (eng.status || "").toLowerCase();
+  // Show telemetry blocks once execution begins (or after, even if cancelled).
+  const showTelemetry = ["executing", "delivered", "cancelled"].includes(status);
+
+  const html = `
+    ${renderApprovalBanner(eng)}
+
+    <div class="card">
+      <h2>Engagement</h2>
+      ${renderKV(eng)}
+    </div>
+
+    <div class="card">
+      <h2>Status timeline</h2>
+      ${renderTimeline(eng.status)}
+    </div>
+
+    <div class="card">
+      <h2>Requirements (client brief)</h2>
+      <pre id="req-body">${escapeHtml(requirementsTextCache.text || "Loading requirements...")}</pre>
+    </div>
+
+    <div class="card">
+      <h2>Conversation</h2>
+      ${renderMessages(state.messages)}
+      <form class="answer-form" id="answer-form" autocomplete="off">
+        <textarea id="answer-body" placeholder="Answer the agent's question or send a comment..."></textarea>
+        <div class="err" id="answer-err"></div>
+        <button type="submit" id="answer-submit">Send answer</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <h2>Artifacts</h2>
+      ${renderArtifacts(eng)}
+    </div>
+
+    <div class="card">
+      <h2>Deliverables</h2>
+      ${renderDeliverables(state.artifacts)}
+    </div>
+
+    ${showTelemetry ? `
+    <div class="card">
+      <h2>Running cost</h2>
+      ${renderCostSummary()}
+    </div>
+
+    <div class="card">
+      <h2>Event timeline</h2>
+      ${renderTimelineCard()}
+    </div>
+    ` : ""}
+  `;
+  content.innerHTML = html;
+
+  // Wire approve/reject buttons (only present when awaiting_approval).
+  const approveBtn = document.getElementById("btn-approve");
+  if (approveBtn) {
+    approveBtn.addEventListener("click", openApproveModal);
+  }
+  const rejectBtn = document.getElementById("btn-reject");
+  if (rejectBtn) {
+    rejectBtn.addEventListener("click", openRejectModal);
+  }
+
+  // Wire timeline row expand-on-click.
+  content.querySelectorAll(".event-row").forEach(row => {
+    row.addEventListener("click", () => {
+      row.classList.toggle("expanded");
+    });
+  });
+
+  // Lazy-load requirements text.
+  fetchRequirementsText(eng.requirements_uri).then(txt => {
+    const el = document.getElementById("req-body");
+    if (el && txt) el.textContent = txt;
+    else if (el && !txt) el.textContent = "(requirements file not readable from the dashboard)";
+  });
+
+  // Wire promote buttons.
+  content.querySelectorAll(".promote-btn").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const target = btn.getAttribute("data-target");
+      if (!target) return;
+      btn.disabled = true;
+      btn.textContent = "Promoting...";
+      try {
+        const r = await fetch(`./api/engagements/${encodeURIComponent(state.slug)}/promote`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ to: target }),
+        });
+        if (!r.ok) {
+          const j = await r.json().catch(() => ({}));
+          alert(`Promote failed: ${j.detail || j.error || ("HTTP " + r.status)}`);
+          btn.disabled = false;
+          btn.textContent = "Promote";
+          return;
+        }
+        // Optimistic refresh.
+        await reload();
+      } catch (e) {
+        alert(`Promote failed: ${e.message || e}`);
+        btn.disabled = false;
+        btn.textContent = "Promote";
+      }
+    });
+  });
+
+  // Wire answer form.
+  const form = document.getElementById("answer-form");
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const ta = document.getElementById("answer-body");
+    const err = document.getElementById("answer-err");
+    const btn = document.getElementById("answer-submit");
+    err.textContent = "";
+    const body = (ta.value || "").trim();
+    if (!body) { err.textContent = "Answer body is required."; return; }
+    btn.disabled = true;
+    btn.textContent = "Sending...";
+    try {
+      const r = await fetch(`./api/engagements/${encodeURIComponent(state.slug)}/answer`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ body_md: body }),
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        err.textContent = `Failed: ${j.detail || j.error || ("HTTP " + r.status)}`;
+        btn.disabled = false;
+        btn.textContent = "Send answer";
+        return;
+      }
+      ta.value = "";
+      await reload();
+    } catch (e2) {
+      err.textContent = `Failed: ${e2.message || e2}`;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Send answer";
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Approve / Reject modals (Pass I-3)
+// ---------------------------------------------------------------------------
+
+function closeModal() {
+  const m = document.getElementById("modal-root");
+  if (m) m.remove();
+}
+
+function mountModal(innerHtml) {
+  closeModal();
+  const root = document.createElement("div");
+  root.id = "modal-root";
+  root.className = "modal-backdrop";
+  root.innerHTML = `<div class="modal">${innerHtml}</div>`;
+  // Close on backdrop click (but not on modal content click).
+  root.addEventListener("click", (e) => {
+    if (e.target === root) closeModal();
+  });
+  document.body.appendChild(root);
+  return root;
+}
+
+function openApproveModal() {
+  mountModal(`
+    <h3>Approve and dispatch?</h3>
+    <p>Approve this plan and dispatch to the conductor? You won't be able to undo this.</p>
+    <div class="err" id="approve-err"></div>
+    <div class="modal-actions">
+      <button class="btn" id="approve-cancel">Cancel</button>
+      <button class="btn btn-approve" id="approve-go">Approve</button>
+    </div>
+  `);
+  document.getElementById("approve-cancel").addEventListener("click", closeModal);
+  document.getElementById("approve-go").addEventListener("click", async () => {
+    const btn = document.getElementById("approve-go");
+    const err = document.getElementById("approve-err");
+    err.textContent = "";
+    btn.disabled = true;
+    btn.textContent = "Approving...";
+    try {
+      const r = await fetch(`./api/engagements/${encodeURIComponent(state.slug)}/approve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        err.textContent = `Failed: ${j.detail || j.error || ("HTTP " + r.status)}`;
+        btn.disabled = false;
+        btn.textContent = "Approve";
+        return;
+      }
+      closeModal();
+      await reload();
+    } catch (e) {
+      err.textContent = `Failed: ${e.message || e}`;
+      btn.disabled = false;
+      btn.textContent = "Approve";
+    }
+  });
+}
+
+function openRejectModal() {
+  mountModal(`
+    <h3>Reject this plan?</h3>
+    <p>Explain why so the planner / product can iterate. Minimum 5 characters.</p>
+    <textarea id="reject-reason" placeholder="Reason for rejection..." autofocus></textarea>
+    <div class="err" id="reject-err"></div>
+    <div class="modal-actions">
+      <button class="btn" id="reject-cancel">Cancel</button>
+      <button class="btn btn-reject" id="reject-go">Reject</button>
+    </div>
+  `);
+  document.getElementById("reject-cancel").addEventListener("click", closeModal);
+  document.getElementById("reject-go").addEventListener("click", async () => {
+    const ta = document.getElementById("reject-reason");
+    const err = document.getElementById("reject-err");
+    const btn = document.getElementById("reject-go");
+    err.textContent = "";
+    const reason = (ta.value || "").trim();
+    if (reason.length < 5) {
+      err.textContent = "Reason must be at least 5 characters.";
+      return;
+    }
+    btn.disabled = true;
+    btn.textContent = "Rejecting...";
+    try {
+      const r = await fetch(`./api/engagements/${encodeURIComponent(state.slug)}/reject`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason }),
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        err.textContent = `Failed: ${j.detail || j.error || ("HTTP " + r.status)}`;
+        btn.disabled = false;
+        btn.textContent = "Reject";
+        return;
+      }
+      closeModal();
+      await reload();
+    } catch (e) {
+      err.textContent = `Failed: ${e.message || e}`;
+      btn.disabled = false;
+      btn.textContent = "Reject";
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Loader + auto-refresh
+// ---------------------------------------------------------------------------
+
+async function reload() {
+  if (!state.slug) return;
+  if (state.inflight) return;
+  state.inflight = true;
+  try {
+    const r = await fetch(`./api/engagements/${encodeURIComponent(state.slug)}?t=${Date.now()}`,
+                          { cache: "no-store" });
+    if (r.status === 404) {
+      state.engagement = null;
+      state.messages = [];
+      state.timeline = [];
+      state.costSummary = null;
+      state.artifacts = [];
+      setLiveIndicator("lost", "not found");
+      render();
+      return;
+    }
+    if (!r.ok) {
+      setLiveIndicator("stale", `HTTP ${r.status}`);
+      return;
+    }
+    const j = await r.json();
+    state.engagement = j.engagement;
+    state.messages = j.messages || [];
+    state.timeline = j.timeline || [];
+    state.costSummary = j.cost_summary || null;
+    state.artifacts = j.artifacts || [];
+    state.lastFetchOk = Date.now();
+    setLiveIndicator("ok", `live ${new Date().toLocaleTimeString()}`);
+    render();
+  } catch (e) {
+    setLiveIndicator("lost", "offline");
+  } finally {
+    state.inflight = false;
+  }
+}
+
+function init() {
+  const slug = getParam("slug");
+  const id   = getParam("id");
+  if (slug) {
+    state.slug = slug;
+  } else if (id) {
+    // Map id -> slug via the snapshot once, then proceed.
+    fetch(`./pg-snapshot.json?t=${Date.now()}`, { cache: "no-store" })
+      .then(r => r.json())
+      .then(snap => {
+        const e = (snap.engagements || []).find(x => x.engagement_id === id);
+        if (e && e.slug) {
+          state.slug = e.slug;
+          // Update URL so reload works without re-mapping.
+          const u = new URL(window.location.href);
+          u.searchParams.set("slug", e.slug);
+          u.searchParams.delete("id");
+          window.history.replaceState({}, "", u.toString());
+          reload();
+          setInterval(reload, REFRESH_MS);
+        } else {
+          state.engagement = null;
+          render();
+        }
+      })
+      .catch(() => {
+        state.engagement = null;
+        render();
+      });
+    return;
+  } else {
+    document.getElementById("content").innerHTML =
+      `<div class="empty">Pass <code>?slug=&lt;slug&gt;</code> or <code>?id=&lt;engagement_id&gt;</code> in the URL.</div>`;
+    document.getElementById("sub").textContent = "missing parameter";
+    return;
+  }
+  reload();
+  setInterval(reload, REFRESH_MS);
+}
+
+init();
+</script>
+</body>
+</html>

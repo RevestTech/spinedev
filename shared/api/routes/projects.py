@@ -63,6 +63,10 @@ class ProjectCreate(BaseModel):
     # Optional + ignored if not set; backend-only metadata, not stored as a
     # separate column for #19 (the 7 work-item types stay canonical).
     greenfield: Optional[bool] = None
+    spine_on_spine: Optional[bool] = Field(
+        default=None,
+        description="Dogfood flag: engineer workspace targets Spine platform repo sandbox.",
+    )
     description: Optional[str] = Field(default=None, max_length=2000)
 
 
@@ -128,6 +132,8 @@ async def create_project(
                 patch: dict[str, Any] = {
                     "greenfield": bool(body.greenfield),
                 }
+                if body.spine_on_spine:
+                    patch["spine_on_spine"] = True
                 if body.description:
                     patch["description"] = body.description
                 async with pool.acquire() as conn:
@@ -140,6 +146,45 @@ async def create_project(
         except Exception as exc:  # noqa: BLE001
             logger.warning("project_meta_persist_failed",
                            extra={"project_id": project_id, "error": str(exc)})
+
+    # Bootstrap per-project git workspace + KG post-commit hook (P1).
+    if project_id:
+        try:
+            from shared.runtime.project_workspace import (
+                bootstrap_project_git_repo,
+                metadata_patch_from_bootstrap,
+            )
+
+            boot = bootstrap_project_git_repo(
+                project_id,
+                body.name,
+                metadata={"spine_on_spine": True} if body.spine_on_spine else None,
+            )
+            patch = metadata_patch_from_bootstrap(boot)
+            if boot.errors:
+                logger.warning(
+                    "project_workspace_bootstrap_warnings",
+                    extra={"project_id": project_id, "errors": boot.errors},
+                )
+            from shared.api.dependencies import get_db_pool_raw
+
+            pool = get_db_pool_raw()
+            if pool is not None and patch:
+                import json as _json
+
+                async with pool.acquire() as conn:
+                    await conn.execute(
+                        "UPDATE spine_lifecycle.project SET metadata = "
+                        "COALESCE(metadata, '{}'::jsonb) || $1::jsonb "
+                        "WHERE project_uuid::text = $2",
+                        _json.dumps(patch),
+                        project_id,
+                    )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "project_workspace_bootstrap_failed",
+                extra={"project_id": project_id, "error": str(exc)},
+            )
 
     # Seed the intake briefing decision so the queue isn't empty when the
     # user lands. Best-effort — never blocks project creation.
@@ -174,6 +219,7 @@ async def create_project(
                 "project_type": body.project_type,
                 "project_uuid": project_id,
                 "greenfield": bool(body.greenfield),
+                "spine_on_spine": bool(body.spine_on_spine),
             },
         )
         enqueue_decision(card)
@@ -194,7 +240,7 @@ async def list_projects(
     offset: int = Query(default=0, ge=0),
 ) -> dict[str, Any]:
     """List projects with optional filters + pagination."""
-    where = ["1=1"]
+    where = ["status != 'terminated'"]
     if phase:
         where.append(f"current_phase = '{_esc(phase)}'")
     if status_filter:
@@ -318,14 +364,44 @@ async def _resolve_workspace_uuid(project_id: str) -> str:
     return row["u"] if row else project_id
 
 
+async def _load_project_metadata(project_uuid: str) -> dict[str, Any]:
+    """Load project metadata JSONB for workspace resolution."""
+    import json as _json
+
+    from shared.api.dependencies import get_db_pool_raw
+
+    pool = get_db_pool_raw()
+    if pool is None:
+        return {}
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT metadata FROM spine_lifecycle.project WHERE project_uuid::text = $1",
+            project_uuid,
+        )
+    if not row:
+        return {}
+    md = row["metadata"] or {}
+    if isinstance(md, str):
+        try:
+            md = _json.loads(md)
+        except _json.JSONDecodeError:
+            md = {}
+    return md if isinstance(md, dict) else {}
+
+
+async def _resolve_workspace_dir(project_id: str) -> Path:
+    """Return engineer workspace path (includes spine_on_spine dogfood sandbox)."""
+    from shared.runtime.project_workspace import resolve_code_dir
+
+    uid = await _resolve_workspace_uuid(project_id)
+    md = await _load_project_metadata(uid)
+    return resolve_code_dir(uid, md)
+
+
 @router.get("/{project_id}/workspace/files")
 async def list_workspace_files(project_id: str) -> dict[str, Any]:
-    """Return a tree of files the engineer wrote into the project's
-    workspace dir (/var/lib/spine/projects/{uuid}/)."""
-    import os as _os
-    project_id = await _resolve_workspace_uuid(project_id)
-    root = Path(_os.environ.get("SPINE_PROJECTS_ROOT", "/var/lib/spine/projects"))
-    pdir = (root / project_id).resolve()
+    """Return a tree of files the engineer wrote into the project's workspace."""
+    pdir = await _resolve_workspace_dir(project_id)
     if not pdir.exists() or not pdir.is_dir():
         return {"items": [], "root": str(pdir), "missing": True}
     items: list[dict[str, Any]] = []
@@ -338,14 +414,8 @@ async def list_workspace_files(project_id: str) -> dict[str, Any]:
 
 @router.get("/{project_id}/workspace/file")
 async def read_workspace_file(project_id: str, path: str) -> dict[str, Any]:
-    """Return the contents of one file under the project's workspace dir.
-
-    Path traversal-safe (resolve must stay under project root).
-    """
-    import os as _os
-    project_id = await _resolve_workspace_uuid(project_id)
-    root = Path(_os.environ.get("SPINE_PROJECTS_ROOT", "/var/lib/spine/projects"))
-    pdir = (root / project_id).resolve()
+    """Return the contents of one file under the project's workspace dir."""
+    pdir = await _resolve_workspace_dir(project_id)
     target = (pdir / path).resolve()
     try:
         target.relative_to(pdir)
@@ -365,12 +435,10 @@ import zipfile
 @router.get("/{project_id}/workspace/zip")
 async def download_workspace_zip(project_id: str) -> StreamingResponse:
     """Stream the project's workspace dir as a zip."""
-    import os as _os
-    project_id = await _resolve_workspace_uuid(project_id)
-    root = Path(_os.environ.get("SPINE_PROJECTS_ROOT", "/var/lib/spine/projects"))
-    pdir = (root / project_id).resolve()
+    uid = await _resolve_workspace_uuid(project_id)
+    pdir = await _resolve_workspace_dir(project_id)
     if not pdir.exists() or not pdir.is_dir():
-        raise _err(404, "workspace_missing", f"no workspace for {project_id}")
+        raise _err(404, "workspace_missing", f"no workspace for {uid}")
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for path in pdir.rglob("*"):
@@ -379,7 +447,7 @@ async def download_workspace_zip(project_id: str) -> StreamingResponse:
     buf.seek(0)
     return StreamingResponse(
         buf, media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="spine-{project_id[:8]}.zip"'},
+        headers={"Content-Disposition": f'attachment; filename="spine-{uid[:8]}.zip"'},
     )
 
 
@@ -391,15 +459,19 @@ async def deployment_status(project_id: str) -> dict[str, Any]:
     info = get_deployment(project_id)
     if info is None:
         return {"running": False}
+    proc = info.get("proc")
+    cli_mode = bool(info.get("cli_mode"))
     return {
-        "running": info.get("proc") is not None and info["proc"].returncode is None,
+        "running": proc is not None and proc.returncode is None and not cli_mode,
+        "cli_mode": cli_mode,
         "port": info.get("port"),
         "url": info.get("url"),
         "pid": info.get("pid"),
         "cmd": info.get("cmd"),
         "started": info.get("started"),
         "log_tail": (info.get("log_tail") or "")[:4000],
-        "rc": info["proc"].returncode if info.get("proc") else None,
+        "rc": proc.returncode if proc is not None else None,
+        "deploy_ok": proc.returncode == 0 if proc is not None and cli_mode else None,
     }
 
 
@@ -428,39 +500,25 @@ async def deployment_start(project_id: str) -> dict[str, Any]:
 
 @router.post("/{project_id}/advance-phase-by-uuid")
 async def advance_phase_by_uuid(project_id: str, body: dict[str, Any]) -> dict[str, Any]:
-    """Direct phase-advance bypassing MCP indirection.
-
-    Used by the decision-card ack handler when a prd_approval card lands
-    so the SPA can flip the workspace into the plan phase immediately.
-    Updates project.current_phase + appends to phase_history. No
-    HMAC-token check in dev mode (Wave 4 wires the approval token
-    pathway through here too).
-    """
+    """Advance phase via canonical pipeline bridge (transition.sh when available)."""
     target_phase = str(body.get("target_phase", "")).strip()
     if not target_phase:
         raise _err(400, "invalid_input", "target_phase required")
-    from shared.api.dependencies import get_db_pool_raw
-    pool = get_db_pool_raw()
-    if pool is None:
-        raise _err(503, "db_unavailable", "DB pool not initialized")
-    where_clause = "id = $2" if project_id.isdigit() else "project_uuid::text = $2"
-    arg: Any = int(project_id) if project_id.isdigit() else project_id
-    async with pool.acquire() as conn:
-        async with conn.transaction():
-            row = await conn.fetchrow(
-                f"UPDATE spine_lifecycle.project SET current_phase = $1, "
-                f"updated_at = now() WHERE {where_clause} "
-                f"RETURNING id, current_phase",
-                target_phase, arg,
-            )
-            if row is None:
-                raise _err(404, "project_not_found", f"project {project_id!r} not found")
-            await conn.execute(
-                "INSERT INTO spine_lifecycle.phase_history "
-                "(project_id, phase, entered_at) VALUES ($1, $2, now())",
-                int(row["id"]), target_phase,
-            )
-    return {"project_id": project_id, "current_phase": row["current_phase"]}
+    actor = str(body.get("actor", "hub-api")).strip() or "hub-api"
+    grant_gate = bool(body.get("grant_gate", False))
+    from shared.api.routes._pipeline_bridge import advance_lifecycle_phase
+
+    ok = await advance_lifecycle_phase(
+        project_id, target_phase, actor, grant_gate=grant_gate,
+    )
+    if not ok:
+        raise _err(409, "transition_rejected", f"could not advance to {target_phase!r}")
+    from shared.api.routes._post_ack import _load_project_full
+
+    project = await _load_project_full(project_id)
+    if project is None:
+        raise _err(404, "project_not_found", f"project {project_id!r} not found")
+    return {"project_id": project_id, "current_phase": project["current_phase"]}
 
 
 @router.patch("/{project_id}")

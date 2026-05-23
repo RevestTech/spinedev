@@ -45,8 +45,18 @@ class BuildDispatchInput(BaseModel):
                             description="BIGINT project id, project_uuid, or project name.")
     pipeline_version: str = Field(..., min_length=1,
                                   description="Locked sdlc-pipeline.yaml version (EPIC-1.7.5).")
-    actor: str = Field(default="orchestrator", min_length=1,
-                       description="Role/user driving the dispatch (audit attribution).")
+    role: str = Field(default="build", min_length=1,
+                      description="Target build role (router.sh sends engineer/devops/etc.).")
+    directive: str = Field(default="SYNTHESIZE_BRIEF", min_length=1,
+                           description="SYNTHESIZE_BRIEF for legacy brief handoff; PRODUCE_CODE/REMEDIATE for hub runners.")
+    actor: str | None = Field(
+        default=None,
+        description="Audit attribution; defaults to ``role`` when omitted.",
+    )
+    extra_context: str | None = Field(
+        default=None,
+        description="Optional feedback block for engineer fix-loop dispatches.",
+    )
 
 
 class BuildDispatchResponse(BaseModel):
@@ -55,10 +65,16 @@ class BuildDispatchResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     project_id: str
-    brief_id: str
-    engineering_goals_count: int
+    brief_id: str | None = None
+    directive_id: str | None = None
+    role: str | None = None
+    result_kind: str | None = None
+    artifact_key: str | None = None
+    artifact_md: str | None = None
+    engineering_goals_count: int = 0
     warnings: list[str] = Field(default_factory=list)
     audit_event_count: int = 0
+    extra: dict[str, Any] = Field(default_factory=dict)
 
 
 class BuildCompletedInput(BaseModel):
@@ -96,6 +112,22 @@ def _error(code: str, message: str, *, retryable: bool = False) -> ToolResponse:
 
 # ── build_dispatch ─────────────────────────────────────────────────────
 
+_HUB_BUILD_DIRECTIVES = (
+    "PRODUCE_CODE", "REMEDIATE", "INSTALL", "CODE_REVIEW", "DEPLOY",
+    "INSTALL_AND_SMOKE", "REMEDIATE_FROM_REVIEW", "DEPLOY_LOCAL",
+)
+_HUB_BUILD_ROLES = frozenset({
+    "engineer", "devops", "devops_release", "security_engineer", "auditor",
+})
+_BRIEF_DIRECTIVES = frozenset({"SYNTHESIZE_BRIEF", "DISPATCH_BRIEF"})
+
+
+def _uses_hub_build_runner(payload: BuildDispatchInput) -> bool:
+    upper = payload.directive.upper()
+    if upper in _BRIEF_DIRECTIVES:
+        return False
+    return payload.role in _HUB_BUILD_ROLES and any(tok in upper for tok in _HUB_BUILD_DIRECTIVES)
+
 
 @register_tool(
     name="build_dispatch",
@@ -105,16 +137,45 @@ def _error(code: str, message: str, *, retryable: bool = False) -> ToolResponse:
     tags=("build", "dispatch"),
 )
 def build_dispatch(payload: BuildDispatchInput) -> ToolResponse:
-    """Run the dispatcher; surface structured errors when the PRD isn't ready."""
+    """Hub role dispatch or legacy build-brief synthesis."""
+    actor = payload.actor or payload.role
     logger.info("mcp_tool_call", extra={
         "tool": "build_dispatch", "project_id": payload.project_id,
-        "actor": payload.actor,
+        "role": payload.role, "actor": actor, "directive": payload.directive,
     })
 
-    # Late import — keeps the module importable when build_runtime deps are
-    # absent (e.g. PRDv1 import path broken on a half-installed checkout).
+    if _uses_hub_build_runner(payload):
+        try:
+            from build.runtime.hub_role_runner import run_build_hub_role  # noqa: PLC0415
+        except Exception as exc:  # noqa: BLE001
+            return _error("build_runtime_unavailable",
+                          f"build.runtime.hub_role_runner import failed: {exc}")
+        result = run_build_hub_role(
+            project_id=payload.project_id,
+            role=payload.role,
+            directive=payload.directive,
+            actor=actor,
+            extra_context=payload.extra_context or "",
+        )
+        if not result.ok:
+            return _error(
+                result.error_class or "build_role_failed",
+                result.error_message or f"{payload.role} dispatch failed",
+            )
+        return ToolResponse(status="ok", data=BuildDispatchResponse(
+            project_id=payload.project_id,
+            brief_id=None,
+            directive_id=result.directive_id,
+            role=result.role,
+            result_kind=result.result_kind,
+            artifact_key=result.artifact_key,
+            artifact_md=result.artifact_md,
+            extra=result.extra,
+        ).model_dump(mode="json"))
+
+    # Legacy build-brief path (plan_approved → engineer handoff document).
     try:
-        from build.runtime.build_dispatcher import (
+        from build.runtime.build_dispatcher import (  # noqa: PLC0415
             BuildDispatchError, dispatch_build,
         )
     except Exception as exc:  # noqa: BLE001
@@ -122,11 +183,10 @@ def build_dispatch(payload: BuildDispatchInput) -> ToolResponse:
                       f"build.runtime.build_dispatcher import failed: {exc}")
 
     try:
-        result = dispatch_build(payload.project_id, actor=payload.actor)
+        result = dispatch_build(payload.project_id, actor=actor)
     except BuildDispatchError as exc:
         return _error(exc.reason, str(exc))
     except RuntimeError as exc:
-        # Project not found / DB issues land here.
         return _error("build_dispatch_failed", str(exc), retryable=True)
     except Exception as exc:  # noqa: BLE001
         return _error("build_dispatch_failed",

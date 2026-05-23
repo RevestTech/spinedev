@@ -25,6 +25,7 @@ Wave 3 changes versus the v2 factory:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -262,9 +263,52 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         if get_mcp_transport().kind != "in_process":
             set_mcp_transport("in_process")
 
+    # 5. Phase watcher — gate-cleared → orchestrator dispatch (P0).
+    watcher_stop: asyncio.Event | None = None
+    watcher_task: asyncio.Task[None] | None = None
+    briefing_stop: asyncio.Event | None = None
+    briefing_task: asyncio.Task[None] | None = None
+    try:
+        from shared.runtime.phase_watcher import (  # noqa: PLC0415
+            run_phase_watcher,
+            watcher_enabled,
+        )
+
+        if ok and watcher_enabled():
+            watcher_stop = asyncio.Event()
+            watcher_task = asyncio.create_task(run_phase_watcher(watcher_stop))
+            logger.info("phase_watcher_task_started")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("phase_watcher_start_failed", extra={"error": str(exc)})
+
+    try:
+        from shared.runtime.master_briefing import (  # noqa: PLC0415
+            briefing_enabled,
+            run_master_briefing_loop,
+        )
+
+        if ok and briefing_enabled():
+            briefing_stop = asyncio.Event()
+            briefing_task = asyncio.create_task(run_master_briefing_loop(briefing_stop))
+            logger.info("master_briefing_task_started")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("master_briefing_start_failed", extra={"error": str(exc)})
+
     try:
         yield
     finally:
+        if briefing_stop is not None and briefing_task is not None:
+            briefing_stop.set()
+            try:
+                await briefing_task
+            except Exception:  # noqa: BLE001
+                logger.warning("master_briefing_task_stop_failed")
+        if watcher_stop is not None and watcher_task is not None:
+            watcher_stop.set()
+            try:
+                await watcher_task
+            except Exception:  # noqa: BLE001
+                logger.warning("phase_watcher_task_stop_failed")
         if remote_mcp_client is not None:
             try:
                 await remote_mcp_client.aclose()

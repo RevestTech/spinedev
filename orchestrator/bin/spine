@@ -61,6 +61,46 @@ import json, os, sys, traceback
 sys.path.insert(0, os.environ["SPINE_HOME"])
 sys.path.insert(1, os.path.join(os.environ["SPINE_HOME"], "verify"))
 try:
+    from shared.secrets import SecretAdapter, SecretNotFound, set_default_adapter
+    class FileSecretsAdapter(SecretAdapter):
+        name = "file"
+        def __init__(self, filepath: str) -> None:
+            self.filepath = filepath
+        def _read(self) -> dict[str, str]:
+            if not os.path.exists(self.filepath):
+                return {}
+            try:
+                with open(self.filepath, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                return {}
+        def _write(self, store: dict[str, str]) -> None:
+            os.makedirs(os.path.dirname(self.filepath), exist_ok=True)
+            with open(self.filepath, "w", encoding="utf-8") as f:
+                json.dump(store, f)
+        async def get(self, path: str) -> str:
+            store = self._read()
+            if path in store:
+                return store[path]
+            raise SecretNotFound(path)
+        async def put(self, path: str, value: str) -> None:
+            store = self._read()
+            store[path] = value
+            self._write(store)
+        async def delete(self, path: str) -> None:
+            store = self._read()
+            if path in store:
+                del store[path]
+                self._write(store)
+        async def list(self, prefix: str = "") -> list[str]:
+            store = self._read()
+            return sorted(k for k in store if k.startswith(prefix))
+    set_default_adapter(FileSecretsAdapter(os.path.join(os.environ["SPINE_HOME"], ".spine", "mock_secrets.json")))
+except Exception as e:
+    print(json.dumps({"status": "error", "error": f"secrets_bootstrap_failed: {e}", "data": None}))
+    sys.exit(0)
+
+try:
     from shared.mcp.tools import TOOL_REGISTRY, discover_tools
 except Exception as e:
     print(json.dumps({"status": "error", "error": f"import_failed: {e}", "data": None}))
@@ -143,6 +183,15 @@ _flag_val() {
   REST_ARGS=(${keep[@]+"${keep[@]}"}); printf '%s' "$out"
 }
 
+# Helper to slice REST_ARGS safely under custom IFS
+_slice_rest_args() {
+  local count="${1:-1}"
+  local old_ifs="$IFS"
+  IFS=$' \t\n'
+  REST_ARGS=("${REST_ARGS[@]:$count}")
+  IFS="$old_ifs"
+}
+
 _help_for() { case "$1" in
   new)      echo "spine project new <name> [--type greenfield|evolve|audit_only|operate] [--description D] [--bundle B] [--owner E]";;
   status)   echo "spine project status <id> [--watch] [--format json|table|brief]";;
@@ -160,7 +209,7 @@ esac; }
 # ─── project: mutating → MCP ──────────────────────────────────────────
 cmd_project_new() {
   [[ "${REST_ARGS[0]:-}" == "--help" || ${#REST_ARGS[@]} -eq 0 ]] && { _help_for new >&2; return 0; }
-  local name="${REST_ARGS[0]}"; REST_ARGS=("${REST_ARGS[@]:1}")
+  local name="${REST_ARGS[0]}"; _slice_rest_args 1
   [[ -z "$name" ]] && _die 2 "project new: <name> required"
   local ptype owner desc bundle p
   ptype="$(_flag_val --type)";       ptype="${ptype:-greenfield}"
@@ -188,7 +237,7 @@ cmd_project_approve() {
   [[ "${REST_ARGS[0]:-}" == "--help" ]] && { _help_for approve >&2; return 0; }
   local pid="${REST_ARGS[0]:-}" phase="${REST_ARGS[1]:-}"
   [[ -z "$pid" || -z "$phase" ]] && _die 2 "approve: <project_id> <phase> required"
-  REST_ARGS=("${REST_ARGS[@]:2}")
+  _slice_rest_args 2
   local notes approver p grant tok
   notes="$(_flag_val --notes)"
   approver="$(_flag_val --approver)"; approver="${approver:-$SPINE_DEFAULT_OWNER}"
@@ -205,7 +254,7 @@ cmd_project_reject() {
   [[ "${REST_ARGS[0]:-}" == "--help" ]] && { _help_for reject >&2; return 0; }
   local pid="${REST_ARGS[0]:-}" phase="${REST_ARGS[1]:-}" reason approver
   [[ -z "$pid" || -z "$phase" ]] && _die 2 "reject: <project_id> <phase> required"
-  REST_ARGS=("${REST_ARGS[@]:2}")
+  _slice_rest_args 2
   reason="$(_flag_val --reason)"; [[ -z "$reason" ]] && _die 2 "reject: --reason required"
   approver="$(_flag_val --approver)"; approver="${approver:-$SPINE_DEFAULT_OWNER}"
   _emit "$(_mcp_call gate_reject "$(printf '{"project_id":"%s","phase":"%s","approver":"%s","decision":"rejected","reason":"%s"}' \
@@ -216,7 +265,7 @@ cmd_project_rollback() {
   [[ "${REST_ARGS[0]:-}" == "--help" ]] && { _help_for rollback >&2; return 0; }
   local pid="${REST_ARGS[0]:-}" target="${REST_ARGS[1]:-}" reason
   [[ -z "$pid" || -z "$target" ]] && _die 2 "rollback: <project_id> <target_phase> required"
-  REST_ARGS=("${REST_ARGS[@]:2}")
+  _slice_rest_args 2
   reason="$(_flag_val --reason)"; [[ -z "$reason" ]] && _die 2 "rollback: --reason required"
   _emit "$(_mcp_call phase_advance "$(printf '{"project_id":"%s","target_phase":"%s","rollback":true,"reason":"%s"}' \
     "$(_jq "$pid")" "$(_jq "$target")" "$(_jq "$reason")")")"
@@ -246,7 +295,7 @@ cmd_project_show() {
 
 cmd_project_audit() {
   local pid="${REST_ARGS[0]:-}"; [[ -z "$pid" ]] && _die 2 "audit: <project_id> required"
-  REST_ARGS=("${REST_ARGS[@]:1}"); local fmt sql
+  _slice_rest_args 1; local fmt sql
   fmt="$(_flag_val --export)"
   sql="SELECT created_at::text, action, phase, actor, rationale FROM spine_audit.events
         WHERE project_id::text = '$(_sql "$pid")' ORDER BY created_at DESC;"
@@ -265,7 +314,7 @@ cmd_project_audit() {
 cmd_intake() {
   [[ "${REST_ARGS[0]:-}" == "--help" || ${#REST_ARGS[@]} -eq 0 ]] && {
     _help_for intake >&2; return 0; }
-  local pid="${REST_ARGS[0]}"; REST_ARGS=("${REST_ARGS[@]:1}")
+  local pid="${REST_ARGS[0]}"; _slice_rest_args 1
   [[ -z "$pid" ]] && _die 2 "intake: <project_id> required"
   local template actor
   template="$(_flag_val --template)"

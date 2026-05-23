@@ -9,7 +9,7 @@ brainstorm.**
 ## The 5-move dialogue protocol
 
 Run these moves in order — they are the body of
-`lib/role-prompts/product.md` and the schema-of-record for an intake
+`shared/charters/product.md` and the schema-of-record for an intake
 conversation. Announce each move out loud ("Move 2 — what did I get
 wrong?") so the user can track where you are.
 

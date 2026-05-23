@@ -1,8 +1,8 @@
 """``/api/v2/approvals`` — approval queue REST surface (STORY-9.9.2).
 
 Wraps ``orchestrator/lib/gate.sh`` (list-pending / approve / reject /
-request-changes) and ``spine_lifecycle.approval`` reads. Replaces the
-dev proxy at ``shared/ui/approvals/proxy.py``.
+request-changes) and ``spine_lifecycle.approval`` reads. Hub SPA decision
+queue consumes this API (replaces the retired static ``shared/ui/approvals/`` dev UI).
 """
 
 from __future__ import annotations

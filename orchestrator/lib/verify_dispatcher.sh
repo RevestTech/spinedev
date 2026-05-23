@@ -85,11 +85,12 @@ _apply_bundle_overrides() {
   fi
 }
 
-# BuildArtifact fetch — sealed JSON payload from spine_audit.build_artifact
-# (V14+); empty string if missing so the caller can fail cleanly.
+# BuildArtifact fetch — sealed JSON payload from project metadata (STORY-7.2.3 / STORY-8.5.1);
+# empty string if missing so the caller can fail cleanly.
 _fetch_build_artifact() {
-  _psql -c "SELECT payload::text FROM spine_audit.build_artifact
-              WHERE id = '$(_sql_esc "$1")' LIMIT 1;" 2>/dev/null || true
+  _psql -c "SELECT (metadata->'build_artifact')::text FROM spine_lifecycle.project
+              WHERE metadata->'build_artifact'->>'artifact_uuid' = '$(_sql_esc "$1")'
+                 OR metadata->'build_artifact'->>'directive_id' = '$(_sql_esc "$1")' LIMIT 1;" 2>/dev/null || true
 }
 
 # Blueprint composer — combines project_type + bundle blueprint_overrides
@@ -160,6 +161,14 @@ verify_dispatch() {
   [[ -z "$pid" || -z "$baid" ]] && { _verr "invalid_input" \
     "dispatch requires <project_id> <build_artifact_id> [--dry-run]"; return 2; }
 
+  local resolved
+  resolved="$(_psql -c "SELECT id FROM spine_lifecycle.project
+                          WHERE id::text = '$(_sql_esc "$pid")'
+                             OR name = '$(_sql_esc "$pid")'
+                             OR project_uuid::text = '$(_sql_esc "$pid")' LIMIT 1;" 2>/dev/null || true)"
+  resolved="${resolved//[[:space:]]/}"
+  [[ -n "$resolved" ]] && pid="$resolved"
+
   local pinv; pinv="$(route_locked_pipeline_version "$pid")" || return $?
   local cfg; cfg="$(_load_verify_config "$VERIFY_DEFAULT_PHASE")"
   cfg="$(_apply_bundle_overrides "$cfg" "$pid")"
@@ -170,12 +179,14 @@ verify_dispatch() {
   local payload
   payload=$(printf '{"project_id":"%s","actor":"orchestrator.verify_dispatcher","pipeline_version":"%s","build_artifact":%s,"blueprint":%s}' \
                    "$pid" "$pinv" "$artifact" "$blueprint")
+  local mcp_tool
+  mcp_tool="$(_get_mcp_tool verify)"
   if [[ -n "$dry" ]]; then
     printf '{"ok":true,"dry_run":true,"tool":"%s","payload_bytes":%d}\n' \
-      "${SPINE_MCP_TOOL[verify]}" "${#payload}"; return 0
+      "$mcp_tool" "${#payload}"; return 0
   fi
 
-  local resp; resp="$(_mcp_call "${SPINE_MCP_TOOL[verify]}" "$payload")" \
+  local resp; resp="$(_mcp_call "$mcp_tool" "$payload")" \
     || { _verr "mcp_call_failed" "verify_audit dispatch failed pid=$pid"; return 4; }
   local failed_did
   failed_did="$(printf '%s' "$resp" | sed -n 's/.*"build_directive_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"

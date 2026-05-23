@@ -1,7 +1,9 @@
 # Spine — AI software company in a box
 
 > **AI does the work. AI scrum masters bring decisions to you. The audit log proves you understood what you signed.**
->
+
+**Master reference (read this first):** [`docs/SPINE_MASTER.md`](docs/SPINE_MASTER.md) — what the system must do, component list, gaps, doc map.
+
 > Drivers: [`docs/V3_DESIGN_DECISIONS.md`](docs/V3_DESIGN_DECISIONS.md) — especially **#1** (positioning), **#3** (Hub-as-product), **#15** (NOT SaaS), **#17** (4 deployment shapes), **#18** (closed-source v1.0).
 
 Spine is enterprise-grade software for **organizations** or **individuals** who want production software. It is the only product in the market that ships a full AI engineering organization — product, architecture, build, verify, release, operate, compliance — under your control, with an audit trail that holds up in front of a regulator.

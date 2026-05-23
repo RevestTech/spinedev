@@ -34,18 +34,28 @@ class PlanDispatchInput(BaseModel):
 
     project_id: str = Field(..., min_length=1,
                             description="BIGINT project id or project name.")
-    phase: str = Field(..., min_length=1,
-                       description="Plan phase to enter (currently only 'plan_in_progress').")
-    directive: str = Field(..., min_length=1,
-                           description="Directive body handed to the Plan subsystem.")
     pipeline_version: str = Field(..., min_length=1,
                                   description="Locked sdlc-pipeline.yaml version (EPIC-1.7.5).")
+    directive: str = Field(default="RUN_INTAKE", min_length=1,
+                           description="Directive body handed to the Plan subsystem.")
+    role: str = Field(default="product", min_length=1,
+                      description="Target role (router.sh sends this field).")
+    phase: str | None = Field(
+        default=None,
+        description="Plan phase context; defaults to plan_in_progress for hub roles.",
+    )
     template: str | None = Field(
         default=None,
         description="Intake template name; if omitted the runner picks via project_type/metadata.",
     )
-    actor: str = Field(default="product", min_length=1,
-                       description="Role/user driving the dispatch (audit attribution).")
+    actor: str | None = Field(
+        default=None,
+        description="Audit attribution; defaults to ``role`` when omitted.",
+    )
+    extra_context: str | None = Field(
+        default=None,
+        description="Optional feedback block for fix-loop dispatches.",
+    )
 
 
 class PlanDispatchResponse(BaseModel):
@@ -56,17 +66,27 @@ class PlanDispatchResponse(BaseModel):
     project_id: str
     directive_id: str
     accepted: bool
+    role: str | None = None
+    artifact_key: str | None = None
+    artifact_md: str | None = None
     template: str | None = None
     answer_count: int = 0
     prd_valid: bool = False
     prd_fields_populated: int = 0
     audit_event_count: int = 0
+    error_class: str | None = None
+    error_message: str | None = None
 
 
 def _error(code: str, message: str, *, retryable: bool = False) -> ToolResponse:
     return ToolResponse(status="error", data={}, error=ToolError(
         code=code, message=message, retryable=retryable,
     ))
+
+
+_HUB_PLAN_ROLES = frozenset({
+    "planner", "architect", "conductor", "qa", "release_manager",
+})
 
 
 @register_tool(
@@ -77,17 +97,44 @@ def _error(code: str, message: str, *, retryable: bool = False) -> ToolResponse:
     tags=("plan", "dispatch", "intake"),
 )
 def plan_dispatch(payload: PlanDispatchInput) -> ToolResponse:
-    """Drive intake_runner if a tty is available; otherwise surface a guidance error."""
-    directive_id = f"dir_{uuid4().hex[:12]}"
+    """Route plan-phase work: hub artifact roles or interactive intake."""
+    actor = payload.actor or payload.role
     logger.info("mcp_tool_call", extra={
         "tool": "plan_dispatch", "project_id": payload.project_id,
-        "actor": payload.actor,
+        "role": payload.role, "actor": actor,
     })
 
-    # Late import — keeps the module importable when plan_runtime deps are
-    # absent (e.g. PyYAML missing on a fresh checkout before `make install`).
+    if payload.role in _HUB_PLAN_ROLES:
+        try:
+            from plan.runtime.hub_role_runner import run_plan_hub_role  # noqa: PLC0415
+        except Exception as exc:  # noqa: BLE001
+            return _error("plan_runtime_unavailable",
+                          f"plan.runtime.hub_role_runner import failed: {exc}")
+        result = run_plan_hub_role(
+            project_id=payload.project_id,
+            role=payload.role,
+            directive=payload.directive,
+            actor=actor,
+            extra_context=payload.extra_context or "",
+        )
+        if not result.ok:
+            return _error(
+                result.error_class or "plan_role_failed",
+                result.error_message or f"{payload.role} dispatch failed",
+            )
+        return ToolResponse(status="ok", data=PlanDispatchResponse(
+            project_id=payload.project_id,
+            directive_id=result.directive_id,
+            accepted=True,
+            role=result.role,
+            artifact_key=result.artifact_key,
+            artifact_md=result.artifact_md,
+        ).model_dump(mode="json"))
+
+    # Legacy intake path (CLI / tty).
+    directive_id = f"dir_{uuid4().hex[:12]}"
     try:
-        from plan.runtime.intake_runner import (
+        from plan.runtime.intake_runner import (  # noqa: PLC0415
             IntakeNotInteractive, IntakeTemplateNotFound, run_intake,
         )
     except Exception as exc:  # noqa: BLE001
@@ -96,7 +143,7 @@ def plan_dispatch(payload: PlanDispatchInput) -> ToolResponse:
 
     try:
         result = run_intake(
-            payload.project_id, template=payload.template, actor=payload.actor,
+            payload.project_id, template=payload.template, actor=actor,
         )
     except IntakeNotInteractive as exc:
         return _error("intake_requires_tty", str(exc))
@@ -110,6 +157,7 @@ def plan_dispatch(payload: PlanDispatchInput) -> ToolResponse:
         project_id=payload.project_id,
         directive_id=directive_id,
         accepted=True,
+        role=payload.role,
         template=result.template,
         answer_count=len(result.answers),
         prd_valid=result.prd_valid,

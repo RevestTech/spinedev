@@ -3,8 +3,11 @@
 > **Status:** Canonical pre-launch checklist. The v3 build is **CODE COMPLETE** (57 commits since `1da7148`).
 > All remaining gates are **operational / external / install-time** — nothing here requires more agent code.
 >
-> **Source of truth.** This doc is the single launch gate. If `docs/STATUS.md` or
-> `docs/V3_BUILD_SEQUENCE.md` conflicts, this doc wins for the launch decision.
+> **Source of truth.** This doc is the single launch gate for **customer ship**.
+> For **product vision and wiring priorities**, read
+> [`docs/SPINE_MASTER.md`](SPINE_MASTER.md) first. If this doc conflicts with
+> SPINE_MASTER on *what to build*, SPINE_MASTER wins. If anything conflicts on
+> *launch ops*, this doc wins.
 >
 > **Owner:** Khash (solo human per #21). AI agents may execute items where flagged
 > *(AI-drivable)* — but launch sign-off is human-only.

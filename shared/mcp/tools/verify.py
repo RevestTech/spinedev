@@ -528,6 +528,89 @@ def verify_audit(payload: VerifyAuditInput) -> ToolResponse:
                         audit_id=persisted_audit_id, citation=citations)
 
 
+class VerifyHubReviewInput(BaseModel):
+    """Hub post-ack code review (workspace → BuildArtifact → verify_audit)."""
+
+    model_config = ConfigDict(extra="forbid")
+    project_id: str = Field(..., min_length=1)
+    pipeline_version: str = Field(..., min_length=1)
+    role: str = Field(default="auditor", min_length=1)
+    directive: str = Field(default="CODE_REVIEW", min_length=1)
+    actor: str | None = Field(default=None)
+
+
+class VerifyHubReviewResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    project_id: str
+    directive_id: str
+    accepted: bool
+    result_kind: str
+    artifact_md: str = ""
+    blocked: bool = False
+    pass_fail: PassFail = "pass"
+    findings_count: int = 0
+    used_tron: bool = False
+
+
+@register_tool(
+    name="verify_hub_review",
+    input_model=VerifyHubReviewInput,
+    story="STORY-8.7.1",
+    description="Hub code review: seal workspace artifact and run verify_audit (TRON).",
+    tags=("verify", "hub", "code_review"),
+    requires_citation=True,
+)
+def verify_hub_review(payload: VerifyHubReviewInput) -> ToolResponse:
+    """Build workspace artifact + invoke TRON; LLM fallback if TRON unavailable."""
+    actor = payload.actor or payload.role
+    try:
+        from verify.runtime.hub_verify_runner import run_hub_code_review  # noqa: PLC0415
+    except Exception as exc:  # noqa: BLE001
+        return _error_envelope(
+            code="verify_runtime_unavailable",
+            retryable=False,
+            audit_id=uuid4(),
+            message=f"verify.runtime.hub_verify_runner import failed: {exc}",
+            duration_ms=0,
+        )
+    result = run_hub_code_review(
+        project_id=payload.project_id,
+        pipeline_version=payload.pipeline_version,
+        actor=actor,
+    )
+    if not result.ok:
+        return ToolResponse(
+            status="error",
+            data={},
+            error=ToolError(
+                code=result.error_class or "verify_hub_review_failed",
+                message=result.error_message or "verify failed",
+                retryable=False,
+            ),
+        )
+    result_kind = "code_review_blocked" if result.blocked else "code_review_pass"
+    return ToolResponse(
+        status="ok",
+        data=VerifyHubReviewResponse(
+            project_id=payload.project_id,
+            directive_id=result.directive_id,
+            accepted=True,
+            result_kind=result_kind,
+            artifact_md=result.review_md,
+            blocked=result.blocked,
+            pass_fail=result.pass_fail,
+            findings_count=result.findings_count,
+            used_tron=result.used_tron,
+        ).model_dump(mode="json"),
+    )
+
+
 __all__: list[str] = [
-    "PassFail", "VerifyAuditInput", "VerifyFindings", "verify_audit",
+    "PassFail",
+    "VerifyAuditInput",
+    "VerifyFindings",
+    "VerifyHubReviewInput",
+    "VerifyHubReviewResponse",
+    "verify_audit",
+    "verify_hub_review",
 ]

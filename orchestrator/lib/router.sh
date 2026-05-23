@@ -27,20 +27,26 @@ PHASES_YAML="${SPINE_PHASES_YAML:-$SCRIPT_DIR/../state/phases.yaml}"
 . "$SCRIPT_DIR/_env_loader.sh"
 SPINE_MCP_HTTP_URL="${SPINE_MCP_HTTP_URL:-http://localhost:8765/tools}"
 SPINE_AUDIT_CLI="${SPINE_AUDIT_CLI:-$SCRIPT_DIR/../../shared/audit/audit_record.py}"
+SPINE_HOME="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+# Pick a Python: project venv takes precedence
+if [[ -x "$SPINE_HOME/.venv/bin/python3" ]]; then
+  _SPINE_PY="$SPINE_HOME/.venv/bin/python3"
+elif command -v python3 >/dev/null 2>&1; then
+  _SPINE_PY="$(command -v python3)"
+else
+  _SPINE_PY=""
+fi
 
 # Manifest: subsystem -> MCP tool. Single source of truth for FR-5 mapping.
-# NOTE: declare the associative array empty FIRST, then assign keys one at
-# a time. The inline `declare -A X=([k]=v ...)` form triggers an
-# "unbound variable" error on some bash builds (e.g. macOS bash 3.2 or
-# bash 5 under `set -u` when the file is sourced rather than executed —
-# the parser tries to expand `[plan]` as a glob/parameter ref before the
-# array exists). The explicit form below is portable + diagnoseable and
-# fixes wave-8 smoke test F11 (`gate.sh status` → `plan: unbound variable`
-# from router.sh:31 when gate.sh sources router.sh).
-declare -A SPINE_MCP_TOOL=()
-SPINE_MCP_TOOL[plan]=plan_dispatch
-SPINE_MCP_TOOL[build]=build_dispatch
-SPINE_MCP_TOOL[verify]=verify_audit
+# Replaces associative array for compatibility with macOS Bash 3.2.
+_get_mcp_tool() {
+  case "$1" in
+    plan)   printf 'plan_dispatch' ;;
+    build)  printf 'build_dispatch' ;;
+    verify) printf 'verify_audit' ;;
+  esac
+}
 
 _psql() { psql "$SPINE_DB_URL" -v ON_ERROR_STOP=1 -A -t -X -q "$@"; }
 _log()  { printf '%s router.sh %s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "${*:2}" >&2; }
@@ -52,26 +58,108 @@ _err_json() {
   _log ERROR "$code: $message"
 }
 
+_mcp_inprocess_call() {
+  local tool="$1" payload="$2"
+  SPINE_TOOL="$tool" SPINE_PAYLOAD="$payload" SPINE_HOME="$SPINE_HOME" \
+    "$_SPINE_PY" - <<'PY'
+import json, os, sys, traceback
+sys.path.insert(0, os.environ["SPINE_HOME"])
+sys.path.insert(1, os.path.join(os.environ["SPINE_HOME"], "verify"))
+try:
+    from shared.secrets import SecretAdapter, SecretNotFound, set_default_adapter
+    class FileSecretsAdapter(SecretAdapter):
+        name = "file"
+        def __init__(self, filepath: str) -> None:
+            self.filepath = filepath
+        def _read(self) -> dict[str, str]:
+            if not os.path.exists(self.filepath):
+                return {}
+            try:
+                with open(self.filepath, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                return {}
+        def _write(self, store: dict[str, str]) -> None:
+            os.makedirs(os.path.dirname(self.filepath), exist_ok=True)
+            with open(self.filepath, "w", encoding="utf-8") as f:
+                json.dump(store, f)
+        async def get(self, path: str) -> str:
+            store = self._read()
+            if path in store:
+                return store[path]
+            raise SecretNotFound(path)
+        async def put(self, path: str, value: str) -> None:
+            store = self._read()
+            store[path] = value
+            self._write(store)
+        async def delete(self, path: str) -> None:
+            store = self._read()
+            if path in store:
+                del store[path]
+                self._write(store)
+        async def list(self, prefix: str = "") -> list[str]:
+            store = self._read()
+            return sorted(k for k in store if k.startswith(prefix))
+    set_default_adapter(FileSecretsAdapter(os.path.join(os.environ["SPINE_HOME"], ".spine", "mock_secrets.json")))
+except Exception as e:
+    print(json.dumps({"status": "error", "error": f"secrets_bootstrap_failed: {e}", "data": None}))
+    sys.exit(0)
+
+try:
+    from shared.mcp.tools import TOOL_REGISTRY, discover_tools
+except Exception as e:
+    print(json.dumps({"status": "error", "error": f"import_failed: {e}", "data": None}))
+    sys.exit(0)
+discover_tools()
+name = os.environ["SPINE_TOOL"]
+spec = TOOL_REGISTRY.get(name)
+if spec is None:
+    print(json.dumps({"status": "error", "error": f"unknown_tool: {name}", "data": None}))
+    sys.exit(0)
+try:
+    payload = spec.input_model.model_validate_json(os.environ["SPINE_PAYLOAD"])
+    result = spec.fn(payload)
+except Exception as e:
+    print(json.dumps({"status": "error", "error": str(e),
+                      "data": None, "trace": traceback.format_exc()}))
+    sys.exit(0)
+if hasattr(result, "model_dump_json"):
+    print(result.model_dump_json())
+elif hasattr(result, "model_dump"):
+    print(json.dumps(result.model_dump(mode="json"), default=str))
+else:
+    print(json.dumps(result, default=str))
+PY
+}
+
 # ─────────────────────────────────────────────────────────────────────
-# MCP transport — prefer the `mcp` CLI (stdio); fall back to HTTP POST.
-# Both transports speak the same JSON tool contract (STORY-2.2.1).
+# MCP transport — prefer standard stdio/inprocess, fallback to HTTP.
 # ─────────────────────────────────────────────────────────────────────
 _mcp_call() {
   local tool="$1" payload="$2"
   if command -v mcp >/dev/null 2>&1; then
     mcp call "$tool" --json "$payload"
+  elif [[ -n "$_SPINE_PY" && -d "$SPINE_HOME/shared/mcp" ]]; then
+    _mcp_inprocess_call "$tool" "$payload"
   elif command -v curl >/dev/null 2>&1; then
     curl -fsS -H 'Content-Type: application/json' \
       -X POST "$SPINE_MCP_HTTP_URL/$tool" --data "$payload"
   else
-    _err_json "mcp_unavailable" "no mcp CLI and no curl on PATH"; return 1
+    _err_json "mcp_unavailable" "no mcp CLI, no Python, and no curl on PATH"; return 1
   fi
 }
 
 # Pipeline-version lookup (STORY-9.4.2 / EPIC-1.7.5). HARD ERROR if missing:
 # no project row => no lock => no dispatch. Never call MCP without this.
 route_locked_pipeline_version() {
-  local pid="$1" out
+  local pid="$1" out resolved
+  resolved="$(_psql -c "SELECT id FROM spine_lifecycle.project
+                          WHERE id::text = '$(_sql_esc "$pid")'
+                             OR name = '$(_sql_esc "$pid")'
+                             OR project_uuid::text = '$(_sql_esc "$pid")' LIMIT 1;" 2>/dev/null || true)"
+  resolved="${resolved//[[:space:]]/}"
+  [[ -n "$resolved" ]] && pid="$resolved"
+
   out="$(_psql -c "SELECT pipeline_version FROM spine_lifecycle.project WHERE id = $pid;")" \
     || { _err_json "db_error" "could not read project pid=$pid"; return 2; }
   out="${out//[[:space:]]/}"
@@ -93,7 +181,8 @@ route_decide_subsystem() {
         sub("^[[:space:]]+subsystem:[[:space:]]+",""); print; exit }' "$PHASES_YAML")"
   fi
   sub="${sub//[[:space:]]/}"
-  [[ -z "$sub" || -z "${SPINE_MCP_TOOL[$sub]:-}" ]] \
+  local tool; tool="$(_get_mcp_tool "$sub")"
+  [[ -z "$sub" || -z "$tool" ]] \
     && { _err_json "unknown_phase" "phase '$phase' has no routable subsystem"; return 4; }
   printf '%s' "$sub"
 }
@@ -123,7 +212,7 @@ SQL
 route_dispatch_to_subsystem() {
   local sub="$1" role="$2" directive="$3" pid="$4"
   local parent="${5:-}" budget="${6:-}"
-  local tool="${SPINE_MCP_TOOL[$sub]:-}"
+  local tool; tool="$(_get_mcp_tool "$sub")"
   [[ -z "$tool" ]] && { _err_json "unknown_subsystem" "no MCP tool for '$sub'"; return 5; }
   local pinv; pinv="$(route_locked_pipeline_version "$pid")" || return $?
 

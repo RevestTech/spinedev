@@ -32,7 +32,7 @@ STORY-6.3.1" is a single index lookup.
 | `BACKLOG.md` / `*roadmap.md` | `parse_roadmap` | `Initiative` → `Epic` → `Story` with PART_OF |
 | `ADR-*.md`, `docs/decisions/*` | `parse_adr` | `SUPERSEDES` edges |
 | `CHANGELOG.md` | `parse_changelog` | `Release` nodes per version |
-| `lib/role-prompts/*.md` | `parse_role_prompt` | `Role` + `Constraint` nodes |
+| `shared/charters/*.md` | `parse_role_prompt` | `Role` + `Constraint` nodes |
 | `teams/<role>/memory.md` | `parse_memory_md` | `MemoryLesson` (scope=`project`) + TOUCHES |
 | `playbook/<role>/lessons.md` | `parse_playbook` | `MemoryLesson` (scope=`cross_project`) |
 
@@ -76,7 +76,7 @@ Until then, `cli.py` provides standalone access:
 
     python -m build.kg.doc_parser.cli parse docs/PRD.md
     python -m build.kg.doc_parser.cli reindex --root docs/ --dry-run
-    python -m build.kg.doc_parser.cli validate lib/role-prompts/architect.md
+    python -m build.kg.doc_parser.cli validate shared/charters/architect.md
     python -m build.kg.doc_parser.cli references docs/BACKLOG.md --resolve
 
 Exit codes match the indexer CLI (0 success, 1 errors during work, 2

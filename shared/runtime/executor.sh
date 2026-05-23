@@ -15,7 +15,7 @@
 #   1. via stdin redirection from <prompt-file>, or
 #   2. via a file-path flag (e.g., aider's --message-file)
 # This prevents prompt content from leaking through /proc/<pid>/cmdline or
-# `ps -ef` output on shared hosts. See PROTOCOL.md hardening notes.
+# `ps -ef` output on shared hosts. See docs/_archived/v1-PROTOCOL.md hardening notes.
 #
 # Selection priority:
 #   1. EXECUTOR_CMD env var explicitly set → use that

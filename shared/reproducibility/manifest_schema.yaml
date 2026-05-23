@@ -32,7 +32,7 @@ pipeline:                        # Locked pipeline manifest the project runs aga
 
 role:                            # Role + skills active when the directive fired.
   role_name: <string>            # planner | architect | engineer | qa | ...
-  role_prompt_path: <path>       # lib/role-prompts/<role>.md.
+  role_prompt_path: <path>       # shared/charters/<role>.md.
   role_prompt_sha256: <hex>      # SHA-256 of the prompt body.
   skills_active: [<slug>, ...]   # Slugs from shared/skills that were triggered.
   skills_versions: {<slug>: <version>}  # Version map at capture time.

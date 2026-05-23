@@ -56,6 +56,6 @@ agent's own loop. The auditor still runs (STORY-7.4.3 verifies your
 `kg_impact` claim), but on a *much smaller* set of claims because you
 caught the trivially-wrong ones first.
 
-Cross-refs: `REQ-INIT-7 FR-3`, `STORY-7.4.3`, `lib/role-prompts/engineer.md`
+Cross-refs: `REQ-INIT-7 FR-3`, `STORY-7.4.3`, `shared/charters/engineer.md`
 (the KG section already requires `impact_radius`; this skill makes the
 self-check the cap-stone, not the first step).

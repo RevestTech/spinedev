@@ -111,9 +111,9 @@ For: solo founders and early mid-market who want to focus on product instead of 
 | DigitalOcean | API token with project-scoped `read+write` |
 | Hostinger | API key with project-scoped access (v1.1 long-tail support) |
 
-3. The vendor runs `tools/byoc-provision.sh --cloud <cloud> --account <id> --region <region>` against YOUR account
-4. Spine provisions: Hub container (on the cloud's managed compute) + OpenBao + Postgres + Keycloak + ingress + DNS + TLS
-5. You receive a Hub URL + a Keycloak admin email invite
+1. The vendor runs `tools/byoc-provision.sh --cloud <cloud> --account <id> --region <region>` against YOUR account
+2. Spine provisions: Hub container (on the cloud's managed compute) + OpenBao + Postgres + Keycloak + ingress + DNS + TLS
+3. You receive a Hub URL + a Keycloak admin email invite
 
 After provisioning, you operate the Hub via the Hub web UI exactly like the laptop shape. Vendor ops sees nothing inside your Hub — only infra-level metrics (CPU, memory, disk) needed to keep the lights on.
 

@@ -7,6 +7,8 @@ Drop into `teams/datawright/directive.md`. Datawright is built for embarrassingl
 ```markdown
 # Directive — Process <N> <ITEM TYPE> through <PIPELINE>
 
+## Long job: 120
+
 ## What & why
 <one paragraph: what each item gets, why we're doing this, what the output unlocks>
 
@@ -22,7 +24,7 @@ Drop into `teams/datawright/directive.md`. Datawright is built for embarrassingl
 4. <step 4, e.g. "Upsert to classification_examples">
 
 ## Decomposition
-Spawn 10 workers. Each worker handles roughly N/10 items disjoint from the others. Use a deterministic split (e.g. `id % 10 == worker_index`) so reruns are idempotent.
+Spawn 10 workers. Each worker handles roughly N/10 items disjoint from the others. Use a deterministic split (e.g. `id % 10 == worker_index`) so reruns are idempotent. For slices that can exceed the default daemon wall clock (**25 min**), add **`## Long job: <minutes>`** (or `6h` / `2d`) to **each** heavy **`workers/NN-directive.md`** — the hint does not auto-copy from the manager directive (**`docs/_archived/v1-PROTOCOL.md`** §6).
 
 ## Resumability
 The script MUST be safe to re-run — use unique constraints / ON CONFLICT semantics so partial progress is preserved across crashes.

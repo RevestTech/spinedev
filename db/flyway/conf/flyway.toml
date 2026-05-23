@@ -1,0 +1,20 @@
+# Flyway 10 configuration for the Spine recording DB.
+#
+# Connection details come from the FLYWAY_URL / FLYWAY_USER / FLYWAY_PASSWORD
+# environment variables (set via docker-compose .env). This file pins the
+# migration directory, target schema, and the baseline policy.
+
+[flyway]
+locations = ["filesystem:/flyway/sql"]
+baselineOnMigrate = true
+baselineVersion = "0"
+validateOnMigrate = true
+mixed = false
+outOfOrder = false
+encoding = "UTF-8"
+
+# Schema is implicit. The `spine` Postgres role's default search_path is
+# `public`, which is where every CREATE TABLE / VIEW lands. Flyway 10's
+# TOML config no longer accepts a `schemas` key under `[flyway]` (it lives
+# under `[environments.<name>]` if you need it). Leaving it implicit is
+# simpler and matches the docker-compose dev stack we ship.

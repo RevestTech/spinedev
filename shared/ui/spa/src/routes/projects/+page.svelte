@@ -29,6 +29,15 @@
   let loading = true;
   let error: string | null = null;
   let pollHandle: number | null = null;
+  let showAutomated = false;
+
+  $: filteredProjects = projects.filter(p => {
+    if (showAutomated) return true;
+    const isSmokeOwner = p.owner === 'smoke-harness';
+    const isSmokeName = p.name ? p.name.startsWith('smoke-') : false;
+    const isTerminated = p.status === 'terminated';
+    return !isSmokeOwner && !isSmokeName && !isTerminated;
+  });
 
   // Live per-project role tracking via SSE.
   let activeByProject: Record<string, { role: string; startedAt: number }> = {};
@@ -102,9 +111,20 @@
     }
   }
 
+  function phaseIndex(phase: string | undefined): number {
+    if (!phase) return -1;
+    const p = phase.toLowerCase();
+    if (p === 'intake') return 0;
+    if (p.startsWith('plan')) return 1;
+    if (p.startsWith('build')) return 2;
+    if (p.startsWith('verify') || p === 'acceptance') return 3;
+    if (p === 'released' || p === 'release' || p === 'operate' || p === 'retro') return 4;
+    return -1;
+  }
+
   function phaseClass(phase: string, current: string): string {
     const idx = PHASES.indexOf(phase as any);
-    const cur = PHASES.indexOf(current as any);
+    const cur = phaseIndex(current);
     if (idx < 0 || cur < 0) return 'bg-surface-200 text-surface-700 dark:bg-surface-700 dark:text-surface-200';
     if (idx < cur) return 'bg-severity-info text-white';
     if (idx === cur) return 'bg-accent text-white';
@@ -147,9 +167,15 @@
 
 <PanelHeader
   title="Projects"
-  subtitle={projects.length > 0 ? `${projects.length} project${projects.length === 1 ? '' : 's'} in this Hub` : 'No projects yet'}
+  subtitle={filteredProjects.length > 0 ? `${filteredProjects.length} project${filteredProjects.length === 1 ? '' : 's'} shown` : 'No projects shown'}
 >
-  <a href="{base}/" class="btn-primary text-sm">+ New project</a>
+  <div class="flex items-center gap-4">
+    <label class="flex items-center gap-2 text-xs text-surface-700 dark:text-surface-200 cursor-pointer">
+      <input type="checkbox" bind:checked={showAutomated} class="rounded border-surface-300 text-accent focus:ring-accent" />
+      Show automated test runs
+    </label>
+    <a href="{base}/" class="btn-primary text-sm">+ New project</a>
+  </div>
 </PanelHeader>
 
 {#if error}
@@ -160,12 +186,18 @@
 
 {#if loading}
   <div class="flex items-center justify-center py-10"><LoadingSpinner label="Loading projects" /></div>
-{:else if projects.length === 0}
-  <section class="panel-card text-center">
+{:else if filteredProjects.length === 0}
+  <section class="panel-card text-center py-8">
     <p class="mb-3 text-sm text-surface-700 dark:text-surface-200">
-      No projects in this Hub yet.
+      {#if projects.length > 0}
+        No user-driven projects shown. Toggle "Show automated test runs" to see smoke tests.
+      {:else}
+        No projects in this Hub yet.
+      {/if}
     </p>
-    <a href="{base}/" class="btn-primary text-sm">Start your first project →</a>
+    {#if projects.length === 0}
+      <a href="{base}/" class="btn-primary text-sm">Start your first project →</a>
+    {/if}
   </section>
 {:else}
   <section class="panel-card overflow-hidden p-0">
@@ -181,7 +213,7 @@
         </tr>
       </thead>
       <tbody>
-        {#each projects as p (p.project_id)}
+        {#each filteredProjects as p (p.project_id)}
           {@const active = activeByProject[p.project_id]}
           {@const pending = pendingByProject[p.project_id] ?? 0}
           {@const elapsed = active ? Math.max(0, Math.round((nowTick - active.startedAt) / 1000)) : 0}

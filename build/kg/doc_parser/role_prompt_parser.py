@@ -146,7 +146,7 @@ def _attach_lessons(content: str, doc: ParsedDoc, role_name: str,
 
 
 def _infer_role_name(prompt_path: str) -> str:
-    """``lib/role-prompts/architect.md`` → ``architect``. Fallback:
+    """``shared/charters/architect.md`` → ``architect``. Fallback:
     parent directory (for ``teams/<role>/memory.md`` reuse)."""
     if not prompt_path: return "unknown"
     p = PurePosixPath(prompt_path); stem = p.stem

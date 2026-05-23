@@ -216,12 +216,43 @@ async def _synthesize_prd_and_seed_approval(
                     if row:
                         project_pk = int(row["id"])
             if project_pk is not None:
+                prd_patch = {"prd_md": prd_md}
                 async with pool.acquire() as conn:
                     await conn.execute(
                         "UPDATE spine_lifecycle.project SET metadata = "
                         "COALESCE(metadata, '{}'::jsonb) || $1::jsonb WHERE id = $2",
-                        _json.dumps({"prd_md": prd_md}),
+                        _json.dumps(prd_patch),
                         project_pk,
+                    )
+                    meta_row = await conn.fetchrow(
+                        "SELECT metadata FROM spine_lifecycle.project WHERE id = $1",
+                        project_pk,
+                    )
+                try:
+                    from shared.runtime.project_workspace import promote_plan_artifacts  # noqa: PLC0415
+
+                    meta = meta_row["metadata"] if meta_row else {}
+                    if isinstance(meta, str):
+                        meta = _json.loads(meta or "{}")
+                    commit_patch = promote_plan_artifacts(
+                        project_id,
+                        prd_patch,
+                        metadata=meta if isinstance(meta, dict) else {},
+                        role="product",
+                        project_name=project_name,
+                    )
+                    if commit_patch:
+                        async with pool.acquire() as conn2:
+                            await conn2.execute(
+                                "UPDATE spine_lifecycle.project SET metadata = "
+                                "metadata || $1::jsonb WHERE id = $2",
+                                _json.dumps(commit_patch),
+                                project_pk,
+                            )
+                except Exception as prom_exc:  # noqa: BLE001
+                    logger.warning(
+                        "prd_promote_failed",
+                        extra={"project_id": project_id, "error": str(prom_exc)},
                     )
     except Exception as exc:  # noqa: BLE001
         logger.warning("prd_persist_failed", extra={"project_id": project_id, "error": str(exc)})
@@ -314,8 +345,9 @@ async def intake_chat(
             detail={
                 "error_code": "llm_error",
                 "message": f"{type(exc).__name__}: {str(exc)[:300]}",
-                "hint": "Check ANTHROPIC_API_KEY is set in the host shell and rebuild via "
-                        "tools/hub-up.sh --rebuild.",
+                "hint": "LLM key missing or invalid. hub-up loads from KMac Vault when "
+                        "kmac-vault is running; otherwise export ANTHROPIC_API_KEY and "
+                        "run tools/hub-up.sh --rebuild.",
             },
         ) from exc
 

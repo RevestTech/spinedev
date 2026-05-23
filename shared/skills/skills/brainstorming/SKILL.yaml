@@ -30,4 +30,4 @@ metadata:
   cross_refs:
     - REQ-INIT-1 §1.5 FR-2 (interrogation as the front door)
     - STORY-1.1.4 (front-door interrogation — execution-time dedupe)
-    - lib/role-prompts/product.md (the 5-move protocol body)
+    - shared/charters/product.md (the 5-move protocol body)

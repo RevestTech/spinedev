@@ -92,14 +92,14 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# ── Source-tree resolution (lib/role-prompts vs build/roles post-migration) ─
+# ── Source-tree resolution (shared/charters canonical) ─
 resolve_role_prompts_src() {
-  if [[ -d "$SOURCE/build/roles" ]]; then
+  if [[ -d "$SOURCE/shared/charters" ]]; then
+    printf '%s\n' "$SOURCE/shared/charters"
+  elif [[ -d "$SOURCE/build/roles" ]]; then
     printf '%s\n' "$SOURCE/build/roles"
-  elif [[ -d "$SOURCE/lib/role-prompts" ]]; then
-    printf '%s\n' "$SOURCE/lib/role-prompts"
   else
-    err "No role-prompts source found (looked in build/roles, lib/role-prompts)"
+    err "No role-prompts source found (expected shared/charters/)"
     exit 1
   fi
 }
@@ -143,10 +143,12 @@ install_role_prompts() {
       [[ -f "$d/prompt.md" ]] && safe_copy_file "$d/prompt.md" "$rp_dst/$role.md"
     done
   else
-    # legacy layout: lib/role-prompts/<role>.md
+    # shared/charters/<role>.md
     local f base
     for f in "$rp_src"/*.md; do
       base="$(basename "$f")"
+      [[ "$base" == "README.md" ]] && continue
+      [[ "$base" == "enterprise_directives.md" ]] && continue
       [[ "$base" == _* ]] && continue
       safe_copy_file "$f" "$rp_dst/$base"
     done

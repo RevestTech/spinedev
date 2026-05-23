@@ -189,7 +189,7 @@ def capture_manifest(directive_id: str, *, directive_text: str = "",
     model_id, provider = _query_model_decision(directive_id, db_url)
     pipe_path = ctx.get("pipeline_manifest_path") or ""
     role_name = ctx.get("role") or "unknown"
-    rprompt = role_prompt_path or f"lib/role-prompts/{role_name}.md"
+    rprompt = role_prompt_path or f"shared/charters/{role_name}.md"
     skills, sk_versions = _active_skills()
 
     return RunManifest(

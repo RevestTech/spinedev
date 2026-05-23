@@ -158,13 +158,15 @@ class AutoRecoveryManager:
 
     @classmethod
     def from_default_handoff(cls) -> "AutoRecoveryManager":
-        """Discover targets from the watchdog's default state dirs.
+        """Discover v1 file-bus targets when present.
 
-        Reads ``.planning/orchestration/agent-handoff/`` (matches
-        watchdog.sh's ``HANDOFF_BASE``) and the per-role
-        ``teams/<role>/state/pids/manager.pid`` convention.
+        Returns an empty manager when ``.planning/orchestration/`` is absent
+        (normal on a v3 Hub platform clone). Hub container recovery is owned
+        by Docker/K8s + ``recovery/health.py``, not this adapter.
         """
         base = Path(".planning/orchestration/agent-handoff")
+        if not base.is_dir():
+            return cls([])
         targets: list[SupervisedTarget] = []
         # Auxiliary supervised processes. lib/run-standalone-watcher.sh was
         # deleted in Wave 0 Pass 2 (commit e6e54d2) per V3_TRIAGE T5 DELETE

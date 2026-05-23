@@ -113,7 +113,7 @@ stage_modified() {
 }
 
 step "Staging user-modified files from $LITE_DIR"
-stage_modified "role-prompts" "lib/role-prompts"
+stage_modified "role-prompts" "shared/charters"
 stage_modified "skills"       "shared/skills/skills"
 stage_modified "templates/intake" "plan/templates/intake"
 stage_modified "recipes"      "recipes"

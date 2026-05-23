@@ -7,7 +7,7 @@ Pattern absorbed from `obra/superpowers` — see
 
 ## Why auto-triggering skills exist
 
-A role's base prompt (e.g. `lib/role-prompts/engineer.md`) is the part the
+A role's base prompt (e.g. `shared/charters/engineer.md`) is the part the
 agent *always* sees. Skills are the part it sees **only when the moment is
 right** — e.g. `verification-before-completion` only matters when the
 agent is about to seal a `BuildArtifact`; jamming it into the base prompt
@@ -163,5 +163,5 @@ follow-on quality (or follow-on cost) back to the skill that fired.
 - `REQ-INIT-7 FR-3` — `BuildArtifact` refuse-to-emit rule the
   verification skill backs.
 - Role-prompt integration is a **follow-up story** — this module does
-  not edit `lib/role-prompts/*.md` files. Wire-in lives in the role
+  not edit `shared/charters/*.md` files. Wire-in lives in the role
   daemon.

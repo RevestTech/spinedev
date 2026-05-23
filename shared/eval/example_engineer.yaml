@@ -9,7 +9,7 @@ created_at: 2026-05-16
 created_by: khash@khash.com
 
 baseline:
-  prompt_path: lib/role-prompts/engineer.md
+  prompt_path: shared/charters/engineer.md
   prompt_sha: 0000000000000000000000000000000000000000000000000000000000000000  # populated by `spine eval baseline`
   model: claude-opus-4-7
   recorded_scores:

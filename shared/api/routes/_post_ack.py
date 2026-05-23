@@ -1,19 +1,21 @@
-"""Post-ack side-effect hooks for the SDLC chain.
+"""Post-ack side-effect hooks for the canonical SDLC pipeline.
 
-When a user acks a decision card, this module dispatches the next role
-in the SDLC pipeline based on the card's metadata.kind:
+When a user acks a decision card, this module advances the project through
+``orchestrator/state/phases.yaml`` (via ``_pipeline_bridge``) and dispatches
+the next role based on ``metadata.kind``.
 
-  prd_approval     → advance to phase=plan, dispatch architect for TRD
-  trd_approval     → advance to phase=build, dispatch engineer for impl
-  impl_approval    → advance to phase=verify, dispatch qa for test plan
-  qa_approval      → advance to phase=release, mark project complete
+Canonical phase flow (simplified):
+
+  intake → plan_in_progress → plan_approved → build_in_progress →
+  build_complete → verify_in_progress → verify_approved → acceptance →
+  released → operate → retro
 
 Each role call is a real LLM dispatch using the role's charter from
-shared/charters/<role>.md. Output gets persisted to project.metadata
-and pushed as the next approval card.
+``shared/charters/<role>.md``. Output is persisted to ``project.metadata``
+and surfaced as the next approval card on the Decision Queue.
 
-All work runs as fire-and-forget asyncio tasks so the ack response
-lands fast. Failures are logged but never raise out of this module.
+All work runs as fire-and-forget asyncio tasks so the ack response lands
+fast. Failures are logged but never raise out of this module.
 """
 
 from __future__ import annotations
@@ -27,6 +29,27 @@ import uuid
 from pathlib import Path
 from typing import Any, Optional
 
+from shared.api.routes._pipeline_bridge import (
+    PHASE_ACCEPTANCE,
+    PHASE_BUILD_COMPLETE,
+    PHASE_BUILD_IN_PROGRESS,
+    PHASE_PLAN_APPROVED,
+    PHASE_PLAN_IN_PROGRESS,
+    PHASE_RELEASED,
+    PHASE_VERIFY_APPROVED,
+    PHASE_VERIFY_IN_PROGRESS,
+    advance_lifecycle_phase,
+    advance_sequence,
+    default_workspace_root,
+    phase_bucket,
+    workspace_host_path,
+)
+from shared.runtime.project_workspace import resolve_code_dir
+from shared.api.routes._role_dispatch_bridge import (
+    KIND_ROLE_DISPATCH,
+    RoleDispatchResult,
+    dispatch_role_for_kind,
+)
 from shared.llm import LLMRequest, Message, call_async
 
 logger = logging.getLogger("spine.api.post_ack")
@@ -129,8 +152,25 @@ async def _advance_phase(project_id: str, target_phase: str) -> None:
             )
 
 
+_DECISION_BODY_MAX = 63_000
+
+
+def _fit_card_body(body: str, *, max_len: int = _DECISION_BODY_MAX) -> str:
+    if len(body) <= max_len:
+        return body
+    suffix = (
+        "\n\n---\n\n_(truncated for decision queue limit; "
+        "see project workspace / metadata for full content)_"
+    )
+    keep = max(0, max_len - len(suffix))
+    return body[:keep] + suffix
+
+
 def _enqueue(card_kwargs: dict[str, Any]) -> None:
     from shared.api.routes.decisions import DecisionCard, enqueue_decision
+    body = card_kwargs.get("body")
+    if isinstance(body, str):
+        card_kwargs = {**card_kwargs, "body": _fit_card_body(body)}
     card = DecisionCard(decision_id=str(uuid.uuid4()), **card_kwargs)
     enqueue_decision(card)
     logger.info("post_ack_card_enqueued", extra={
@@ -154,6 +194,254 @@ def _emit(event_type: str, *, project_uuid: str, role: str, **extra: Any) -> Non
         })
     except Exception as exc:  # noqa: BLE001
         logger.debug("emit_failed", extra={"event": event_type, "error": str(exc)})
+
+
+# Card metadata for roles dispatched via orchestrator bridge.
+_ACK_CARD_META: dict[str, tuple[str, str]] = {
+    "prd_approval": ("roadmap_approval", PHASE_PLAN_IN_PROGRESS),
+    "roadmap_approval": ("trd_approval", PHASE_PLAN_IN_PROGRESS),
+    "trd_approval": ("sprint_plan_approval", PHASE_PLAN_IN_PROGRESS),
+    "devops_approval": ("qa_approval", PHASE_VERIFY_IN_PROGRESS),
+    "qa_approval": ("release_gate_approval", PHASE_RELEASED),
+}
+
+
+async def _orchestrate_hub_role(
+    *,
+    kind: str,
+    project: dict[str, Any],
+    actor: str,
+    approval_card_kind: str | None = None,
+    next_phase: str | None = None,
+    extra: dict[str, Any] | None = None,
+) -> bool:
+    """Dispatch via orchestrator MCP bridge; enqueue the next approval card.
+
+    Returns True when orchestrator dispatch handled the role (success or
+    failure card enqueued). Returns False when this kind has no bridge
+    mapping — caller should use legacy inline dispatch.
+    """
+    if kind not in KIND_ROLE_DISPATCH:
+        return False
+
+    project_id = project["project_uuid"]
+    project_name = project["name"]
+    spec = KIND_ROLE_DISPATCH[kind]
+    _emit("role_started", project_uuid=project_id, role=spec.role,
+          message=f"{spec.role} role dispatched via orchestrator…")
+
+    result = await dispatch_role_for_kind(
+        kind=kind, project_id=project_id, actor=actor, extra=extra,
+    )
+    if result is None:
+        return False
+
+    if not result.ok:
+        _emit("role_failed", project_uuid=project_id, role=spec.role,
+              error=result.error or "dispatch failed")
+        _enqueue({
+            "decision_class": "approval",
+            "project_id": project_id,
+            "title": f"{spec.role.upper()} role FAILED — {project_name}",
+            "body": (
+                f"Orchestrator dispatch to **{spec.role}** failed.\n\n"
+                f"**Error:** `{result.error or 'unknown'}`\n\n"
+                f"Fix the root cause, then re-ack the upstream card."
+            ),
+            "severity": "critical",
+            "actions": ["ack", "reject"],
+            "metadata": {
+                "kind": "role_failure",
+                "project_uuid": project_id,
+                "project_name": project_name,
+                "failed_role": spec.role,
+                "error_message": (result.error or "")[:500],
+            },
+        })
+        return True
+
+    data = result.data
+    artifact_key = data.get("artifact_key") or ""
+    artifact_md = data.get("artifact_md") or ""
+    result_kind = data.get("result_kind") or approval_card_kind
+
+    if result_kind == "deploy" or kind == "local_deploy_prompt":
+        _emit("role_finished", project_uuid=project_id, role=spec.role,
+              message="local deploy dispatched via orchestrator")
+        return True
+
+    card_kind = approval_card_kind or result_kind or f"{spec.role}_approval"
+    target_phase = next_phase or _ACK_CARD_META.get(kind, (None, None))[1] or phase_bucket(PHASE_PLAN_IN_PROGRESS)
+
+    if card_kind == "code_approval":
+        files_written = (data.get("extra") or {}).get("files_written", 0)
+        run_block = (data.get("extra") or {}).get("run_block", "")
+        tree = (data.get("extra") or {}).get("file_tree") or []
+        tree_lines = [f"  - `{p}` ({len(c):,} bytes)" for p, c in tree]
+        tree_md = "\n".join(tree_lines) if tree_lines else "  _(no files parsed)_"
+        body = (
+            f"The engineer role generated **{files_written}** files via orchestrator. "
+            f"Approve to run security review.\n\n"
+            f"Review files in the project workspace; full engineer intro is in metadata.\n\n"
+            f"## Generated files\n\n{tree_md}\n\n"
+            f"## Local run\n\n```bash\n{run_block or '# (no RUN block)'}\n```"
+        )
+        title = f"Approve CODE output — {project_name}"
+    elif card_kind in ("code_review_pass", "code_review_blocked"):
+        tron_note = " (TRON verify_audit)" if (data.get("used_tron")) else ""
+        if card_kind == "code_review_blocked":
+            title = f"Code review BLOCKED — {project_name}"
+            body = (
+                f"Verify found critical/high issues{tron_note}. Approve to send "
+                f"engineer back with these findings.\n\n---\n\n{artifact_md}"
+            )
+            severity = "critical"
+        else:
+            title = f"Code review PASS — {project_name}"
+            body = (
+                f"No critical/high findings{tron_note}. Approve to advance to "
+                f"**devops install + smoke**.\n\n---\n\n{artifact_md}"
+            )
+            severity = "info"
+        _emit("role_finished", project_uuid=project_id, role=spec.role,
+              artifact_chars=len(artifact_md))
+        _enqueue({
+            "decision_class": "approval",
+            "project_id": project_id,
+            "title": title,
+            "body": body,
+            "severity": severity,
+            "actions": ["ack", "reject"],
+            "metadata": {
+                "kind": card_kind,
+                "project_name": project_name,
+                "project_uuid": project_id,
+                "produced_by": spec.role,
+                "directive_id": result.directive_id,
+                "orchestrator_tool": result.tool,
+                "used_tron": bool(data.get("used_tron")),
+            },
+        })
+        await _persist_metadata_patch(project_id, {
+            "code_review_md": artifact_md,
+            "code_review_blocked": card_kind == "code_review_blocked",
+        })
+        return True
+    elif card_kind == "devops_approval":
+        install_ok = (data.get("extra") or {}).get("install_ok", True)
+        status_line = "✅ install completed cleanly" if install_ok else "❌ install FAILED"
+        body = (
+            f"DevOps ran install via orchestrator.\n\n**Status:** {status_line}\n\n"
+            f"## Install log\n\n```\n{artifact_md}\n```"
+        )
+        title = f"DevOps stand-up — {project_name}"
+    else:
+        body = (
+            f"The {spec.role} role produced this artifact (orchestrator dispatch). "
+            f"Approve to advance to **{phase_bucket(target_phase)}** and dispatch the next role.\n\n"
+            f"---\n\n{artifact_md}"
+        )
+        title = f"Approve {spec.role.upper()} output — {project_name}"
+
+    _emit("role_finished", project_uuid=project_id, role=spec.role,
+          artifact_key=artifact_key, artifact_chars=len(artifact_md))
+    _enqueue({
+        "decision_class": "approval",
+        "project_id": project_id,
+        "title": title,
+        "body": body,
+        "severity": "info",
+        "actions": ["ack", "reject"],
+        "metadata": {
+            "kind": card_kind,
+            "project_name": project_name,
+            "project_uuid": project_id,
+            "advances_phase_to": target_phase,
+            "produced_by": spec.role,
+            "directive_id": result.directive_id,
+            "orchestrator_tool": result.tool,
+        },
+    })
+    return True
+
+
+async def _enqueue_orchestrator_gap(
+    *,
+    kind: str,
+    project: dict[str, Any],
+    expected_role: str | None = None,
+) -> None:
+    """Enqueue a gap card when orchestrator bridge did not handle the ack kind."""
+    project_id = project["project_uuid"]
+    project_name = project["name"]
+    spec = KIND_ROLE_DISPATCH.get(kind)
+    role = expected_role or (spec.role if spec else "unknown")
+    mapped = kind in KIND_ROLE_DISPATCH
+    reason = (
+        f"No orchestrator mapping for ack kind `{kind}`."
+        if not mapped
+        else f"Orchestrator dispatch returned no result for `{kind}` → **{role}**."
+    )
+    logger.error(
+        "orchestrator_gap",
+        extra={"kind": kind, "project_id": project_id, "role": role, "mapped": mapped},
+    )
+    _emit(
+        "role_failed",
+        project_uuid=project_id,
+        role=role,
+        error=reason,
+    )
+    _enqueue({
+        "decision_class": "approval",
+        "project_id": project_id,
+        "title": f"Orchestrator gap — {project_name}",
+        "body": (
+            f"The approval chain stopped because Spine could not dispatch via the "
+            f"orchestrator bridge.\n\n**Ack kind:** `{kind}`\n"
+            f"**Expected role:** `{role}`\n\n**Reason:** {reason}\n\n"
+            f"Inline LLM fallback is disabled. Wire the bridge or fix MCP dispatch, "
+            f"then re-ack the upstream card."
+        ),
+        "severity": "critical",
+        "actions": ["ack", "reject"],
+        "metadata": {
+            "kind": "orchestrator_gap",
+            "project_uuid": project_id,
+            "project_name": project_name,
+            "ack_kind": kind,
+            "expected_role": role,
+            "bridge_mapped": mapped,
+        },
+    })
+
+
+async def _require_orchestrate_hub_role(
+    *,
+    kind: str,
+    project: dict[str, Any],
+    actor: str,
+    approval_card_kind: str | None = None,
+    next_phase: str | None = None,
+    extra: dict[str, Any] | None = None,
+    expected_role: str | None = None,
+) -> bool:
+    """Dispatch via orchestrator or enqueue a gap card — no inline LLM fallback."""
+    handled = await _orchestrate_hub_role(
+        kind=kind,
+        project=project,
+        actor=actor,
+        approval_card_kind=approval_card_kind,
+        next_phase=next_phase,
+        extra=extra,
+    )
+    if not handled:
+        await _enqueue_orchestrator_gap(
+            kind=kind,
+            project=project,
+            expected_role=expected_role,
+        )
+    return handled
 
 
 # ---------------------------------------------------------------------------
@@ -443,23 +731,7 @@ _RUN_BLOCK_RE = re.compile(
     r"^=====\s*RUN\s*=====\s*$(.*?)^=====\s*END RUN\s*=====\s*$",
     re.MULTILINE | re.DOTALL,
 )
-_WORKSPACE_ROOT = Path(_os.environ.get("SPINE_PROJECTS_ROOT", "/var/lib/spine/projects"))
-_WORKSPACE_ROOT_HOST = _os.environ.get("SPINE_PROJECTS_DIR_HOST", str(_WORKSPACE_ROOT))
-
-
-def _workspace_host_path(project_uuid: str) -> str:
-    """Equivalent host path for a project's workspace dir.
-
-    Inside the container we always use /var/lib/spine/projects/<uuid>;
-    on the host the bind-mount target is whatever
-    SPINE_PROJECTS_DIR resolved to in tools/hub-up.sh (default
-    ~/spine-projects). The workspace UI shows THIS path so the user
-    knows where their files actually are.
-    """
-    host = _WORKSPACE_ROOT_HOST.rstrip("/")
-    if host.startswith("~"):
-        host = _os.path.expanduser(host)
-    return f"{host}/{project_uuid}"
+_WORKSPACE_ROOT = default_workspace_root()
 
 
 def _parse_engineer_output(text: str) -> tuple[str, list[tuple[str, str]], str]:
@@ -486,14 +758,18 @@ def _parse_engineer_output(text: str) -> tuple[str, list[tuple[str, str]], str]:
     return intro, files, run_block
 
 
-def _write_workspace_files(project_uuid: str, files: list[tuple[str, str]]) -> int:
-    """Write each (path, content) tuple under <SPINE_PROJECTS_ROOT>/<uuid>/.
+def _write_workspace_files(
+    project_uuid: str,
+    files: list[tuple[str, str]],
+    metadata: dict[str, Any] | None = None,
+) -> int:
+    """Write each (path, content) tuple under the project code workspace.
 
     Returns the count written. Skips any path that escapes the project
     root after resolve(); the parser already filters traversal but
     belt-and-suspenders.
     """
-    project_dir = (_WORKSPACE_ROOT / project_uuid).resolve()
+    project_dir = resolve_code_dir(project_uuid, metadata).resolve()
     project_dir.mkdir(parents=True, exist_ok=True)
     written = 0
     for path, content in files:
@@ -657,21 +933,33 @@ async def _dispatch_code_review(*, project: dict[str, Any]) -> None:
     prior = project.get("metadata", {}) or {}
     _emit("role_started", project_uuid=project_id, role="security_engineer",
           message="security_engineer reviewing generated code…")
-    workspace = (_WORKSPACE_ROOT / project_id).resolve()
+    workspace = resolve_code_dir(project_id, prior).resolve()
     code_blocks: list[str] = []
+    manifest: list[str] = []
+    _SKIP_DIRS = {".next", "node_modules", ".git", ".claude"}
     if workspace.exists():
         for f in sorted(workspace.rglob("*")):
-            if f.is_file() and f.stat().st_size <= 80_000:
+            if not f.is_file():
+                continue
+            rel = f.relative_to(workspace)
+            if any(part in _SKIP_DIRS for part in rel.parts):
+                continue
+            manifest.append(f"- `{rel}` ({f.stat().st_size:,} bytes)")
+            if f.stat().st_size <= 80_000:
                 try:
                     content = f.read_text(encoding="utf-8", errors="replace")
-                    rel = f.relative_to(workspace)
                     code_blocks.append(f"### `{rel}`\n```\n{content}\n```")
                 except Exception:  # noqa: BLE001
                     continue
     code_dump = "\n\n".join(code_blocks)
-    # Trim to a reasonable LLM input ceiling (~120 KB of code text).
-    if len(code_dump) > 120_000:
-        code_dump = code_dump[:120_000] + "\n\n[truncated — review focuses on shown files]"
+    # LLM input ceiling. Sonnet's 200k-token window fits a large app; the
+    # prior 120 KB cap silently dropped files past the alphabetical cutoff,
+    # causing the auditor to report present files as "never produced". The
+    # manifest below lists EVERY file unconditionally so the auditor can
+    # never claim absence for a file that was merely trimmed from the dump.
+    if len(code_dump) > 700_000:
+        code_dump = code_dump[:700_000] + "\n\n[code dump trimmed — see full file manifest above; do NOT report a manifested file as missing]"
+    file_manifest = "\n".join(manifest) or "_(no files)_"
 
     try:
         sec_charter = _load_charter("security_engineer")
@@ -683,7 +971,13 @@ async def _dispatch_code_review(*, project: dict[str, Any]) -> None:
             context_blocks.append("## Approved TRD\n\n" + prior["trd_md"])
         if prior.get("sprint_plan_md"):
             context_blocks.append("## Approved sprint plan\n\n" + prior["sprint_plan_md"])
-        context_blocks.append("## Generated code files\n\n" + code_dump)
+        context_blocks.append(
+            "## Complete file manifest (authoritative — every file that EXISTS)\n\n"
+            "Every path below is present in the workspace. If a file appears "
+            "here, it was produced; do NOT report it as missing. Verify import "
+            "paths against THIS list.\n\n" + file_manifest
+        )
+        context_blocks.append("## Generated code file contents\n\n" + code_dump)
         directives = _load_enterprise_directives()
         system = (
             _CODE_REVIEW_PROMPT
@@ -794,7 +1088,7 @@ async def stop_deployment(project_uuid: str) -> bool:
     if not info:
         return False
     proc = info.get("proc")
-    if proc is not None:
+    if proc is not None and proc.returncode is None:
         try:
             proc.kill()
             await proc.wait()
@@ -805,17 +1099,145 @@ async def stop_deployment(project_uuid: str) -> bool:
     return True
 
 
+_CLI_INSTALL_PREFIXES = (
+    "npm install", "npm ci", "pnpm install", "yarn install",
+    "pip install", "poetry install", "uv sync", "uv pip install",
+)
+
+
+def _detect_cli_container_cmd(workspace: Path, md: dict[str, Any]) -> str | None:
+    """One-shot CLI command for Hub-container run when no web server entry exists."""
+    if (workspace / "smoke_test.sh").is_file():
+        return "bash smoke_test.sh"
+    for rel in ("test_todo.py", "tests/test_todo.py"):
+        if (workspace / rel).is_file():
+            return f"python3 {rel} -v"
+    run_block = (md.get("code_run_block") or "").strip()
+    if run_block and run_block not in ("# (no RUN block)",):
+        lines: list[str] = []
+        for line in run_block.splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            if any(stripped.startswith(p) for p in _CLI_INSTALL_PREFIXES):
+                continue
+            lines.append(stripped)
+        if lines:
+            return " && ".join(lines[:12])
+    if (workspace / "todo.py").is_file():
+        return (
+            'rm -f todo.json && python3 todo.py add "buy milk" && '
+            "python3 todo.py list && python3 todo.py done 1 && python3 todo.py list"
+        )
+    return None
+
+
+async def _dispatch_cli_container_run(
+    *,
+    project_id: str,
+    project_name: str,
+    workspace: Path,
+    cmd: str,
+) -> None:
+    """Run a CLI smoke/demo inside the Hub container; surface stdout (no URL)."""
+    if project_id in _DEPLOY_PIDS:
+        await stop_deployment(project_id)
+
+    import time as _time
+
+    started = _time.time()
+    log = ""
+    rc: int | None = -1
+    try:
+        proc = await asyncio.create_subprocess_shell(
+            cmd,
+            cwd=str(workspace),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        try:
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=120.0)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            log = "[timeout after 120s]\n"
+            rc = -1
+        else:
+            log = (stdout or b"").decode("utf-8", errors="replace")
+            rc = proc.returncode
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("cli_container_run_failed", extra={"project_id": project_id})
+        log = f"[error: {type(exc).__name__}: {exc}]\n"
+        rc = -1
+        proc = None
+
+    ok = rc == 0
+    _DEPLOY_PIDS[project_id] = {
+        "proc": proc,
+        "pid": proc.pid if proc is not None else None,
+        "port": None,
+        "cmd": cmd,
+        "started": started,
+        "url": None,
+        "log_tail": log[-8000:],
+        "cli_mode": True,
+    }
+
+    await _persist_metadata_patch(project_id, {
+        "deploy_cli_last_run": started,
+        "deploy_cli_ok": ok,
+        "deploy_cli_log": log[-4000:],
+        "deploy_local_running": False,
+    })
+
+    _emit(
+        "role_finished",
+        project_uuid=project_id,
+        role="devops_release",
+        cli_mode=True,
+        deploy_ok=ok,
+    )
+
+    status_line = "✅ CLI smoke run passed" if ok else f"❌ CLI smoke run failed (rc={rc})"
+    body = (
+        f"DevOps ran the project **inside the Hub container** as a one-shot CLI "
+        f"(no web server to open). {status_line}\n\n"
+        f"## Command\n\n```bash\n{cmd}\n```\n\n"
+        f"**Workspace:** `{workspace}`\n\n"
+        f"## Output\n\n```\n{log[-6000:] or '(no output)'}\n```\n\n"
+        f"Ack to dismiss. Re-run from the project page **Run in container** button."
+    )
+    _enqueue({
+        "decision_class": "approval",
+        "project_id": project_id,
+        "title": (
+            f"Container CLI run PASS — {project_name}"
+            if ok else f"Container CLI run FAILED — {project_name}"
+        ),
+        "body": body,
+        "severity": "info" if ok else "warning",
+        "actions": ["ack", "reject"],
+        "metadata": {
+            "kind": "deploy_status",
+            "project_uuid": project_id,
+            "project_name": project_name,
+            "deploy_ok": ok,
+            "deploy_cli_mode": True,
+        },
+    })
+
+
 async def _dispatch_local_deploy(*, project: dict[str, Any]) -> None:
     project_id = project["project_uuid"]
     project_name = project["name"]
+    md = project.get("metadata", {}) or {}
     _emit("role_started", project_uuid=project_id, role="devops_release",
           message="standing up local deployment…")
-    workspace = (_WORKSPACE_ROOT / project_id).resolve()
+    workspace = resolve_code_dir(project_id, md).resolve()
     if not workspace.exists():
         logger.warning("local_deploy_no_workspace", extra={"project_id": project_id})
         return
 
-    md = project.get("metadata", {}) or {}
     start_cmds: list[str] = md.get("devops_start_cmds") or []
     # For local review we ALWAYS prefer the dev server over a prod start
     # (prod `next start` / `vite preview` need a build first). Detect the
@@ -836,6 +1258,15 @@ async def _dispatch_local_deploy(*, project: dict[str, Any]) -> None:
         if (workspace / "app.py").exists() or (workspace / "main.py").exists():
             start_cmds = ["python app.py" if (workspace / "app.py").exists() else "python main.py"]
         else:
+            cli_cmd = _detect_cli_container_cmd(workspace, md)
+            if cli_cmd:
+                await _dispatch_cli_container_run(
+                    project_id=project_id,
+                    project_name=project_name,
+                    workspace=workspace,
+                    cmd=cli_cmd,
+                )
+                return
             _emit("role_failed", project_uuid=project_id, role="devops_release",
                   error="no start command in metadata or detectable entry point")
             _enqueue({
@@ -843,7 +1274,7 @@ async def _dispatch_local_deploy(*, project: dict[str, Any]) -> None:
                 "project_id": project_id,
                 "title": f"Local deploy FAILED — {project_name}",
                 "body": "Couldn't find a start command. Engineer didn't emit one and "
-                        "no `package.json` / `app.py` / `main.py` in workspace.",
+                        "no `package.json` / `app.py` / `main.py` / CLI smoke script in workspace.",
                 "severity": "warning", "actions": ["ack", "reject"],
                 "metadata": {"kind": "deploy_status", "project_uuid": project_id,
                              "project_name": project_name, "deploy_ok": False},
@@ -1059,17 +1490,24 @@ def _classify_run_block(run_block: str) -> tuple[list[str], list[str]]:
 async def _dispatch_devops_install(*, project: dict[str, Any]) -> None:
     project_id = project["project_uuid"]
     project_name = project["name"]
+    prior = project.get("metadata", {}) or {}
     _emit("role_started", project_uuid=project_id, role="devops",
           message="devops running install commands…")
-    workspace = (_WORKSPACE_ROOT / project_id).resolve()
+    workspace = resolve_code_dir(project_id, prior).resolve()
     if not workspace.exists():
         logger.warning("devops_no_workspace", extra={"project_id": project_id})
         # Fall back: skip devops, jump to qa.
-        await _advance_phase(project_id, "verify")
+        await advance_sequence(
+            project_id,
+            [(PHASE_BUILD_COMPLETE, False), (PHASE_VERIFY_IN_PROGRESS, False)],
+            actor="devops",
+        )
         proj = (await _load_project_full(project_id)) or project
-        await _dispatch_role(role="qa", project=proj, role_prompt=_QA_PROMPT,
-                             artifact_key="qa_md", next_phase="verify",
-                             approval_card_kind="qa_approval")
+        await _dispatch_role(
+            role="qa", project=proj, role_prompt=_QA_PROMPT,
+            artifact_key="qa_md", next_phase=phase_bucket(PHASE_VERIFY_IN_PROGRESS),
+            approval_card_kind="qa_approval",
+        )
         return
 
     run_block = (project.get("metadata", {}) or {}).get("code_run_block") or ""
@@ -1146,7 +1584,7 @@ async def _dispatch_devops_install(*, project: dict[str, Any]) -> None:
             "project_name": project_name,
             "project_uuid": project_id,
             "install_ok": bool(all_ok),
-            "advances_phase_to": "verify",
+            "advances_phase_to": PHASE_VERIFY_IN_PROGRESS,
             "produced_by": "devops",
         },
     })
@@ -1186,8 +1624,9 @@ async def _dispatch_engineer_codegen(*, project: dict[str, Any]) -> None:
             model=_DEFAULT_MODEL,
             messages=[Message(role="user", content=f"Generate the code for {project_name} now.")],
             system=system,
-            max_tokens=16000,
+            max_tokens=64000,
             temperature=0.2,
+            stream=True,
         ))
         raw = resp.content.strip()
     except Exception as exc:  # noqa: BLE001
@@ -1205,7 +1644,8 @@ async def _dispatch_engineer_codegen(*, project: dict[str, Any]) -> None:
         return
 
     intro_md, files, run_block = _parse_engineer_output(raw)
-    written = _write_workspace_files(project_id, files)
+    workspace = resolve_code_dir(project_id, prior).resolve()
+    written = _write_workspace_files(project_id, files, prior)
     _emit("role_finished", project_uuid=project_id, role="engineer",
           files_written=written, total_chars=sum(len(c) for _, c in files))
 
@@ -1214,8 +1654,8 @@ async def _dispatch_engineer_codegen(*, project: dict[str, Any]) -> None:
         "code_intro_md": intro_md,
         "code_files": [{"path": p, "bytes": len(c)} for p, c in files],
         "code_run_block": run_block,
-        "code_workspace": str((_WORKSPACE_ROOT / project_id).resolve()),
-        "code_workspace_host": _workspace_host_path(project_id),
+        "code_workspace": str(workspace),
+        "code_workspace_host": workspace_host_path(project_id),
     })
 
     # Build card body: intro + file tree + run block.
@@ -1228,7 +1668,7 @@ async def _dispatch_engineer_codegen(*, project: dict[str, Any]) -> None:
         f"## Generated files\n\n{tree_md}\n\n"
         f"## Local run\n\n```bash\n{run_block or '# (no RUN block produced)'}\n```\n\n"
         f"## Workspace location\n\n"
-        f"```\n{_WORKSPACE_ROOT / project_id}\n```"
+        f"```\n{workspace}\n```"
     )
     _enqueue({
         "decision_class": "approval",
@@ -1242,7 +1682,7 @@ async def _dispatch_engineer_codegen(*, project: dict[str, Any]) -> None:
             "project_name": project_name,
             "project_uuid": project_id,
             "files_written": written,
-            "advances_phase_to": "verify",
+            "advances_phase_to": PHASE_VERIFY_IN_PROGRESS,
             "produced_by": "engineer",
         },
     })
@@ -1285,90 +1725,125 @@ async def on_decision_acked(card: Any, *, actor: str) -> None:
                                                   "failed_role": md.get("failed_role")})
         return
 
+    if kind == "orchestrator_gap":
+        logger.info("orchestrator_gap_acked", extra={
+            "project_id": project_id,
+            "ack_kind": md.get("ack_kind"),
+            "expected_role": md.get("expected_role"),
+        })
+        return
+
     project = await _load_project_full(project_id)
     if project is None:
         logger.warning("post_ack_project_missing", extra={"project_id": project_id})
         return
 
     if kind == "prd_approval":
-        await _advance_phase(project_id, "plan")
+        await advance_lifecycle_phase(project_id, PHASE_PLAN_IN_PROGRESS, actor)
         project = (await _load_project_full(project_id)) or project
-        await _dispatch_role(
-            role="planner", project=project, role_prompt=_PLANNER_PROMPT,
-            artifact_key="roadmap_md", next_phase="plan",
+        await _require_orchestrate_hub_role(
+            kind=kind, project=project, actor=actor,
             approval_card_kind="roadmap_approval",
+            next_phase=phase_bucket(PHASE_PLAN_IN_PROGRESS),
+            expected_role="planner",
         )
         return
 
     if kind == "roadmap_approval":
-        await _dispatch_role(
-            role="architect", project=project, role_prompt=_ARCHITECT_PROMPT,
-            artifact_key="trd_md", next_phase="plan",
+        await _require_orchestrate_hub_role(
+            kind=kind, project=project, actor=actor,
             approval_card_kind="trd_approval",
+            next_phase=phase_bucket(PHASE_PLAN_IN_PROGRESS),
+            expected_role="architect",
         )
         return
 
     if kind == "trd_approval":
-        await _dispatch_role(
-            role="conductor", project=project, role_prompt=_CONDUCTOR_PROMPT,
-            artifact_key="sprint_plan_md", next_phase="plan",
+        await _require_orchestrate_hub_role(
+            kind=kind, project=project, actor=actor,
             approval_card_kind="sprint_plan_approval",
+            next_phase=phase_bucket(PHASE_PLAN_IN_PROGRESS),
+            expected_role="conductor",
         )
         return
 
     if kind == "sprint_plan_approval":
-        await _advance_phase(project_id, "build")
+        await advance_sequence(
+            project_id,
+            [(PHASE_PLAN_APPROVED, True), (PHASE_BUILD_IN_PROGRESS, False)],
+            actor,
+        )
         project = (await _load_project_full(project_id)) or project
-        await _dispatch_engineer_codegen(project=project)
+        await _require_orchestrate_hub_role(
+            kind=kind, project=project, actor=actor,
+            approval_card_kind="code_approval",
+            next_phase=PHASE_VERIFY_IN_PROGRESS,
+            expected_role="engineer",
+        )
         return
 
     if kind == "code_approval":
-        # Insert security_engineer + auditor code-review BEFORE devops.
-        # Critical/High findings block the chain + trigger engineer
-        # fix-loop. Clean review → user acks pass card → devops runs.
-        await _dispatch_code_review(project=project)
+        await _require_orchestrate_hub_role(
+            kind=kind, project=project, actor=actor, expected_role="verify",
+        )
         return
 
     if kind == "code_review_pass":
-        # User confirmed the review's recommendation to proceed.
-        await _dispatch_devops_install(project=project)
+        await _require_orchestrate_hub_role(
+            kind=kind, project=project, actor=actor,
+            approval_card_kind="devops_approval",
+            next_phase=PHASE_VERIFY_IN_PROGRESS,
+            expected_role="devops",
+        )
         return
 
     if kind == "code_review_blocked":
-        # User acked the block → fire engineer fix-loop with the review
-        # findings as feedback. Engineer re-codes addressing each one.
         review_md = (project.get("metadata") or {}).get("code_review_md", "")
-        project["_fix_loop_context"] = (
+        feedback = (
             "## Code review found CRITICAL/HIGH issues\n\n"
-            "The security_engineer role found problems with the engineer's "
-            "prior code. Address each finding in this revision; the same "
-            "review will run again on the new code.\n\n"
-            + review_md
+            + _fit_card_body(review_md, max_len=8000)
         )
-        await _dispatch_engineer_codegen_with_feedback(project=project)
+        await _require_orchestrate_hub_role(
+            kind=kind, project=project, actor=actor,
+            approval_card_kind="code_approval",
+            next_phase=PHASE_VERIFY_IN_PROGRESS,
+            extra={"extra_context": feedback},
+            expected_role="engineer",
+        )
         return
 
     if kind == "devops_approval":
-        await _advance_phase(project_id, "verify")
+        await advance_sequence(
+            project_id,
+            [(PHASE_BUILD_COMPLETE, False), (PHASE_VERIFY_IN_PROGRESS, False)],
+            actor,
+        )
         project = (await _load_project_full(project_id)) or project
-        await _dispatch_role(
-            role="qa", project=project, role_prompt=_QA_PROMPT,
-            artifact_key="qa_md", next_phase="verify",
+        await _require_orchestrate_hub_role(
+            kind=kind, project=project, actor=actor,
             approval_card_kind="qa_approval",
+            next_phase=phase_bucket(PHASE_VERIFY_IN_PROGRESS),
+            expected_role="qa",
         )
         return
 
     if kind == "qa_approval":
-        await _dispatch_role(
-            role="release_manager", project=project,
-            role_prompt=_RELEASE_MANAGER_PROMPT,
-            artifact_key="release_gate_md", next_phase="release",
+        await advance_lifecycle_phase(
+            project_id, PHASE_VERIFY_APPROVED, actor, grant_gate=True,
+        )
+        project = (await _load_project_full(project_id)) or project
+        await _require_orchestrate_hub_role(
+            kind=kind, project=project, actor=actor,
             approval_card_kind="release_gate_approval",
+            next_phase=phase_bucket(PHASE_RELEASED),
+            expected_role="release_manager",
         )
         return
 
     if kind == "local_deploy_prompt":
-        await _dispatch_local_deploy(project=project)
+        await _require_orchestrate_hub_role(
+            kind=kind, project=project, actor=actor, expected_role="devops_release",
+        )
         return
 
     if kind == "host_deploy_prompt":
@@ -1410,7 +1885,11 @@ async def on_decision_acked(card: Any, *, actor: str) -> None:
         return
 
     if kind == "release_gate_approval":
-        await _advance_phase(project_id, "release")
+        await advance_sequence(
+            project_id,
+            [(PHASE_ACCEPTANCE, True), (PHASE_RELEASED, True)],
+            actor,
+        )
         # Offer the user TWO deploy paths — Container or Host — plus
         # cloud is documented in release_gate_md (manual paste for now;
         # automated cloud-deploy lands when vault-stored creds wire up).
@@ -1485,8 +1964,7 @@ async def on_decision_acked(card: Any, *, actor: str) -> None:
                 f"All seven roles signed off on **{project['name']}**.\n\n"
                 f"- Artifacts in `metadata`: prd_md, roadmap_md, trd_md, "
                 f"sprint_plan_md, code_intro_md, qa_md, release_gate_md.\n"
-                f"- Generated code lives at /var/lib/spine/projects/"
-                f"`{project_id}`/ inside the Hub container.\n"
+                f"- Generated code lives at `{workspace_host_path(project_id)}`.\n"
                 f"- Next: a human pushes the code to git, runs the "
                 f"approved test plan, then executes the deploy plan from "
                 f"the release gate.\n"
@@ -1557,6 +2035,8 @@ async def _dispatch_engineer_codegen_with_feedback(*, project: dict[str, Any]) -
     project_name = project["name"]
     prior = project.get("metadata", {}) or {}
     feedback = project.get("_fix_loop_context", "")
+    _emit("role_started", project_uuid=project_id, role="engineer",
+          note="re-generating code with review feedback")
     try:
         charter = _load_charter("engineer")
         context_blocks = []
@@ -1580,22 +2060,27 @@ async def _dispatch_engineer_codegen_with_feedback(*, project: dict[str, Any]) -
         resp = await call_async(LLMRequest(
             model=_DEFAULT_MODEL,
             messages=[Message(role="user", content=f"Re-generate the code for {project_name}, addressing the rejection feedback.")],
-            system=system, max_tokens=16000, temperature=0.2,
+            system=system, max_tokens=64000, temperature=0.2, stream=True,
         ))
         raw = resp.content.strip()
     except Exception as exc:  # noqa: BLE001
         logger.exception("engineer_codegen_retry_failed", extra={"project_id": project_id})
+        _emit("role_failed", project_uuid=project_id, role="engineer",
+              error=f"{type(exc).__name__}: {exc}")
         return
 
     intro_md, files, run_block = _parse_engineer_output(raw)
-    written = _write_workspace_files(project_id, files)
+    workspace = resolve_code_dir(project_id, prior).resolve()
+    written = _write_workspace_files(project_id, files, prior)
+    _emit("role_finished", project_uuid=project_id, role="engineer",
+          files_written=written)
 
     await _persist_metadata_patch(project_id, {
         "code_intro_md": intro_md,
         "code_files": [{"path": p, "bytes": len(c)} for p, c in files],
         "code_run_block": run_block,
-        "code_workspace": str((_WORKSPACE_ROOT / project_id).resolve()),
-        "code_workspace_host": _workspace_host_path(project_id),
+        "code_workspace": str(workspace),
+        "code_workspace_host": workspace_host_path(project_id),
         "code_fix_iteration": int(prior.get("code_fix_iteration", 0)) + 1,
     })
 
@@ -1621,7 +2106,7 @@ async def _dispatch_engineer_codegen_with_feedback(*, project: dict[str, Any]) -
             "project_uuid": project_id,
             "files_written": written,
             "fix_iteration": iter_num,
-            "advances_phase_to": "verify",
+            "advances_phase_to": PHASE_VERIFY_IN_PROGRESS,
             "produced_by": "engineer",
         },
     })

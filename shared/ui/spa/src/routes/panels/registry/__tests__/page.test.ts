@@ -31,7 +31,7 @@ import Page from '../+page.svelte';
 const ROLES = {
   ok: true,
   items: [
-    { name: 'architect', tier: 'project', description: 'System architecture', charter_ref: 'lib/role-prompts/architect.md' },
+    { name: 'architect', tier: 'project', description: 'System architecture', charter_ref: 'shared/charters/architect.md' },
     { name: 'director_engineering', tier: 'master', description: 'Master eng director' }
   ]
 };

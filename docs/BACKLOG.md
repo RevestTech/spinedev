@@ -1,6 +1,6 @@
 # Spine — Master Product Backlog
 
-> **Purpose.** Strategic, business-level backlog of Spine's product evolution, structured as **INITIATIVE → EPIC → STORY** so it maps cleanly to Jira (or Linear / GitHub Projects / etc.) when we're ready to import. Not a maintenance checklist — that lives in `IMPROVEMENT_CHECKLIST.md`.
+> **Purpose.** Strategic, business-level backlog of Spine's product evolution, structured as **INITIATIVE → EPIC → STORY** so it maps cleanly to Jira (or Linear / GitHub Projects / etc.) when we're ready to import. Maintenance hygiene lives in `docs/_archived/v1-IMPROVEMENT_CHECKLIST.md` (historical).
 >
 > **Why it exists.** This document is the output of a Spine-style `product`-role conversation Khash + Claude ran on Spine itself: scrutinize the user → finalize requirements → hand off to SDLC. *We are using Spine on Spine.* Every story below should link back to `docs/research/COMPETITIVE_LANDSCAPE.md` for the *why*.
 >
@@ -533,7 +533,7 @@ Maps to REQ FR-8.
   - `docs/PRD.md` (absorbs `reqs/REQ-INIT-1*.md` + `reqs/REQ-INIT-6*.md` with section anchors)
   - `docs/BACKLOG.md` (was `MASTER_BACKLOG.md`)
   - `docs/PRACTICES.md` (absorbs `SPINE_PRACTICES.md` + `PROGRAM_DELIVERY.md` + `EXTENSIONS.md`)
-  - `docs/IMPROVEMENT_CHECKLIST.md` (unchanged)
+  - `docs/_archived/v1-IMPROVEMENT_CHECKLIST.md` (archived)
   - `docs/research/` (unchanged)
 - **2026-05-16 (AM):** Major restructure — unified Spine + TRON architecture per `docs/ARCHITECTURE.md`. INIT-1 renamed to "Plan Subsystem"; INIT-2 absorbs TRON Standards Hierarchy (`EPIC-2.4`); INIT-3 gains TRON Sandbox/Calibration/Cross-LLM (`EPIC-3.5/6/7`); INIT-6 marked cross-cutting foundation; NEW `INIT-7` (Build), `INIT-8` (Verify/TRON), `INIT-9` (Orchestrator). Sprint Plan section added at top.
 
@@ -541,4 +541,4 @@ Maps to REQ FR-8.
 - When marking a story `Done`, leave the line in place and append `*(Done <YYYY-MM-DD>.)*` so the backlog stays a historical record, not just a TODO list.
 - When adding a new story, follow the ID scheme strictly so the Jira-CSV converter (`STORY-5.3.1`) keeps working without ambiguity.
 - When the verdict in `COMPETITIVE_LANDSCAPE.md` shifts (new competitor, new gap), re-tier the affected stories here and note the date in `EPIC-5.2`.
-- **This file is the canonical product backlog.** `IMPROVEMENT_CHECKLIST.md` remains the maintenance/release-hygiene checklist — different scope, both stay.
+- **This file is the canonical product backlog.** Historical maintenance checklist: `docs/_archived/v1-IMPROVEMENT_CHECKLIST.md`.

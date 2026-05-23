@@ -1,6 +1,8 @@
 # Spine v3 — Design Decisions (34 locked)
 
-> **Status:** Canonical record of design decisions locked during the 2026-05-17 design session.
+> **Read first:** [`SPINE_MASTER.md`](SPINE_MASTER.md) for vision, gaps, and doc map.
+> This file is the **decision ledger** (#1–#34). Origin:
+> [`_archived/chatsession-2026-05-17.md`](_archived/chatsession-2026-05-17.md).
 > Reconstructed from `chatsession.md` (~21k-line transcript). Triage agents (T1–T6) used these
 > as drivers for the per-artifact KEEP/REFACTOR/REBUILD/BUILD-NEW/DELETE marks in `docs/V3_TRIAGE.md`
 > (forthcoming).
@@ -128,7 +130,7 @@ Rate limit must persist (federation needs it). Per-user prefs become first-class
 Scrum Guide, PMBOK, SRE handbook, ITIL, NIST. Bundled artifacts distributed Hub→projects.
 **Customer-editable via Hub UI** within bundle policy.
 
-Implication: every charter in `lib/role-prompts/` needs REBUILD against industry anchors (T5 marking).
+Implication: every charter in `shared/charters/` is industry-anchored (T5 marking complete).
 Plus 6 NEW charters per #19 (devops / customer_support / compliance_officer / security_engineer /
 tech_writer / release_manager).
 
@@ -179,7 +181,7 @@ Operate Subsystem.
 them = the mistake every "AI DevOps" startup made.
 
 **8 control planes** (per W2 reframe of R7): each with its own state, vendors, blast radius, and
-human-in-loop seam. Detail to be captured in `lib/role-prompts/devops.md` REBUILD.
+human-in-loop seam. Captured in `shared/charters/devops.md`.
 
 ---
 

@@ -1,0 +1,2713 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Spine Recording Database</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #0f1115;
+    --bg-card: #1a1d22;
+    --bg-card-hover: #20242a;
+    --border: #2a2f36;
+    --border-strong: #3a4048;
+    --fg: #e6e8eb;
+    --fg-dim: #9aa3ad;
+    --fg-very-dim: #6b7380;
+    --accent: #7dd3fc;
+    --accent-dim: #38bdf8;
+    --good: #4ade80;
+    --bad: #f87171;
+    --warn: #fbbf24;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--sans);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code { font-family: var(--mono); background: var(--bg-card); padding: 1px 6px; border-radius: 3px; font-size: 0.9em; }
+
+  .container {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 24px;
+  }
+
+  /* ---- Header ---- */
+  header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 16px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 24px;
+  }
+  header .title h1 {
+    margin: 0;
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  header .title p {
+    margin: 4px 0 0;
+    color: var(--fg-dim);
+    font-size: 13px;
+  }
+  header .meta {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 8px;
+  }
+  header .meta .ts {
+    font-family: var(--mono);
+    color: var(--fg-dim);
+    font-size: 12px;
+  }
+  button.refresh {
+    background: var(--bg-card);
+    color: var(--accent);
+    border: 1px solid var(--border-strong);
+    padding: 6px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    font-family: inherit;
+  }
+  button.refresh:hover { background: var(--bg-card-hover); border-color: var(--accent); }
+  button.refresh:active { transform: translateY(1px); }
+
+  /* ---- KPI strip ---- */
+  .kpi-strip {
+    display: grid;
+    grid-template-columns: repeat(8, minmax(0, 1fr));
+    gap: 12px;
+    margin-bottom: 32px;
+  }
+  @media (max-width: 1180px) { .kpi-strip { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+  @media (max-width: 980px)  { .kpi-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  @media (max-width: 560px)  { .kpi-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  .kpi {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+  }
+  .kpi .label {
+    font-size: 11px;
+    color: var(--fg-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 6px;
+  }
+  .kpi .value {
+    font-family: var(--mono);
+    font-size: 22px;
+    color: var(--accent);
+    font-weight: 500;
+  }
+  .kpi .sub {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--fg-very-dim);
+    margin-top: 2px;
+  }
+
+  /* ---- Sections ---- */
+  section {
+    margin-bottom: 32px;
+  }
+  section h2 {
+    margin: 0 0 12px;
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    color: var(--fg);
+  }
+  section h2 .count {
+    color: var(--fg-very-dim);
+    font-weight: 400;
+    font-size: 12px;
+    margin-left: 8px;
+    font-family: var(--mono);
+  }
+
+  .card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+  }
+
+  /* ---- Tables ---- */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: var(--mono);
+    font-size: 12px;
+  }
+  th, td {
+    text-align: left;
+    padding: 7px 10px;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+    vertical-align: top;
+  }
+  th {
+    color: var(--fg-dim);
+    font-weight: 500;
+    text-transform: uppercase;
+    font-size: 10px;
+    letter-spacing: 0.05em;
+    border-bottom-color: var(--border-strong);
+    background: rgba(0,0,0,0.15);
+  }
+  tbody tr:hover { background: var(--bg-card-hover); }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td.dim { color: var(--fg-dim); }
+  td.null { color: var(--fg-very-dim); font-style: italic; }
+
+  /* Row colour-codes for invocations */
+  tr.outcome-reaped     { background: rgba(248, 113, 113, 0.08); }
+  tr.outcome-reaped:hover { background: rgba(248, 113, 113, 0.14); }
+  tr.outcome-report     { background: rgba(74, 222, 128, 0.06); }
+  tr.outcome-report:hover { background: rgba(74, 222, 128, 0.12); }
+  tr.outcome-inflight   { background: rgba(251, 191, 36, 0.06); }
+  tr.outcome-inflight:hover { background: rgba(251, 191, 36, 0.12); }
+
+  .table-wrap {
+    overflow-x: auto;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+
+  /* ---- Chart layouts ---- */
+  .two-col {
+    display: grid;
+    grid-template-columns: minmax(280px, 1fr) 2fr;
+    gap: 16px;
+  }
+  @media (max-width: 820px) { .two-col { grid-template-columns: 1fr; } }
+  .chart-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    min-height: 240px;
+    position: relative;
+  }
+  .chart-card canvas { max-width: 100%; }
+
+  .empty {
+    color: var(--fg-very-dim);
+    padding: 24px;
+    text-align: center;
+    font-style: italic;
+  }
+
+  /* ---- Payload expand ---- */
+  .payload {
+    font-family: var(--mono);
+    color: var(--fg-dim);
+    cursor: pointer;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 480px;
+    display: inline-block;
+    vertical-align: bottom;
+  }
+  .payload.expanded {
+    white-space: pre-wrap;
+    max-width: none;
+    color: var(--fg);
+  }
+
+  /* ---- Status box ---- */
+  .status-box {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 12px;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--fg-dim);
+  }
+  .status-box strong { color: var(--fg); font-weight: 500; }
+
+  /* ---- Banner (no data) ---- */
+  .banner {
+    background: var(--bg-card);
+    border: 1px solid var(--border-strong);
+    border-left: 3px solid var(--accent);
+    padding: 18px 20px;
+    border-radius: 6px;
+    margin-bottom: 24px;
+    color: var(--fg-dim);
+  }
+  .banner h3 { margin: 0 0 6px; color: var(--fg); font-size: 14px; font-weight: 600; }
+  .banner code { background: rgba(125, 211, 252, 0.1); color: var(--accent); }
+
+  /* ---- Pills ---- */
+  .pill {
+    display: inline-block;
+    padding: 1px 7px;
+    border-radius: 10px;
+    font-size: 10px;
+    font-family: var(--mono);
+    border: 1px solid var(--border-strong);
+    color: var(--fg-dim);
+  }
+  .pill.good   { color: var(--good); border-color: rgba(74, 222, 128, 0.4); }
+  .pill.bad    { color: var(--bad);  border-color: rgba(248, 113, 113, 0.4); }
+  .pill.warn   { color: var(--warn); border-color: rgba(251, 191, 36, 0.4); }
+  .pill.accent { color: var(--accent); border-color: rgba(125, 211, 252, 0.4); }
+
+  /* Fleet pills — instance effective_status */
+  .pill.fleet-alive {
+    color: var(--good);
+    border-color: rgba(74, 222, 128, 0.45);
+    background: rgba(74, 222, 128, 0.10);
+  }
+  .pill.fleet-stale {
+    color: var(--warn);
+    border-color: rgba(251, 191, 36, 0.45);
+    background: rgba(251, 191, 36, 0.10);
+  }
+  .pill.fleet-lost {
+    color: var(--bad);
+    border-color: rgba(248, 113, 113, 0.45);
+    background: rgba(248, 113, 113, 0.10);
+  }
+  .pill.fleet-stopped {
+    color: var(--fg-very-dim);
+    border-color: var(--border-strong);
+    background: rgba(154, 163, 173, 0.08);
+  }
+
+  /* Tier pills for the invocations table */
+  .pill.tier-low {
+    color: var(--fg-dim);
+    border-color: var(--border-strong);
+    background: rgba(154, 163, 173, 0.08);
+  }
+  .pill.tier-medium {
+    color: var(--accent);
+    border-color: rgba(125, 211, 252, 0.4);
+    background: rgba(125, 211, 252, 0.10);
+  }
+  .pill.tier-high {
+    color: #fb923c;
+    border-color: rgba(251, 146, 60, 0.5);
+    background: rgba(251, 146, 60, 0.10);
+  }
+
+  /* ---- Live indicator (top-right of header) ---- */
+  .live-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--fg-dim);
+  }
+  .live-bar label { display: flex; align-items: center; gap: 5px; cursor: pointer; }
+  .live-bar select {
+    background: var(--bg-card);
+    color: var(--fg);
+    border: 1px solid var(--border-strong);
+    border-radius: 4px;
+    padding: 2px 6px;
+    font-family: var(--mono);
+    font-size: 11px;
+  }
+  .live-bar input[type="checkbox"] {
+    accent-color: var(--accent);
+    cursor: pointer;
+  }
+  .live-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--good);
+    box-shadow: 0 0 6px rgba(74, 222, 128, 0.5);
+    animation: pulse 1.5s ease-in-out infinite;
+  }
+  .live-dot.paused {
+    background: var(--fg-very-dim);
+    box-shadow: none;
+    animation: none;
+  }
+  .live-dot.error {
+    background: var(--bad);
+    box-shadow: 0 0 6px rgba(248, 113, 113, 0.5);
+    animation: none;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.45; }
+  }
+
+  /* ---- Filter bar ---- */
+  .filter-bar {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+    margin-bottom: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .filter-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .filter-group .glabel {
+    color: var(--fg-dim);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    min-width: 84px;
+    font-family: var(--mono);
+  }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 10px;
+    border-radius: 12px;
+    border: 1px solid var(--border-strong);
+    background: var(--bg);
+    color: var(--fg-dim);
+    cursor: pointer;
+    font-family: var(--mono);
+    font-size: 11px;
+    user-select: none;
+    transition: background 120ms, color 120ms, border-color 120ms;
+  }
+  .chip:hover { color: var(--fg); border-color: var(--accent); }
+  .chip.active {
+    background: rgba(125, 211, 252, 0.14);
+    color: var(--accent);
+    border-color: rgba(125, 211, 252, 0.55);
+  }
+  .chip .badge {
+    color: var(--fg-very-dim);
+    font-size: 10px;
+  }
+  .chip.active .badge { color: var(--accent-dim); }
+  .filter-clear {
+    color: var(--accent);
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 2px 6px;
+    margin-left: auto;
+  }
+  .filter-clear:hover { text-decoration: underline; }
+
+  /* ---- Row entry / exit animations ---- */
+  @keyframes rowFadeIn {
+    from { background-color: rgba(74, 222, 128, 0.22); }
+    to   { background-color: transparent; }
+  }
+  @keyframes rowFadeOut {
+    from { opacity: 1; }
+    to   { opacity: 0; }
+  }
+  @keyframes cellFlash {
+    0%   { background-color: rgba(125, 211, 252, 0.25); }
+    100% { background-color: transparent; }
+  }
+  tr.row-enter { animation: rowFadeIn 600ms ease-out; }
+  tr.row-leave { animation: rowFadeOut 300ms ease-out forwards; }
+  td.cell-flash { animation: cellFlash 700ms ease-out; }
+
+  /* ---- Page nav (Dashboard / About / Tech) ---- */
+  .page-nav {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-bottom: 18px;
+  }
+  .page-nav a {
+    display: inline-block;
+    padding: 5px 14px;
+    border-radius: 999px;
+    background: var(--bg-card);
+    color: var(--fg-dim);
+    border: 1px solid var(--border-strong);
+    font-size: 12px;
+    font-family: var(--sans);
+    text-decoration: none;
+    transition: background 120ms, color 120ms, border-color 120ms;
+  }
+  .page-nav a:hover {
+    background: var(--bg-card-hover);
+    color: var(--fg);
+    border-color: var(--accent);
+    text-decoration: none;
+  }
+  .page-nav a.active {
+    background: rgba(125, 211, 252, 0.14);
+    color: var(--accent);
+    border-color: rgba(125, 211, 252, 0.55);
+  }
+
+  /* ---- Info icon + tooltip ---- */
+  .has-tooltip {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    margin-left: 6px;
+    vertical-align: middle;
+  }
+  .info-icon {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    color: var(--accent);
+    opacity: 0.55;
+    cursor: help;
+    background: transparent;
+    border: 0;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: opacity 150ms;
+  }
+  .info-icon:hover,
+  .info-icon:focus-visible {
+    opacity: 1;
+    outline: none;
+  }
+  .info-icon svg { display: block; }
+  .tooltip {
+    position: absolute;
+    bottom: calc(100% + 10px);
+    left: 50%;
+    transform: translateX(-50%) translateY(-4px);
+    width: 280px;
+    background: var(--bg-card-hover);
+    color: var(--fg);
+    border: 1px solid var(--accent);
+    border-radius: 6px;
+    padding: 10px 12px;
+    font-size: 12px;
+    font-family: var(--sans);
+    line-height: 1.45;
+    text-align: left;
+    white-space: normal;
+    font-weight: 400;
+    text-transform: none;
+    letter-spacing: normal;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.55);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 150ms ease, transform 150ms ease;
+    z-index: 1000;
+  }
+  .tooltip::after {
+    content: "";
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 0;
+    height: 0;
+    border-left: 6px solid transparent;
+    border-right: 6px solid transparent;
+    border-top: 6px solid var(--accent);
+  }
+  .has-tooltip:hover .tooltip,
+  .has-tooltip:focus-within .tooltip,
+  .has-tooltip.tooltip-open .tooltip {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+    pointer-events: auto;
+  }
+  /* Keep tooltips on-screen near the right edge */
+  .has-tooltip.tip-right .tooltip { left: auto; right: 0; transform: translateX(0) translateY(-4px); }
+  .has-tooltip.tip-right:hover .tooltip,
+  .has-tooltip.tip-right:focus-within .tooltip,
+  .has-tooltip.tip-right.tooltip-open .tooltip {
+    transform: translateX(0) translateY(0);
+  }
+  .has-tooltip.tip-right .tooltip::after { left: auto; right: 6px; transform: none; }
+
+  /* ---- Machines grid (cards) ---- */
+  .machines-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+  }
+  @media (max-width: 1180px) { .machines-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 720px)  { .machines-grid { grid-template-columns: 1fr; } }
+  .machine-card {
+    background: var(--bg-card);
+    border: 1px solid rgba(125, 211, 252, 0.18);
+    border-radius: 8px;
+    padding: 14px 14px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
+  }
+  .machine-card:hover {
+    transform: translateY(-2px);
+    border-color: rgba(125, 211, 252, 0.45);
+    background: var(--bg-card-hover);
+  }
+  .machine-card .top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .machine-card .host {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--fg);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .machine-card .project {
+    font-size: 13px;
+    color: var(--fg);
+    font-weight: 500;
+    word-break: break-word;
+  }
+  .machine-card .project.unknown { color: var(--fg-dim); font-style: italic; font-weight: 400; }
+  .machine-card .path {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--fg-very-dim);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .machine-card .stats {
+    display: flex;
+    gap: 14px;
+    flex-wrap: wrap;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--fg-dim);
+  }
+  .machine-card .stats strong {
+    color: var(--accent);
+    font-weight: 500;
+    font-size: 13px;
+    display: block;
+  }
+  .machine-card .stat-label {
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-size: 10px;
+    color: var(--fg-very-dim);
+  }
+  .machine-card .cost-line {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--fg);
+    border-top: 1px dashed var(--border);
+    padding-top: 8px;
+  }
+  .machine-card .cost-line .dim {
+    color: var(--fg-dim);
+    font-size: 11px;
+    margin-left: 6px;
+  }
+  .machine-card .footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--fg-very-dim);
+    border-top: 1px solid var(--border);
+    padding-top: 8px;
+    flex-wrap: wrap;
+  }
+  .machine-card .footer .meta-bits {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .machine-card .footer a.details-link {
+    color: var(--accent);
+    font-size: 11px;
+  }
+
+  /* Pass M: vitals bars on each machine card */
+  .machine-card .vitals {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    border-top: 1px dashed var(--border);
+    padding-top: 8px;
+  }
+  .machine-card .vital-row {
+    display: grid;
+    grid-template-columns: 36px 1fr auto;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--fg-dim);
+  }
+  .machine-card .vital-row .vital-label {
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-size: 9px;
+    color: var(--fg-very-dim);
+  }
+  .machine-card .vital-row .vital-val {
+    color: var(--fg);
+    font-size: 10px;
+    text-align: right;
+    white-space: nowrap;
+  }
+  .machine-card .vital-track {
+    position: relative;
+    height: 6px;
+    border-radius: 3px;
+    background: rgba(255, 255, 255, 0.04);
+    overflow: hidden;
+    border: 1px solid var(--border);
+  }
+  .machine-card .vital-fill {
+    position: absolute;
+    top: 0; bottom: 0; left: 0;
+    border-radius: 3px;
+    transition: width 240ms ease;
+  }
+  .machine-card .vital-fill.good { background: rgba(74, 222, 128, 0.55); }
+  .machine-card .vital-fill.warn { background: rgba(251, 191, 36, 0.60); }
+  .machine-card .vital-fill.bad  { background: rgba(248, 113, 113, 0.65); }
+  .machine-card .vital-overlay {
+    position: absolute;
+    top: 0; bottom: 0; left: 0;
+    background: rgba(125, 211, 252, 0.65);
+    border-radius: 3px 0 0 3px;
+  }
+  .machine-card .vitals-empty {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--fg-very-dim);
+    font-style: italic;
+    padding: 4px 0;
+  }
+
+  /* Engagement status pills (Pass I-1) */
+  .pill.eng-intake {
+    color: var(--accent);
+    border-color: rgba(125, 211, 252, 0.45);
+    background: rgba(125, 211, 252, 0.10);
+  }
+  .pill.eng-hardening {
+    color: var(--warn);
+    border-color: rgba(251, 191, 36, 0.45);
+    background: rgba(251, 191, 36, 0.10);
+  }
+  .pill.eng-planning {
+    color: #a78bfa;
+    border-color: rgba(167, 139, 250, 0.50);
+    background: rgba(167, 139, 250, 0.10);
+  }
+  .pill.eng-awaiting_approval {
+    color: #fb923c;
+    border-color: rgba(251, 146, 60, 0.50);
+    background: rgba(251, 146, 60, 0.10);
+  }
+  .pill.eng-executing {
+    color: var(--good);
+    border-color: rgba(74, 222, 128, 0.45);
+    background: rgba(74, 222, 128, 0.10);
+    animation: engPulse 1.6s ease-in-out infinite;
+  }
+  .pill.eng-delivered {
+    color: var(--good);
+    border-color: rgba(74, 222, 128, 0.65);
+    background: rgba(74, 222, 128, 0.18);
+  }
+  .pill.eng-cancelled {
+    color: var(--fg-very-dim);
+    border-color: var(--border-strong);
+    background: rgba(154, 163, 173, 0.10);
+  }
+  @keyframes engPulse {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.55; }
+  }
+
+  /* Engagements section header has a button on the right */
+  .section-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    margin: 0 0 12px;
+  }
+  .section-head h2 { margin: 0; }
+  .btn-primary {
+    background: rgba(125, 211, 252, 0.14);
+    color: var(--accent);
+    border: 1px solid rgba(125, 211, 252, 0.55);
+    padding: 6px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    font-family: inherit;
+  }
+  .btn-primary:hover {
+    background: rgba(125, 211, 252, 0.22);
+    border-color: var(--accent);
+  }
+  .btn-primary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  /* Engagement table rows are clickable */
+  #engagements-table tbody tr { cursor: pointer; }
+
+  /* Modal (New Engagement form) */
+  .modal-backdrop {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0, 0, 0, 0.55);
+    display: none;
+    align-items: flex-start;
+    justify-content: center;
+    z-index: 2000;
+    padding: 40px 16px;
+    overflow-y: auto;
+  }
+  .modal-backdrop.open { display: flex; }
+  .modal {
+    background: var(--bg-card);
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    padding: 22px 22px 18px;
+    width: 100%;
+    max-width: 680px;
+    box-shadow: 0 18px 60px rgba(0, 0, 0, 0.55);
+  }
+  .modal h3 {
+    margin: 0 0 14px;
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .modal-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 14px;
+  }
+  .modal-field label {
+    color: var(--fg-dim);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-family: var(--mono);
+  }
+  .modal-field input[type="text"],
+  .modal-field textarea {
+    background: var(--bg);
+    color: var(--fg);
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-family: var(--sans);
+    font-size: 13px;
+  }
+  .modal-field textarea {
+    font-family: var(--mono);
+    resize: vertical;
+    min-height: 240px;
+  }
+  .modal-field input:focus,
+  .modal-field textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+  .modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-top: 8px;
+  }
+  .modal-error {
+    color: var(--bad);
+    font-size: 12px;
+    font-family: var(--mono);
+    margin-top: 4px;
+    min-height: 16px;
+  }
+  .btn-ghost {
+    background: transparent;
+    color: var(--fg-dim);
+    border: 1px solid var(--border-strong);
+    padding: 6px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    font-family: inherit;
+  }
+  .btn-ghost:hover { color: var(--fg); border-color: var(--accent); }
+
+  /* Machine status pills */
+  .pill.machine-alive {
+    color: var(--good);
+    border-color: rgba(74, 222, 128, 0.45);
+    background: rgba(74, 222, 128, 0.10);
+  }
+  .pill.machine-stale {
+    color: var(--warn);
+    border-color: rgba(251, 191, 36, 0.45);
+    background: rgba(251, 191, 36, 0.10);
+  }
+  .pill.machine-lost {
+    color: var(--bad);
+    border-color: rgba(248, 113, 113, 0.45);
+    background: rgba(248, 113, 113, 0.10);
+  }
+  .pill.machine-stopped {
+    color: var(--fg-very-dim);
+    border-color: var(--border-strong);
+    background: rgba(154, 163, 173, 0.10);
+  }
+  .pill.machine-unregistered {
+    color: var(--fg-dim);
+    border-color: var(--border-strong);
+    background: rgba(154, 163, 173, 0.06);
+  }
+</style>
+</head>
+<body>
+  <div class="container">
+    <nav class="page-nav" aria-label="Page navigation">
+      <a href="./" class="active" aria-current="page">Dashboard</a>
+      <a href="./machines.html">Machines</a>
+      <a href="./versions.html">Versions</a>
+      <a href="./about.html">About</a>
+      <a href="./tech.html">Tech</a>
+    </nav>
+    <header>
+      <div class="title">
+        <h1>Spine Recording Database</h1>
+        <p>Live view. Auto-refreshing from <code>serve.py</code>.</p>
+      </div>
+      <div class="meta">
+        <div class="live-bar">
+          <span class="live-dot" id="live-dot" title="polling"></span>
+          <label><input type="checkbox" id="autorefresh" checked /> Auto-refresh</label>
+          <select id="interval-select" title="poll interval">
+            <option value="3000">3s</option>
+            <option value="5000" selected>5s</option>
+            <option value="10000">10s</option>
+            <option value="30000">30s</option>
+            <option value="60000">60s</option>
+          </select>
+          <button class="refresh" id="refresh-btn">Refresh</button>
+        </div>
+        <div class="ts" id="generated-at">no snapshot loaded</div>
+      </div>
+    </header>
+
+    <div id="missing-banner" style="display:none">
+      <div class="banner">
+        <h3 id="missing-title">Snapshot server unreachable</h3>
+        <span id="missing-detail">
+          Run <code>make dashboard</code> in the <code>db/</code> directory to start
+          the live server, or <code>make snapshot</code> to write a one-shot file
+          and open this page via <code>file://</code>.
+        </span>
+      </div>
+    </div>
+
+    <div id="dashboard">
+      <!-- Filter bar -->
+      <div class="filter-bar" id="filter-bar">
+        <div class="filter-group">
+          <span class="glabel">Time range</span>
+          <span id="filter-time"></span>
+          <button class="filter-clear" id="filter-clear" title="Clear all filters (Esc)">Clear all</button>
+        </div>
+        <div class="filter-group">
+          <span class="glabel">Role</span>
+          <span id="filter-role"></span>
+        </div>
+        <div class="filter-group">
+          <span class="glabel">Terminal</span>
+          <span id="filter-terminal"></span>
+        </div>
+        <div class="filter-group">
+          <span class="glabel">Tenant</span>
+          <span id="filter-tenant"></span>
+        </div>
+      </div>
+
+      <!-- KPI strip -->
+      <div class="kpi-strip" id="kpi-strip"></div>
+
+      <!-- Machines (every host that has run an agent) -->
+      <section>
+        <h2>Machines <span class="count" id="machines-count"></span><span class="has-tooltip"><button type="button" class="info-icon" aria-label="What is this?"><svg viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><circle cx="7" cy="7" r="6.5" fill="none" stroke="currentColor" stroke-width="1"/><text x="7" y="10.2" font-family="ui-monospace, monospace" font-size="9" font-weight="600" text-anchor="middle" fill="currentColor">i</text></svg></button><span class="tooltip" role="tooltip">Every host that has executed a Spine agent. Status pill reflects whether the host has reported in via `team.sh up` recently. 'Unregistered' means we've seen cost rows from this host but no instance heartbeat — restart `team.sh down &amp;&amp; team.sh up` to register.</span></span></h2>
+        <div id="machines-grid"></div>
+      </section>
+
+      <!-- Engagements (Pass I-1) -->
+      <section>
+        <div class="section-head">
+          <h2>Engagements <span class="count" id="engagements-count"></span><span class="has-tooltip"><button type="button" class="info-icon" aria-label="What is this?"><svg viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><circle cx="7" cy="7" r="6.5" fill="none" stroke="currentColor" stroke-width="1"/><text x="7" y="10.2" font-family="ui-monospace, monospace" font-size="9" font-weight="600" text-anchor="middle" fill="currentColor">i</text></svg></button><span class="tooltip" role="tooltip">An engagement is a piece of client work tracked end-to-end: requirements -&gt; hardening -&gt; planning -&gt; approval -&gt; execution -&gt; delivery. Click 'New Engagement' to submit a brief and let the product role take it from there.</span></span></h2>
+          <button type="button" class="btn-primary" id="new-engagement-btn">New Engagement</button>
+        </div>
+        <div class="table-wrap" id="engagements-table"></div>
+      </section>
+
+      <!-- Fleet (Pass H) -->
+      <section>
+        <h2>Fleet <span class="count" id="fleet-count"></span><span class="has-tooltip"><button type="button" class="info-icon" aria-label="What is this?"><svg viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><circle cx="7" cy="7" r="6.5" fill="none" stroke="currentColor" stroke-width="1"/><text x="7" y="10.2" font-family="ui-monospace, monospace" font-size="9" font-weight="600" text-anchor="middle" fill="currentColor">i</text></svg></button><span class="tooltip" role="tooltip">Every Spine instance that has reported in. Alive = heartbeat under 60s old. Stale = 60-180s. Lost = over 180s without a heartbeat. Stopped = explicitly shut down with team.sh down.</span></span></h2>
+        <div class="table-wrap" id="fleet-table"></div>
+      </section>
+
+      <!-- Recent invocations -->
+      <section>
+        <h2>Recent invocations <span class="count" id="inv-count"></span><span class="has-tooltip"><button type="button" class="info-icon" aria-label="What is this?"><svg viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><circle cx="7" cy="7" r="6.5" fill="none" stroke="currentColor" stroke-width="1"/><text x="7" y="10.2" font-family="ui-monospace, monospace" font-size="9" font-weight="600" text-anchor="middle" fill="currentColor">i</text></svg></button><span class="tooltip" role="tooltip">The last 50 times an agent picked up a directive and tried to do something with it. Green = succeeded, red = killed by daemon (timeout/stall), amber = still in flight.</span></span></h2>
+        <div class="table-wrap" id="invocations-wrap"></div>
+      </section>
+
+      <!-- Cost by role -->
+      <section>
+        <h2>Cost by role <span class="count" id="role-count"></span><span class="has-tooltip"><button type="button" class="info-icon" aria-label="What is this?"><svg viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><circle cx="7" cy="7" r="6.5" fill="none" stroke="currentColor" stroke-width="1"/><text x="7" y="10.2" font-family="ui-monospace, monospace" font-size="9" font-weight="600" text-anchor="middle" fill="currentColor">i</text></svg></button><span class="tooltip" role="tooltip">Which agent roles burned the most money. Useful for spotting an expensive role that should be moved to a cheaper tier.</span></span></h2>
+        <div class="two-col">
+          <div class="chart-card"><canvas id="cost-role-chart"></canvas></div>
+          <div class="table-wrap" id="cost-role-table"></div>
+        </div>
+      </section>
+
+      <!-- Cost by model -->
+      <section>
+        <h2>Cost by model <span class="count" id="model-count"></span><span class="has-tooltip"><button type="button" class="info-icon" aria-label="What is this?"><svg viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><circle cx="7" cy="7" r="6.5" fill="none" stroke="currentColor" stroke-width="1"/><text x="7" y="10.2" font-family="ui-monospace, monospace" font-size="9" font-weight="600" text-anchor="middle" fill="currentColor">i</text></svg></button><span class="tooltip" role="tooltip">Which AI models you actually called and what they cost per million tokens. Empty when the executor doesn't emit usage data (today only Claude Code does).</span></span></h2>
+        <div class="table-wrap" id="cost-model-table"></div>
+      </section>
+
+      <!-- Active workers -->
+      <section>
+        <h2>Active workers <span class="count" id="worker-count"></span><span class="has-tooltip"><button type="button" class="info-icon" aria-label="What is this?"><svg viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><circle cx="7" cy="7" r="6.5" fill="none" stroke="currentColor" stroke-width="1"/><text x="7" y="10.2" font-family="ui-monospace, monospace" font-size="9" font-weight="600" text-anchor="middle" fill="currentColor">i</text></svg></button><span class="tooltip" role="tooltip">All worker handles the watcher has seen at least once. Lifetime invocations and lifetime cost are cumulative across that worker's history.</span></span></h2>
+        <div class="table-wrap" id="workers-table"></div>
+      </section>
+
+      <!-- Event stream -->
+      <section>
+        <h2>Event stream <span class="count" id="event-count"></span><span class="has-tooltip"><button type="button" class="info-icon" aria-label="What is this?"><svg viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><circle cx="7" cy="7" r="6.5" fill="none" stroke="currentColor" stroke-width="1"/><text x="7" y="10.2" font-family="ui-monospace, monospace" font-size="9" font-weight="600" text-anchor="middle" fill="currentColor">i</text></svg></button><span class="tooltip" role="tooltip">Every lifecycle event in time order. Click a row's payload cell to expand the full JSON. The donut shows the distribution of event types.</span></span></h2>
+        <div class="two-col">
+          <div class="chart-card"><canvas id="event-type-chart"></canvas></div>
+          <div class="table-wrap" id="events-table"></div>
+        </div>
+      </section>
+
+      <!-- System status -->
+      <section>
+        <h2>System status<span class="has-tooltip tip-right"><button type="button" class="info-icon" aria-label="What is this?"><svg viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><circle cx="7" cy="7" r="6.5" fill="none" stroke="currentColor" stroke-width="1"/><text x="7" y="10.2" font-family="ui-monospace, monospace" font-size="9" font-weight="600" text-anchor="middle" fill="currentColor">i</text></svg></button><span class="tooltip" role="tooltip">Which database migration is currently applied, when the snapshot was generated, and how often the page polls for a fresh one.</span></span></h2>
+        <div class="status-box" id="system-status"></div>
+      </section>
+    </div>
+  </div>
+
+  <!-- New Engagement modal (Pass I-1) -->
+  <div class="modal-backdrop" id="engagement-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="engagement-modal-title">
+    <div class="modal">
+      <h3 id="engagement-modal-title">New Engagement</h3>
+      <form id="engagement-form" autocomplete="off">
+        <div class="modal-field">
+          <label for="eng-title">Title</label>
+          <input type="text" id="eng-title" name="title" required maxlength="200" placeholder="e.g., Build a marketing site" />
+        </div>
+        <div class="modal-field">
+          <label for="eng-requirements">Requirements (markdown)</label>
+          <textarea id="eng-requirements" name="requirements_md" rows="15" required placeholder="# What you want built&#10;&#10;## Goals&#10;- ...&#10;&#10;## Non-goals&#10;- ..."></textarea>
+        </div>
+        <div class="modal-field">
+          <label for="eng-client">Client (optional)</label>
+          <input type="text" id="eng-client" name="client" maxlength="120" placeholder="defaults to current user" />
+        </div>
+        <div class="modal-error" id="engagement-modal-error" aria-live="polite"></div>
+        <div class="modal-actions">
+          <button type="button" class="btn-ghost" id="engagement-cancel">Cancel</button>
+          <button type="submit" class="btn-primary" id="engagement-submit">Submit</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+<script>
+"use strict";
+
+// ===========================================================================
+// Formatters
+// ===========================================================================
+
+function humanizeSeconds(s) {
+  if (s == null || isNaN(s)) return "-";
+  s = Number(s);
+  if (s < 60)   return s.toFixed(1) + "s";
+  if (s < 3600) {
+    const m = Math.floor(s / 60);
+    const r = Math.round(s - m * 60);
+    return `${m}m ${r}s`;
+  }
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s - h * 3600) / 60);
+  return `${h}h ${m}m`;
+}
+
+function humanizeRelativeAge(deltaMs) {
+  if (deltaMs == null || isNaN(deltaMs)) return "—";
+  const s = Math.max(0, Math.floor(deltaMs / 1000));
+  if (s < 1)   return "just now";
+  if (s < 60)  return s + "s ago";
+  if (s < 3600) return Math.floor(s / 60) + "m ago";
+  if (s < 86400) return Math.floor(s / 3600) + "h ago";
+  return Math.floor(s / 86400) + "d ago";
+}
+
+function humanizeCost(usd) {
+  if (usd == null || isNaN(usd)) return "$0";
+  usd = Number(usd);
+  if (usd === 0) return "$0";
+  if (Math.abs(usd) < 0.01)   return "$" + usd.toFixed(6);
+  if (Math.abs(usd) < 1)      return "$" + usd.toFixed(4);
+  if (Math.abs(usd) < 100)    return "$" + usd.toFixed(2);
+  return "$" + Math.round(usd).toLocaleString();
+}
+
+function humanizeTokens(n) {
+  if (n == null || isNaN(n)) return "0";
+  n = Number(n);
+  if (n < 1000)     return n.toString();
+  if (n < 1_000_000) return (n / 1000).toFixed(1) + "k";
+  return (n / 1_000_000).toFixed(2) + "M";
+}
+
+function humanizeCount(n) {
+  if (n == null || isNaN(n)) return "0";
+  return Number(n).toLocaleString();
+}
+
+function shortTs(iso) {
+  if (!iso) return "-";
+  // Trim subsecond and timezone for display; keep date + HH:MM:SS.
+  // Postgres emits "2026-05-11T14:23:01.123456+00:00".
+  const m = iso.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2})/);
+  if (!m) return iso;
+  return `${m[1]} ${m[2]}`;
+}
+
+function escapeHtml(s) {
+  if (s == null) return "";
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function cell(v, opts) {
+  opts = opts || {};
+  if (v == null || v === "") return `<td class="null">—</td>`;
+  const cls = opts.num ? "num" : (opts.dim ? "dim" : "");
+  const text = opts.raw ? v : escapeHtml(v);
+  return `<td class="${cls}">${text}</td>`;
+}
+
+// ===========================================================================
+// Chart helpers
+// ===========================================================================
+
+const CHART_PALETTE = [
+  "#7dd3fc", "#a78bfa", "#f472b6", "#fbbf24", "#4ade80",
+  "#f87171", "#60a5fa", "#fb923c", "#34d399", "#e879f9",
+];
+const CHART_DEFAULTS = {
+  responsive: true,
+  maintainAspectRatio: false,
+  animation: { duration: 200 },
+};
+
+let costRoleChart = null;
+let eventTypeChart = null;
+
+function destroyChart(c) { if (c && typeof c.destroy === "function") c.destroy(); }
+
+// ===========================================================================
+// State (filters + last snapshot for reconciliation)
+// ===========================================================================
+
+const STORAGE_KEY = "spine.dashboard.v2";
+const TIME_RANGES = [
+  { id: "1h",  label: "Last 1h",  ms:        3600_000 },
+  { id: "24h", label: "Last 24h", ms:      86_400_000 },
+  { id: "7d",  label: "Last 7d",  ms:     604_800_000 },
+  { id: "all", label: "All",      ms: Number.POSITIVE_INFINITY },
+];
+const TERMINAL_OPTIONS = [
+  "ReportWritten",
+  "PlanWritten",
+  "AggregateCompleted",
+  "WorkerCompleted",
+  "Reaped",
+  "in-flight",
+];
+
+const state = {
+  // Filter state
+  filters: {
+    timeRange: "24h",         // single-select
+    roles: new Set(),         // multi-select, empty = all
+    terminals: new Set(),     // multi-select, empty = all
+    tenants: new Set(),       // Pass K: multi-select, empty = all
+  },
+  // Auto-refresh state
+  autorefresh: true,
+  intervalMs: 5000,
+  pollTimer: null,
+  tickerTimer: null,
+  lastFetchAt: null,           // Date when snapshot was rendered
+  lastSnapshot: null,          // last full snapshot
+  lastKpis: {},                // numeric KPI values for animation
+  lastInvocationIds: new Set(),
+  lastWorkerIds: new Set(),
+  lastEventIds: new Set(),
+  // Per-cell value cache so we can flash only changed cells.
+  cellCache: {
+    invocations: new Map(),
+    workers: new Map(),
+    eventsTable: new Map(),
+    costByRole: new Map(),
+    costByModel: new Map(),
+    fleet: new Map(),
+    machines: new Map(),
+    engagements: new Map(),
+  },
+  activeFilterCount: 0,
+};
+
+function persistState() {
+  try {
+    const data = {
+      timeRange: state.filters.timeRange,
+      roles: [...state.filters.roles],
+      terminals: [...state.filters.terminals],
+      tenants: [...state.filters.tenants],
+      autorefresh: state.autorefresh,
+      intervalMs: state.intervalMs,
+    };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  } catch (e) { /* ignore quota / disabled storage */ }
+}
+
+function restoreState() {
+  // 1. URL query string wins (so shared links work)
+  const url = new URL(window.location.href);
+  const fromUrl = {};
+  if (url.searchParams.has("t"))  fromUrl.timeRange = url.searchParams.get("t");
+  if (url.searchParams.has("r"))  fromUrl.roles     = url.searchParams.get("r").split(",").filter(Boolean);
+  if (url.searchParams.has("x"))  fromUrl.terminals = url.searchParams.get("x").split(",").filter(Boolean);
+  if (url.searchParams.has("n"))  fromUrl.tenants   = url.searchParams.get("n").split(",").filter(Boolean);
+
+  // 2. localStorage as fallback
+  let saved = {};
+  try {
+    saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}") || {};
+  } catch (e) { saved = {}; }
+
+  const timeRange = fromUrl.timeRange || saved.timeRange || "24h";
+  if (TIME_RANGES.find(r => r.id === timeRange)) state.filters.timeRange = timeRange;
+
+  const roles = fromUrl.roles || saved.roles || [];
+  state.filters.roles = new Set(roles);
+
+  const terminals = fromUrl.terminals || saved.terminals || [];
+  state.filters.terminals = new Set(terminals);
+
+  const tenants = fromUrl.tenants || saved.tenants || [];
+  state.filters.tenants = new Set(tenants);
+
+  if (typeof saved.autorefresh === "boolean") state.autorefresh = saved.autorefresh;
+  if (typeof saved.intervalMs === "number")   state.intervalMs  = saved.intervalMs;
+}
+
+function updateUrl() {
+  const url = new URL(window.location.href);
+  if (state.filters.timeRange === "24h") url.searchParams.delete("t");
+  else url.searchParams.set("t", state.filters.timeRange);
+  if (state.filters.roles.size === 0)    url.searchParams.delete("r");
+  else url.searchParams.set("r", [...state.filters.roles].join(","));
+  if (state.filters.terminals.size === 0) url.searchParams.delete("x");
+  else url.searchParams.set("x", [...state.filters.terminals].join(","));
+  if (state.filters.tenants.size === 0) url.searchParams.delete("n");
+  else url.searchParams.set("n", [...state.filters.tenants].join(","));
+  history.replaceState(null, "", url);
+}
+
+// ===========================================================================
+// Filtering
+// ===========================================================================
+
+function timeRangeCutoffMs() {
+  const r = TIME_RANGES.find(x => x.id === state.filters.timeRange);
+  const ms = (r ? r.ms : Number.POSITIVE_INFINITY);
+  if (!isFinite(ms)) return null;
+  return Date.now() - ms;
+}
+
+function passesTime(isoString) {
+  const cutoff = timeRangeCutoffMs();
+  if (cutoff == null) return true;
+  if (!isoString) return true;
+  const t = Date.parse(isoString);
+  if (isNaN(t)) return true;
+  return t >= cutoff;
+}
+
+function passesRole(roleId) {
+  if (state.filters.roles.size === 0) return true;
+  return state.filters.roles.has(roleId);
+}
+
+function passesTerminal(terminalType) {
+  if (state.filters.terminals.size === 0) return true;
+  const key = terminalType == null ? "in-flight" : terminalType;
+  return state.filters.terminals.has(key);
+}
+
+function passesTenant(tenantId) {
+  if (state.filters.tenants.size === 0) return true;
+  const key = tenantId == null || tenantId === "" ? "default" : tenantId;
+  return state.filters.tenants.has(key);
+}
+
+function filterInvocations(rows) {
+  return rows.filter(r =>
+    passesTime(r.started_at) &&
+    passesRole(r.role_id) &&
+    passesTerminal(r.terminal_type) &&
+    passesTenant(r.tenant_id)
+  );
+}
+
+function filterWorkers(rows) {
+  return rows.filter(r => passesRole(r.role_id) && passesTime(r.last_cost_ts));
+}
+
+function filterEvents(rows) {
+  return rows.filter(r => passesTime(r.ts) && passesRole(r.role_id));
+}
+
+function filterCostByRole(rows) {
+  return rows.filter(r => passesRole(r.role_id));
+}
+
+// ===========================================================================
+// Renderers
+// ===========================================================================
+
+// Animate a numeric KPI from old -> new (300ms easeOutQuad). Skips animation
+// when the value is unchanged.
+function animateNumber(node, from, to, formatter) {
+  if (from === to) {
+    node.textContent = formatter(to);
+    return;
+  }
+  const start = performance.now();
+  const dur = 300;
+  function frame(now) {
+    const t = Math.min(1, (now - start) / dur);
+    const eased = 1 - (1 - t) * (1 - t); // easeOutQuad
+    const cur = from + (to - from) * eased;
+    node.textContent = formatter(cur);
+    if (t < 1) requestAnimationFrame(frame);
+    else node.textContent = formatter(to);
+  }
+  requestAnimationFrame(frame);
+}
+
+const INFO_ICON_SVG = `<svg viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><circle cx="7" cy="7" r="6.5" fill="none" stroke="currentColor" stroke-width="1"/><text x="7" y="10.2" font-family="ui-monospace, monospace" font-size="9" font-weight="600" text-anchor="middle" fill="currentColor">i</text></svg>`;
+
+function infoIconHtml(text, tipPos) {
+  const cls = tipPos === "right" ? "has-tooltip tip-right" : "has-tooltip";
+  return `<span class="${cls}"><button type="button" class="info-icon" aria-label="What is this?">${INFO_ICON_SVG}</button><span class="tooltip" role="tooltip">${escapeHtml(text)}</span></span>`;
+}
+
+function renderKpis(kpis, fleetKpis, tenantKpis) {
+  const totalTokens = (kpis.total_tokens_in || 0) + (kpis.total_tokens_out || 0);
+  const fk = fleetKpis || {};
+  const tk = tenantKpis || {};
+  const items = [
+    { key: "total_invocations", label: "Total invocations",
+      value: kpis.total_invocations || 0, format: v => humanizeCount(Math.round(v)),
+      sub: (kpis.total_invocations === 0) ? "no rows yet" : "cost_row rows",
+      tooltip: "Every time a Spine agent ran, we recorded one row here. This is the total count across every team, every day, since the watcher started." },
+    { key: "total_wall_s", label: "Total wall time",
+      value: kpis.total_wall_s || 0, format: v => humanizeSeconds(v),
+      sub: `${(kpis.total_wall_s || 0).toFixed(1)} seconds`,
+      tooltip: "The cumulative wall-clock seconds the agents spent thinking and acting. Includes both successful runs and timed-out ones." },
+    { key: "total_cost_usd", label: "Total cost",
+      value: kpis.total_cost_usd || 0, format: v => humanizeCost(v),
+      sub: "USD",
+      tooltip: "Dollars spent on AI model calls so far. Only fills in for executors that emit token usage (Claude Code does; cursor-agent does not). Wall time is recorded either way." },
+    { key: "total_tokens", label: "Total tokens",
+      value: totalTokens, format: v => humanizeTokens(Math.round(v)),
+      sub: `${humanizeTokens(kpis.total_tokens_in)} in / ${humanizeTokens(kpis.total_tokens_out)} out`,
+      tooltip: "Input tokens (the prompt) plus output tokens (the agent's response) summed across all invocations. Tokens are what AI providers actually bill on." },
+    { key: "active_workers", label: "Active workers",
+      value: kpis.active_workers || 0, format: v => humanizeCount(Math.round(v)),
+      sub: "archived_at IS NULL",
+      tooltip: "Distinct agent identities currently alive. One per role per host. They sit idle between directives; this number does not mean 'currently running'." },
+    { key: "live_instances", label: "Live instances",
+      value: fk.alive_instances || 0, format: v => humanizeCount(Math.round(v)),
+      sub: `${fk.total_instances || 0} total · ${fk.stale_instances || 0} stale · ${fk.lost_instances || 0} lost`,
+      tooltip: "How many Spine instances are reporting heartbeats right now. One per `team.sh up`. See the Fleet section for the full list." },
+    { key: "machine_count", label: "Machines",
+      value: fk.machine_count || 0, format: v => humanizeCount(Math.round(v)),
+      sub: "distinct hosts seen",
+      tooltip: "Every host (laptop, server) that has executed at least one Spine agent against this database. Includes hosts that have not registered yet via team.sh up." },
+    { key: "total_events", label: "Total events",
+      value: kpis.total_events || 0, format: v => humanizeCount(Math.round(v)),
+      sub: "audit log",
+      tooltip: "Every lifecycle moment is logged: when a directive was picked up, when the agent started, when it finished or got killed. This is the append-only audit log." },
+    { key: "tenant_count", label: "Tenants",
+      value: tk.tenant_count || 0, format: v => humanizeCount(Math.round(v)),
+      sub: "distinct tenant_ids",
+      tooltip: "Distinct tenant_id values observed across teams, workers and engagements. Tenancy is set by exporting SPINE_TENANT before team.sh up; defaults to 'default'." },
+  ];
+
+  const root = document.getElementById("kpi-strip");
+
+  // First render: build all cards. Subsequent renders: update in place.
+  if (root.children.length !== items.length) {
+    root.innerHTML = items.map((k, idx) => `
+      <div class="kpi" data-key="${escapeHtml(k.key)}">
+        <div class="label">${escapeHtml(k.label)}${infoIconHtml(k.tooltip, idx === items.length - 1 ? "right" : "")}</div>
+        <div class="value">${escapeHtml(k.format(k.value))}</div>
+        <div class="sub">${escapeHtml(k.sub)}</div>
+      </div>
+    `).join("");
+    items.forEach(k => { state.lastKpis[k.key] = k.value; });
+    // After build, wire mobile tap-to-toggle.
+    bindTooltipTaps(root);
+    return;
+  }
+
+  items.forEach((k, i) => {
+    const card = root.children[i];
+    const valNode = card.querySelector(".value");
+    const subNode = card.querySelector(".sub");
+    const prev = state.lastKpis[k.key] || 0;
+    animateNumber(valNode, prev, k.value, k.format);
+    if (subNode.textContent !== k.sub) subNode.textContent = k.sub;
+    state.lastKpis[k.key] = k.value;
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Reconciliation core: keyed-row table updater.
+//   wrap         - the .table-wrap container
+//   rows         - array of rows (new state)
+//   columns      - array of { th, get(row): string-HTML (no <td>) }
+//   keyFn(row)   - stable ID for the row
+//   rowClassFn   - optional, returns extra <tr> class string
+//   cacheKey     - state.cellCache subkey, e.g. "invocations"
+//   emptyMsg     - shown if no rows
+// ---------------------------------------------------------------------------
+
+function reconcileTable(wrap, rows, opts) {
+  const { columns, keyFn, rowClassFn, cacheKey, emptyMsg } = opts;
+
+  if (!rows.length) {
+    const reason = state.activeFilterCount > 0
+      ? `<div class="empty">${escapeHtml(emptyMsg.filtered)} <a href="#" onclick="window.__clearFilters();return false;">Clear filters</a></div>`
+      : `<div class="empty">${escapeHtml(emptyMsg.none)}</div>`;
+    wrap.innerHTML = reason;
+    if (cacheKey) state.cellCache[cacheKey].clear();
+    return;
+  }
+
+  // Ensure table skeleton exists.
+  let table = wrap.querySelector("table");
+  if (!table) {
+    const head = "<tr>" + columns.map(c => `<th class="${c.thClass || ''}">${c.th}</th>`).join("") + "</tr>";
+    wrap.innerHTML = `<table><thead>${head}</thead><tbody></tbody></table>`;
+    table = wrap.querySelector("table");
+  }
+  const tbody = table.querySelector("tbody");
+
+  // Index existing rows by key.
+  const existing = new Map();
+  for (const tr of Array.from(tbody.children)) {
+    const k = tr.getAttribute("data-key");
+    if (k != null) existing.set(k, tr);
+  }
+
+  const cache = cacheKey ? state.cellCache[cacheKey] : new Map();
+  const seen = new Set();
+  let prev = null;
+
+  rows.forEach((row, i) => {
+    const key = keyFn(row);
+    seen.add(key);
+    const cellsHtml = columns.map(c => c.get(row)).join("");
+    const cellValues = columns.map(c => c.value ? c.value(row) : c.get(row));
+    let tr = existing.get(key);
+
+    if (!tr) {
+      // New row — insert in correct position.
+      tr = document.createElement("tr");
+      tr.setAttribute("data-key", key);
+      tr.innerHTML = cellsHtml;
+      tr.classList.add("row-enter");
+      if (prev && prev.nextSibling) tbody.insertBefore(tr, prev.nextSibling);
+      else if (prev) tbody.appendChild(tr);
+      else if (tbody.firstChild) tbody.insertBefore(tr, tbody.firstChild);
+      else tbody.appendChild(tr);
+      cache.set(key, cellValues);
+    } else {
+      // Move to the right position if drifted.
+      const desired = prev ? prev.nextSibling : tbody.firstChild;
+      if (desired !== tr) {
+        tbody.insertBefore(tr, desired);
+      }
+      // Cell-by-cell update with flash on change.
+      const prevValues = cache.get(key) || [];
+      const tds = tr.children;
+      for (let ci = 0; ci < columns.length; ci++) {
+        if (prevValues[ci] !== cellValues[ci] || !tds[ci]) {
+          // Replace this cell's outerHTML.
+          const stub = document.createElement("tbody");
+          stub.innerHTML = "<tr>" + cellsHtml + "</tr>";
+          const newTd = stub.firstChild.children[ci];
+          if (tds[ci]) tds[ci].replaceWith(newTd); else tr.appendChild(newTd);
+          // Flash if this isn't the very first paint.
+          if (prevValues.length) {
+            newTd.classList.add("cell-flash");
+            setTimeout(() => newTd.classList.remove("cell-flash"), 800);
+          }
+        }
+      }
+      cache.set(key, cellValues);
+    }
+
+    // Re-apply row class (terminal_type may change in place).
+    if (rowClassFn) {
+      const cls = rowClassFn(row);
+      // strip the outcome-* classes we manage, leave row-enter/leave alone.
+      tr.className = tr.className
+        .split(/\s+/)
+        .filter(c => !c.startsWith("outcome-"))
+        .join(" ");
+      if (cls) tr.classList.add(cls);
+    }
+
+    prev = tr;
+  });
+
+  // Remove rows that vanished.
+  for (const [key, tr] of existing.entries()) {
+    if (!seen.has(key)) {
+      tr.classList.add("row-leave");
+      cache.delete(key);
+      setTimeout(() => { if (tr.parentNode) tr.parentNode.removeChild(tr); }, 320);
+    }
+  }
+}
+
+function tierPill(tier) {
+  if (tier == null || tier === "") return `<span class="null">—</span>`;
+  const t = String(tier).toLowerCase();
+  let cls = "tier-low";
+  if (t === "medium" || t === "med") cls = "tier-medium";
+  else if (t === "high") cls = "tier-high";
+  return `<span class="pill ${cls}">${escapeHtml(tier)}</span>`;
+}
+
+// Pass H: fleet helpers + renderer.
+function fleetStatusPill(status) {
+  const s = (status || "").toLowerCase();
+  if (s === "alive")   return `<span class="pill fleet-alive">alive</span>`;
+  if (s === "stale")   return `<span class="pill fleet-stale">stale</span>`;
+  if (s === "lost")    return `<span class="pill fleet-lost">lost</span>`;
+  if (s === "stopped") return `<span class="pill fleet-stopped">stopped</span>`;
+  return `<span class="pill">${escapeHtml(status || "?")}</span>`;
+}
+
+// Relative-time string using the row's seconds_since_seen field. The
+// snapshot is point-in-time so the integer doesn't drift as long as the
+// page renders quickly after fetch. Re-renders pull fresh values from
+// the next snapshot.
+function fleetLastSeen(seconds) {
+  if (seconds == null || isNaN(seconds)) return "—";
+  const s = Math.max(0, Math.floor(Number(seconds)));
+  if (s < 1)    return "just now";
+  if (s < 60)   return s + "s ago";
+  if (s < 3600) return Math.floor(s / 60) + "m ago";
+  if (s < 86400) return Math.floor(s / 3600) + "h ago";
+  return Math.floor(s / 86400) + "d ago";
+}
+
+// Machines: every host that has executed a Spine agent. Rendered as a
+// grid of cards instead of a table so emptiness reads as "nothing here
+// yet" rather than "broken column headers".
+function machineStatusPill(status) {
+  const s = (status || "").toLowerCase();
+  if (s === "alive")        return `<span class="pill machine-alive">alive</span>`;
+  if (s === "stale")        return `<span class="pill machine-stale">stale</span>`;
+  if (s === "lost")         return `<span class="pill machine-lost">lost</span>`;
+  if (s === "stopped")      return `<span class="pill machine-stopped">stopped</span>`;
+  if (s === "unregistered") return `<span class="pill machine-unregistered">unregistered</span>`;
+  return `<span class="pill">${escapeHtml(status || "?")}</span>`;
+}
+
+function machineLastActive(iso) {
+  if (!iso) return "—";
+  const t = Date.parse(iso);
+  if (isNaN(t)) return "—";
+  return humanizeRelativeAge(Date.now() - t);
+}
+
+// Pass M: helpers for the vitals bars on each machine card. The fleet
+// rows carry cpu_pct / mem_used_pct / disk_used_pct (V13). We also use
+// spine_cpu_pct as an overlay on the CPU bar to show how much of host
+// CPU Spine itself is consuming.
+function vitalsColorClass(pct) {
+  if (pct == null || isNaN(pct)) return "good";
+  if (pct >= 80) return "bad";
+  if (pct >= 50) return "warn";
+  return "good";
+}
+
+function vitalsBarHtml(label, pct, valText, opts) {
+  // opts.overlayPct is a smaller value rendered on top of the main bar
+  // (used to show Spine's share of CPU). opts.tooltip is an HTML title.
+  if (pct == null || isNaN(pct)) {
+    return `
+      <div class="vital-row" title="${escapeHtml(opts && opts.tooltip || (label + ': no data yet'))}">
+        <span class="vital-label">${escapeHtml(label)}</span>
+        <span class="vital-track"><span class="vital-fill good" style="width:0%"></span></span>
+        <span class="vital-val">--</span>
+      </div>`;
+  }
+  const clamped = Math.max(0, Math.min(100, Number(pct)));
+  const cls = vitalsColorClass(clamped);
+  const overlay = opts && opts.overlayPct != null && !isNaN(opts.overlayPct)
+    ? `<span class="vital-overlay" style="width:${Math.max(0, Math.min(100, Number(opts.overlayPct))).toFixed(1)}%"></span>` : "";
+  const tt = opts && opts.tooltip ? opts.tooltip : `${label}: ${valText}`;
+  return `
+    <div class="vital-row" title="${escapeHtml(tt)}">
+      <span class="vital-label">${escapeHtml(label)}</span>
+      <span class="vital-track">
+        ${overlay}
+        <span class="vital-fill ${cls}" style="width:${clamped.toFixed(1)}%"></span>
+      </span>
+      <span class="vital-val">${escapeHtml(valText)}</span>
+    </div>`;
+}
+
+function machineVitalsHtml(m) {
+  // The vitals fields live on the fleet rows (LEFT JOIN to
+  // v_instance_vitals_latest). Machines rows aggregate across hosts so
+  // the dashboard backend can attach the most-recent instance vitals
+  // there too (vitals_at + the V13 fields).
+  const cpu = m.cpu_pct;
+  const spineCpu = m.spine_cpu_pct;
+  const memTot = m.mem_total_mb;
+  const memUsed = m.mem_used_mb;
+  const diskTot = m.disk_total_gb;
+  const diskUsed = m.disk_used_gb;
+  const memPct = (memTot && memTot > 0) ? (memUsed / memTot * 100) : null;
+  const diskPct = (diskTot && diskTot > 0) ? (diskUsed / diskTot * 100) : null;
+
+  if (cpu == null && memPct == null && diskPct == null) {
+    return `<div class="vitals"><div class="vitals-empty">No vitals yet -- wait one heartbeat cycle (60s).</div></div>`;
+  }
+
+  // CPU bar: total host CPU%, with Spine's share overlaid (in absolute
+  // host-CPU% terms, not as % of busy).
+  const cpuValText = (cpu != null) ? `${Number(cpu).toFixed(1)}%` : "--";
+  const cpuTooltip = (cpu != null)
+    ? `Total CPU ${Number(cpu).toFixed(1)}%`
+      + (spineCpu != null ? ` -- Spine using ${Number(spineCpu).toFixed(1)}%` : "")
+      + (cpu > 0 && spineCpu != null ? ` (${(spineCpu / cpu * 100).toFixed(0)}% of busy)` : "")
+    : "CPU: no data yet";
+
+  const memValText = (memUsed != null && memTot != null)
+    ? `${(memUsed / 1024).toFixed(1)} / ${(memTot / 1024).toFixed(1)} GB`
+    : "--";
+  const memTooltip = (memPct != null)
+    ? `Memory ${memValText} (${memPct.toFixed(0)}%)` : "Memory: no data yet";
+
+  const diskValText = (diskUsed != null && diskTot != null)
+    ? `${Number(diskUsed).toFixed(0)} / ${Number(diskTot).toFixed(0)} GB`
+    : "--";
+  const diskTooltip = (diskPct != null)
+    ? `Disk ${diskValText} (${diskPct.toFixed(0)}%)` : "Disk: no data yet";
+
+  return `
+    <div class="vitals">
+      ${vitalsBarHtml("CPU", cpu, cpuValText, { overlayPct: spineCpu, tooltip: cpuTooltip })}
+      ${vitalsBarHtml("Mem", memPct, memValText, { tooltip: memTooltip })}
+      ${vitalsBarHtml("Disk", diskPct, diskValText, { tooltip: diskTooltip })}
+    </div>`;
+}
+
+function machineCardHtml(m) {
+  const proj = m.project_slug || "(unknown)";
+  const projCls = proj === "(unknown)" ? "project unknown" : "project";
+  const path = m.project_path || "";
+  const ver = m.version_short || "";
+  const sver = m.spine_version || "";
+  const osu = m.os_user || "";
+  const lastTxt = machineLastActive(m.last_active);
+  const hostHref = `./machines.html?host=${encodeURIComponent(m.host_id || "")}`;
+  const metaBits = [
+    ver && `<span title="agent version">${escapeHtml(ver)}</span>`,
+    sver && `<span title="spine version">${escapeHtml(sver)}</span>`,
+    osu && `<span title="os user">${escapeHtml(osu)}</span>`,
+  ].filter(Boolean).join(" · ");
+  const vitalsHtml = machineVitalsHtml(m);
+  return `
+    <div class="machine-card" data-key="${escapeHtml(m.host_id || "")}">
+      <div class="top">
+        ${machineStatusPill(m.effective_status)}
+        <span class="host" title="${escapeHtml(m.host_id || "")}">${escapeHtml(m.host_id || "—")}</span>
+      </div>
+      <div class="${projCls}" title="${escapeHtml(proj)}">${escapeHtml(proj)}</div>
+      ${path ? `<div class="path" title="${escapeHtml(path)}">${escapeHtml(path)}</div>` : ""}
+      <div class="stats">
+        <div>
+          <span class="stat-label">Workers</span>
+          <strong>${humanizeCount(m.workers)}</strong>
+        </div>
+        <div>
+          <span class="stat-label">Roles</span>
+          <strong>${humanizeCount(m.roles)}</strong>
+        </div>
+        <div>
+          <span class="stat-label">Invocations</span>
+          <strong>${humanizeCount(m.invocations)}</strong>
+        </div>
+      </div>
+      <div class="cost-line">
+        ${escapeHtml(humanizeCost(m.cost_usd))}
+        <span class="dim">${escapeHtml(humanizeSeconds(m.wall_s))} wall</span>
+      </div>
+      ${vitalsHtml}
+      <div class="footer">
+        <span class="meta-bits">${metaBits || "<span>&nbsp;</span>"}</span>
+        <span><span title="last cost row timestamp">${escapeHtml(lastTxt)}</span> · <a class="details-link" href="${hostHref}">details</a></span>
+      </div>
+    </div>
+  `;
+}
+
+function renderMachines(rows) {
+  const countEl = document.getElementById("machines-count");
+  const grid = document.getElementById("machines-grid");
+  countEl.textContent = `(${rows.length})`;
+
+  if (!rows.length) {
+    grid.className = "";
+    grid.innerHTML = `<div class="empty">No machines have run a Spine agent against this database yet.</div>`;
+    state.cellCache.machines.clear();
+    return;
+  }
+
+  grid.className = "machines-grid";
+
+  // In-place reconciliation: keep card nodes by host_id so hover/scroll
+  // doesn't reset on every poll.
+  const existing = new Map();
+  for (const node of Array.from(grid.children)) {
+    const k = node.getAttribute("data-key");
+    if (k != null) existing.set(k, node);
+  }
+
+  const cache = state.cellCache.machines;
+  const seen = new Set();
+  let prev = null;
+
+  rows.forEach(m => {
+    const key = m.host_id || "";
+    seen.add(key);
+    // Serialize the fields we render; if unchanged, skip rebuild.
+    const signature = JSON.stringify([
+      m.effective_status, m.project_slug, m.project_path, m.os_user,
+      m.version_short, m.spine_version, m.last_active,
+      m.workers, m.roles, m.invocations, m.cost_usd, m.wall_s,
+      // Pass M: include the latest vitals so bars update on each tick.
+      m.cpu_pct, m.spine_cpu_pct,
+      m.mem_used_mb, m.mem_total_mb,
+      m.disk_used_gb, m.disk_total_gb,
+      m.vitals_at,
+    ]);
+
+    let node = existing.get(key);
+    if (!node) {
+      const stub = document.createElement("div");
+      stub.innerHTML = machineCardHtml(m).trim();
+      node = stub.firstChild;
+      if (prev && prev.nextSibling) grid.insertBefore(node, prev.nextSibling);
+      else if (prev) grid.appendChild(node);
+      else if (grid.firstChild) grid.insertBefore(node, grid.firstChild);
+      else grid.appendChild(node);
+      cache.set(key, signature);
+    } else {
+      const desired = prev ? prev.nextSibling : grid.firstChild;
+      if (desired !== node) grid.insertBefore(node, desired);
+      if (cache.get(key) !== signature) {
+        // Rebuild the inner content while keeping the outer node so
+        // hover state holds across refresh cycles.
+        const stub = document.createElement("div");
+        stub.innerHTML = machineCardHtml(m).trim();
+        node.innerHTML = stub.firstChild.innerHTML;
+        cache.set(key, signature);
+      }
+    }
+    prev = node;
+  });
+
+  for (const [key, node] of existing.entries()) {
+    if (!seen.has(key)) {
+      if (node.parentNode) node.parentNode.removeChild(node);
+      cache.delete(key);
+    }
+  }
+}
+
+function renderFleet(rows, totalRows) {
+  const countEl = document.getElementById("fleet-count");
+  countEl.textContent = totalRows != null && totalRows !== rows.length
+    ? `(${rows.length} of ${totalRows})`
+    : `(${rows.length})`;
+  const wrap = document.getElementById("fleet-table");
+  reconcileTable(wrap, rows, {
+    columns: [
+      { th: "Status",  get: r => cell(fleetStatusPill(r.effective_status), { raw: true }),
+        value: r => r.effective_status },
+      { th: "Host",    get: r => cell(r.host_id),
+        value: r => r.host_id },
+      { th: "Project", get: r => cell(r.project_slug, { dim: !r.project_slug }),
+        value: r => r.project_slug },
+      { th: "User",    get: r => cell(r.os_user, { dim: true }),
+        value: r => r.os_user },
+      { th: "Version", get: r => cell(r.version_short, { dim: true }),
+        value: r => r.version_short },
+      { th: "Started", get: r => cell(shortTs(r.started_at), { dim: true }),
+        value: r => r.started_at },
+      { th: "Last seen", get: r => cell(fleetLastSeen(r.seconds_since_seen)),
+        value: r => r.seconds_since_seen },
+    ],
+    keyFn: r => r.instance_id,
+    cacheKey: "fleet",
+    emptyMsg: {
+      none: "No Spine instances registered yet. Run `bash scripts/team.sh up` to register this laptop.",
+      filtered: "No fleet instances match the current filters.",
+    },
+  });
+}
+
+// Pass I-1: engagement helpers + renderer.
+function engagementStatusPill(status) {
+  const s = (status || "").toLowerCase();
+  const known = ["intake","hardening","planning","awaiting_approval","executing","delivered","cancelled"];
+  if (known.indexOf(s) >= 0) {
+    return `<span class="pill eng-${s}">${escapeHtml(status)}</span>`;
+  }
+  return `<span class="pill">${escapeHtml(status || "?")}</span>`;
+}
+
+function engagementAge(seconds) {
+  if (seconds == null || isNaN(seconds)) return "—";
+  const s = Math.max(0, Math.floor(Number(seconds)));
+  if (s < 1)    return "just now";
+  if (s < 60)   return s + "s ago";
+  if (s < 3600) return Math.floor(s / 60) + "m ago";
+  if (s < 86400) return Math.floor(s / 3600) + "h ago";
+  return Math.floor(s / 86400) + "d ago";
+}
+
+function shortSlug(slug) {
+  if (!slug) return "—";
+  // The slug includes a trailing -YYYY-MM-DD; show the human-readable
+  // prefix for the table but keep the full slug in the title attr.
+  return slug;
+}
+
+function renderEngagements(rows) {
+  const countEl = document.getElementById("engagements-count");
+  countEl.textContent = `(${rows.length})`;
+  const wrap = document.getElementById("engagements-table");
+  reconcileTable(wrap, rows, {
+    columns: [
+      { th: "Slug",
+        get: r => `<td title="${escapeHtml(r.slug || "")}">${escapeHtml(shortSlug(r.slug))}</td>`,
+        value: r => r.slug },
+      { th: "Title",
+        get: r => cell(r.title),
+        value: r => r.title },
+      { th: "Client",
+        get: r => cell(r.client, { dim: !r.client }),
+        value: r => r.client },
+      { th: "Status",
+        get: r => {
+          const pill = engagementStatusPill(r.status);
+          // Pass I-2: render a small message-count badge next to the
+          // pill when the engagement has any clarification messages.
+          // Tooltip explains the badge so the human knows it's worth
+          // clicking through.
+          const n = Number(r.message_count || 0);
+          const badge = n > 0
+            ? ` <span class="pill" title="Open questions awaiting your answer, or messages from the firm." style="background:rgba(251,191,36,0.10);color:var(--warn);border-color:rgba(251,191,36,0.4);">${n}</span>`
+            : "";
+          return cell(`${pill}${badge}`, { raw: true });
+        },
+        value: r => r.status },
+      { th: "Age",
+        get: r => cell(engagementAge(r.age_seconds)),
+        value: r => r.age_seconds },
+      { th: "Updated",
+        get: r => cell(shortTs(r.updated_at), { dim: true }),
+        value: r => r.updated_at },
+    ],
+    keyFn: r => r.engagement_id,
+    cacheKey: "engagements",
+    emptyMsg: {
+      none: "No engagements yet. Click 'New Engagement' to submit a brief.",
+      filtered: "No engagements match the current filters.",
+    },
+  });
+
+  // Wire row clicks -> engagement.html. Idempotent: data-bound flag avoids
+  // re-binding after every reconcile. We prefer the slug-keyed URL so
+  // the I-2 detail page's auto-refresh works without a snapshot round-trip
+  // to map id -> slug. Fall back to id if the slug isn't on the row.
+  wrap.querySelectorAll("tbody tr").forEach(tr => {
+    if (tr.dataset.engBound === "1") return;
+    tr.dataset.engBound = "1";
+    tr.addEventListener("click", () => {
+      const id = tr.getAttribute("data-key");
+      const row = (rows || []).find(r => r.engagement_id === id);
+      if (row && row.slug) {
+        window.location.href = `./engagement.html?slug=${encodeURIComponent(row.slug)}`;
+      } else if (id) {
+        window.location.href = `./engagement.html?id=${encodeURIComponent(id)}`;
+      }
+    });
+  });
+}
+
+// New Engagement modal (Pass I-1).
+function openEngagementModal() {
+  const bd = document.getElementById("engagement-modal-backdrop");
+  document.getElementById("engagement-modal-error").textContent = "";
+  bd.classList.add("open");
+  // Focus title for keyboard users.
+  setTimeout(() => {
+    const titleEl = document.getElementById("eng-title");
+    if (titleEl) titleEl.focus();
+  }, 50);
+}
+
+function closeEngagementModal() {
+  const bd = document.getElementById("engagement-modal-backdrop");
+  bd.classList.remove("open");
+}
+
+async function submitEngagement(e) {
+  e.preventDefault();
+  const errEl = document.getElementById("engagement-modal-error");
+  errEl.textContent = "";
+  const submitBtn = document.getElementById("engagement-submit");
+  const title = document.getElementById("eng-title").value.trim();
+  const requirements_md = document.getElementById("eng-requirements").value;
+  const client = document.getElementById("eng-client").value.trim();
+
+  if (!title) { errEl.textContent = "Title is required."; return; }
+  if (!requirements_md.trim()) {
+    errEl.textContent = "Requirements (markdown) is required."; return;
+  }
+
+  submitBtn.disabled = true;
+  submitBtn.textContent = "Submitting…";
+  try {
+    const r = await fetch("./api/engagements", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title, requirements_md, client: client || undefined }),
+    });
+    if (!r.ok) {
+      let detail = "";
+      try {
+        const j = await r.json();
+        detail = j.detail || j.error || ("HTTP " + r.status);
+      } catch (e) {
+        detail = "HTTP " + r.status;
+      }
+      throw new Error(detail);
+    }
+    // Success: close modal + reset form + refresh snapshot so the new row
+    // shows up. We pull the engagements list separately too for snappier
+    // perceived latency, but the snapshot poll is the source of truth.
+    closeEngagementModal();
+    document.getElementById("engagement-form").reset();
+    await refreshEngagementsOnly();
+    // Trigger a full snapshot refresh so KPIs / fleet stay in sync.
+    loadSnapshot({ manual: false }).catch(() => {});
+  } catch (e) {
+    errEl.textContent = e.message || String(e);
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.textContent = "Submit";
+  }
+}
+
+async function refreshEngagementsOnly() {
+  // Quick path: ask the backend for just the engagements list. This is
+  // cheaper than a full snapshot and runs immediately after a successful
+  // POST so the table reflects the new row without waiting for the next
+  // poll interval.
+  try {
+    const r = await fetch(`./api/engagements?t=${Date.now()}`, { cache: "no-store" });
+    if (!r.ok) return;
+    const j = await r.json();
+    const rows = (j && j.engagements) || [];
+    if (state.lastSnapshot) {
+      state.lastSnapshot.engagements = rows;
+    }
+    renderEngagements(rows);
+  } catch (e) {
+    // best-effort; the next full snapshot poll will reconcile.
+  }
+}
+
+function invocationKey(r) {
+  // started_at + handle is unique enough for our purposes; events fan out
+  // from a single (worker, started_at) pair.
+  return (r.started_at || "") + "|" + (r.handle || "");
+}
+
+function renderInvocations(rows, totalRows) {
+  const countEl = document.getElementById("inv-count");
+  countEl.textContent = totalRows != null && totalRows !== rows.length
+    ? `(${rows.length} of ${totalRows})`
+    : `(${rows.length})`;
+  const wrap = document.getElementById("invocations-wrap");
+  reconcileTable(wrap, rows, {
+    columns: [
+      { th: "Started",  get: r => cell(shortTs(r.started_at)),
+        value: r => shortTs(r.started_at) },
+      { th: "Role",     get: r => cell(r.role_id),
+        value: r => r.role_id },
+      { th: "Handle",   get: r => cell(r.handle, { dim: true }),
+        value: r => r.handle },
+      { th: "Host",     get: r => cell(r.host_id, { dim: true }),
+        value: r => r.host_id },
+      { th: "Dur",      get: r => cell(r.duration_s != null ? r.duration_s.toFixed(1) + "s" : "in-flight",
+                                       { num: true, dim: r.duration_s == null }),
+        value: r => r.duration_s != null ? r.duration_s.toFixed(1) + "s" : "in-flight" },
+      { th: "Tier",     get: r => cell(tierPill(r.tier), { raw: true }),
+        value: r => r.tier },
+      { th: "Terminal", get: r => cell(r.terminal_type),
+        value: r => r.terminal_type },
+      { th: "Outcome",  get: r => cell(r.outcome),
+        value: r => r.outcome },
+    ],
+    keyFn: invocationKey,
+    rowClassFn: (r) => {
+      if (r.terminal_type === "Reaped") return "outcome-reaped";
+      if (r.terminal_type === "ReportWritten") return "outcome-report";
+      if (r.terminal_type == null) return "outcome-inflight";
+      return "";
+    },
+    cacheKey: "invocations",
+    emptyMsg: {
+      none: "No invocations recorded yet.",
+      filtered: "No invocations match the current filters.",
+    },
+  });
+}
+
+function renderCostByRole(rows, totalRows) {
+  const countEl = document.getElementById("role-count");
+  countEl.textContent = totalRows != null && totalRows !== rows.length
+    ? `(${rows.length} of ${totalRows})`
+    : `(${rows.length})`;
+
+  // Chart — animated transition when data already exists.
+  const ctx = document.getElementById("cost-role-chart").getContext("2d");
+  const labels = rows.map(r => r.role_id);
+  const data = rows.map(r => r.cost_usd || 0);
+  const colors = rows.map((_, i) => CHART_PALETTE[i % CHART_PALETTE.length]);
+
+  if (!rows.length) {
+    destroyChart(costRoleChart);
+    costRoleChart = null;
+    ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+  } else if (costRoleChart) {
+    costRoleChart.data.labels = labels;
+    costRoleChart.data.datasets[0].data = data;
+    costRoleChart.data.datasets[0].backgroundColor = colors;
+    costRoleChart.update("none");
+  } else {
+    costRoleChart = new Chart(ctx, {
+      type: "bar",
+      data: {
+        labels,
+        datasets: [{
+          label: "Cost (USD)",
+          data,
+          backgroundColor: colors,
+          borderRadius: 4,
+        }],
+      },
+      options: {
+        ...CHART_DEFAULTS,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: { label: (ctx) => humanizeCost(ctx.parsed.y) },
+          },
+        },
+        scales: {
+          x: { ticks: { color: "#9aa3ad" }, grid: { color: "rgba(255,255,255,0.05)" } },
+          y: {
+            ticks: { color: "#9aa3ad", callback: (v) => humanizeCost(v) },
+            grid: { color: "rgba(255,255,255,0.05)" },
+          },
+        },
+      },
+    });
+  }
+
+  // Table
+  const wrap = document.getElementById("cost-role-table");
+  reconcileTable(wrap, rows, {
+    columns: [
+      { th: "Role", get: r => cell(r.role_id), value: r => r.role_id },
+      { th: '<span class="num-h">Invocations</span>', thClass: "num",
+        get: r => cell(humanizeCount(r.invocations), { num: true }),
+        value: r => r.invocations },
+      { th: '<span class="num-h">Wall</span>', thClass: "num",
+        get: r => cell(humanizeSeconds(r.wall_s), { num: true }),
+        value: r => r.wall_s },
+      { th: '<span class="num-h">Tokens in</span>', thClass: "num",
+        get: r => cell(humanizeTokens(r.tokens_in), { num: true }),
+        value: r => r.tokens_in },
+      { th: '<span class="num-h">Tokens out</span>', thClass: "num",
+        get: r => cell(humanizeTokens(r.tokens_out), { num: true }),
+        value: r => r.tokens_out },
+      { th: '<span class="num-h">Cost</span>', thClass: "num",
+        get: r => cell(humanizeCost(r.cost_usd), { num: true }),
+        value: r => r.cost_usd },
+    ],
+    keyFn: r => r.role_id,
+    cacheKey: "costByRole",
+    emptyMsg: {
+      none: "No cost rows yet.",
+      filtered: "No cost rows match the current filters.",
+    },
+  });
+}
+
+function renderCostByModel(rows, totalRows) {
+  const countEl = document.getElementById("model-count");
+  countEl.textContent = totalRows != null && totalRows !== rows.length
+    ? `(${rows.length} of ${totalRows})`
+    : `(${rows.length})`;
+  const wrap = document.getElementById("cost-model-table");
+  reconcileTable(wrap, rows, {
+    columns: [
+      { th: "Model",    get: r => cell(r.model_id), value: r => r.model_id },
+      { th: "Provider", get: r => cell(r.provider_id, { dim: true }), value: r => r.provider_id },
+      { th: "Invocations", thClass: "num",
+        get: r => cell(humanizeCount(r.invocations), { num: true }),
+        value: r => r.invocations },
+      { th: "Tokens in", thClass: "num",
+        get: r => cell(humanizeTokens(r.tokens_in), { num: true }),
+        value: r => r.tokens_in },
+      { th: "Tokens out", thClass: "num",
+        get: r => cell(humanizeTokens(r.tokens_out), { num: true }),
+        value: r => r.tokens_out },
+      { th: "Cost", thClass: "num",
+        get: r => cell(humanizeCost(r.cost_usd), { num: true }),
+        value: r => r.cost_usd },
+    ],
+    keyFn: r => (r.model_id || "") + "|" + (r.provider_id || ""),
+    cacheKey: "costByModel",
+    emptyMsg: {
+      none: "No model usage recorded yet.",
+      filtered: "No model usage matches the current filters.",
+    },
+  });
+}
+
+function workerStatusPill(status) {
+  if (status === "active")   return `<span class="pill good">active</span>`;
+  if (status === "idle")     return `<span class="pill accent">idle</span>`;
+  if (status === "archived") return `<span class="pill">archived</span>`;
+  return `<span class="pill">${escapeHtml(status || "?")}</span>`;
+}
+
+function renderActiveWorkers(rows, totalRows) {
+  const countEl = document.getElementById("worker-count");
+  countEl.textContent = totalRows != null && totalRows !== rows.length
+    ? `(${rows.length} of ${totalRows})`
+    : `(${rows.length})`;
+  const wrap = document.getElementById("workers-table");
+  reconcileTable(wrap, rows, {
+    columns: [
+      { th: "Handle", get: r => cell(r.handle), value: r => r.handle },
+      { th: "Role",   get: r => cell(r.role_id), value: r => r.role_id },
+      { th: "Host",   get: r => cell(r.host_id, { dim: true }), value: r => r.host_id },
+      { th: "Status", get: r => cell(workerStatusPill(r.status), { raw: true }),
+        value: r => r.status },
+      { th: "Lifetime inv.", thClass: "num",
+        get: r => cell(humanizeCount(r.lifetime_invocations), { num: true }),
+        value: r => r.lifetime_invocations },
+      { th: "Lifetime cost", thClass: "num",
+        get: r => cell(humanizeCost(r.lifetime_cost_usd), { num: true }),
+        value: r => r.lifetime_cost_usd },
+      { th: "Last cost ts",
+        get: r => cell(shortTs(r.last_cost_ts), { dim: true }),
+        value: r => r.last_cost_ts },
+    ],
+    keyFn: r => (r.handle || "") + "|" + (r.instance_id || ""),
+    cacheKey: "workers",
+    emptyMsg: {
+      none: "No active workers.",
+      filtered: "No workers match the current filters.",
+    },
+  });
+}
+
+function renderEvents(rows, typeCounts, totalRows) {
+  const countEl = document.getElementById("event-count");
+  countEl.textContent = totalRows != null && totalRows !== rows.length
+    ? `(${rows.length} of ${totalRows})`
+    : `(${rows.length})`;
+
+  // Donut chart — animated transition.
+  const ctx = document.getElementById("event-type-chart").getContext("2d");
+  if (!typeCounts.length) {
+    destroyChart(eventTypeChart);
+    eventTypeChart = null;
+    ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+  } else if (eventTypeChart) {
+    eventTypeChart.data.labels = typeCounts.map(t => t.type);
+    eventTypeChart.data.datasets[0].data = typeCounts.map(t => t.n);
+    eventTypeChart.data.datasets[0].backgroundColor = typeCounts.map((_, i) => CHART_PALETTE[i % CHART_PALETTE.length]);
+    eventTypeChart.update("none");
+  } else {
+    eventTypeChart = new Chart(ctx, {
+      type: "doughnut",
+      data: {
+        labels: typeCounts.map(t => t.type),
+        datasets: [{
+          data: typeCounts.map(t => t.n),
+          backgroundColor: typeCounts.map((_, i) => CHART_PALETTE[i % CHART_PALETTE.length]),
+          borderColor: "#1a1d22",
+          borderWidth: 2,
+        }],
+      },
+      options: {
+        ...CHART_DEFAULTS,
+        cutout: "60%",
+        plugins: {
+          legend: {
+            position: "right",
+            labels: { color: "#e6e8eb", boxWidth: 12, font: { size: 11 } },
+          },
+        },
+      },
+    });
+  }
+
+  // Table (top 30 after filtering)
+  const wrap = document.getElementById("events-table");
+  const top = rows.slice(0, 30);
+  reconcileTable(wrap, top, {
+    columns: [
+      { th: "Ts",     get: r => cell(shortTs(r.ts)), value: r => r.ts },
+      { th: "Type",   get: r => cell(r.type), value: r => r.type },
+      { th: "Role",   get: r => cell(r.role_id), value: r => r.role_id },
+      { th: "Handle", get: r => cell(r.handle, { dim: true }), value: r => r.handle },
+      { th: "Payload",
+        get: r => {
+          const payloadStr = r.payload_json ? JSON.stringify(r.payload_json) : "";
+          const payloadPretty = r.payload_json ? JSON.stringify(r.payload_json, null, 2) : "";
+          const collapsed = payloadStr.slice(0, 120) + (payloadStr.length > 120 ? "…" : "");
+          return `<td>
+            <span class="payload" data-pretty="${escapeHtml(payloadPretty)}" data-collapsed="${escapeHtml(collapsed)}">${escapeHtml(collapsed)}</span>
+          </td>`;
+        },
+        value: r => r.payload_json ? JSON.stringify(r.payload_json) : "",
+      },
+    ],
+    keyFn: r => (r.ts || "") + "|" + (r.type || "") + "|" + (r.handle || ""),
+    cacheKey: "eventsTable",
+    emptyMsg: {
+      none: "No events recorded yet.",
+      filtered: "No events match the current filters.",
+    },
+  });
+
+  // wire click-to-expand (re-bind after reconcile, idempotent)
+  wrap.querySelectorAll(".payload").forEach(el => {
+    if (el.dataset.bound === "1") return;
+    el.dataset.bound = "1";
+    el.addEventListener("click", () => {
+      if (el.classList.contains("expanded")) {
+        el.classList.remove("expanded");
+        el.textContent = el.dataset.collapsed;
+      } else {
+        el.classList.add("expanded");
+        el.textContent = el.dataset.pretty;
+      }
+    });
+  });
+}
+
+function renderStatus(snapshot) {
+  const v = snapshot.schema_version;
+  const versionStr = v
+    ? `V${escapeHtml(v.version || "?")}__${escapeHtml(v.description || "?")} (${escapeHtml(shortTs(v.installed_on))})`
+    : "unknown";
+  const root = document.getElementById("system-status");
+  root.innerHTML = `
+    <div>Schema: <strong>${versionStr}</strong></div>
+    <div>Snapshot: <strong>${escapeHtml(shortTs(snapshot.generated_at))}</strong></div>
+    <div>Live: <strong>polling every ${state.intervalMs / 1000}s</strong></div>
+  `;
+}
+
+// ===========================================================================
+// Filter UI
+// ===========================================================================
+
+function computeRoleOptions(snapshot) {
+  // Distinct role_id across cost_by_role and active_workers, with row counts.
+  const counts = new Map();
+  for (const r of (snapshot.cost_by_role || [])) {
+    if (r.role_id) counts.set(r.role_id, (counts.get(r.role_id) || 0) + (r.invocations || 0));
+  }
+  for (const w of (snapshot.active_workers || [])) {
+    if (w.role_id && !counts.has(w.role_id)) counts.set(w.role_id, 0);
+  }
+  for (const i of (snapshot.recent_invocations || [])) {
+    if (i.role_id && !counts.has(i.role_id)) counts.set(i.role_id, 0);
+  }
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([id, count]) => ({ id, count }));
+}
+
+function renderFilters(snapshot) {
+  // Time
+  const timeEl = document.getElementById("filter-time");
+  timeEl.innerHTML = TIME_RANGES.map(r => `
+    <span class="chip ${state.filters.timeRange === r.id ? "active" : ""}" data-time="${r.id}">${escapeHtml(r.label)}</span>
+  `).join("");
+  timeEl.querySelectorAll(".chip").forEach(el => {
+    el.addEventListener("click", () => {
+      state.filters.timeRange = el.dataset.time;
+      persistState(); updateUrl(); rerender();
+    });
+  });
+
+  // Role
+  const roleEl = document.getElementById("filter-role");
+  const roles = computeRoleOptions(snapshot);
+  if (!roles.length) {
+    roleEl.innerHTML = `<span class="chip" style="cursor:default;opacity:0.6">(no roles yet)</span>`;
+  } else {
+    roleEl.innerHTML = roles.map(r => `
+      <span class="chip ${state.filters.roles.has(r.id) ? "active" : ""}" data-role="${escapeHtml(r.id)}">
+        ${escapeHtml(r.id)} <span class="badge">${r.count}</span>
+      </span>
+    `).join("");
+    roleEl.querySelectorAll(".chip[data-role]").forEach(el => {
+      el.addEventListener("click", () => {
+        const id = el.dataset.role;
+        if (state.filters.roles.has(id)) state.filters.roles.delete(id);
+        else state.filters.roles.add(id);
+        persistState(); updateUrl(); rerender();
+      });
+    });
+  }
+
+  // Terminal
+  const termEl = document.getElementById("filter-terminal");
+  termEl.innerHTML = TERMINAL_OPTIONS.map(t => `
+    <span class="chip ${state.filters.terminals.has(t) ? "active" : ""}" data-term="${escapeHtml(t)}">${escapeHtml(t)}</span>
+  `).join("");
+  termEl.querySelectorAll(".chip").forEach(el => {
+    el.addEventListener("click", () => {
+      const t = el.dataset.term;
+      if (state.filters.terminals.has(t)) state.filters.terminals.delete(t);
+      else state.filters.terminals.add(t);
+      persistState(); updateUrl(); rerender();
+    });
+  });
+
+  // Tenant (Pass K). Sourced from snapshot.tenants (V11+); falls back
+  // to a single "default" chip when the view is missing or empty so
+  // users see the multi-select even on pre-V11 databases.
+  const tenantEl = document.getElementById("filter-tenant");
+  if (tenantEl) {
+    const tenants = (snapshot.tenants || []).slice();
+    if (!tenants.length) tenants.push({ tenant_id: "default" });
+    tenantEl.innerHTML = tenants.map(t => `
+      <span class="chip ${state.filters.tenants.has(t.tenant_id) ? "active" : ""}" data-tenant="${escapeHtml(t.tenant_id)}">
+        ${escapeHtml(t.tenant_id)}
+      </span>
+    `).join("");
+    tenantEl.querySelectorAll(".chip[data-tenant]").forEach(el => {
+      el.addEventListener("click", () => {
+        const id = el.dataset.tenant;
+        if (state.filters.tenants.has(id)) state.filters.tenants.delete(id);
+        else state.filters.tenants.add(id);
+        persistState(); updateUrl(); rerender();
+      });
+    });
+  }
+}
+
+function clearAllFilters() {
+  state.filters.timeRange = "24h";
+  state.filters.roles.clear();
+  state.filters.terminals.clear();
+  state.filters.tenants.clear();
+  persistState(); updateUrl();
+  if (state.lastSnapshot) {
+    renderFilters(state.lastSnapshot);
+    rerender();
+  }
+}
+window.__clearFilters = clearAllFilters;
+
+function countActiveFilters() {
+  let n = 0;
+  if (state.filters.timeRange !== "24h") n++;
+  n += state.filters.roles.size;
+  n += state.filters.terminals.size;
+  n += state.filters.tenants.size;
+  return n;
+}
+
+// ===========================================================================
+// Banner / connection error states
+// ===========================================================================
+
+function showMissing(msg, detail) {
+  document.getElementById("missing-banner").style.display = "";
+  if (msg)    document.getElementById("missing-title").textContent = msg;
+  if (detail) document.getElementById("missing-detail").innerHTML = detail;
+  document.getElementById("dashboard").style.display = "none";
+  document.getElementById("generated-at").textContent = "no snapshot loaded";
+  const dot = document.getElementById("live-dot");
+  dot.classList.add("error"); dot.classList.remove("paused");
+}
+
+function showDashboard() {
+  document.getElementById("missing-banner").style.display = "none";
+  document.getElementById("dashboard").style.display = "";
+}
+
+// ===========================================================================
+// Render pipeline
+// ===========================================================================
+
+function rerender() {
+  if (!state.lastSnapshot) return;
+  const snap = state.lastSnapshot;
+  state.activeFilterCount = countActiveFilters();
+
+  // Filter
+  const filteredInvocations = filterInvocations(snap.recent_invocations || []);
+  const filteredWorkers     = filterWorkers(snap.active_workers || []);
+  const filteredEvents      = filterEvents(snap.recent_events || []);
+  const filteredCostByRole  = filterCostByRole(snap.cost_by_role || []);
+  // Cost-by-model has no role/time field; if filters are active that imply
+  // role/time scoping we hide rows for roles that have nothing in scope —
+  // simplest path: leave it alone, since model is a cross-cutting concern.
+  const filteredCostByModel = snap.cost_by_model || [];
+
+  // Recompute event type counts from filtered events for the donut.
+  const typeCounts = (() => {
+    if (state.activeFilterCount === 0) return snap.event_type_counts || [];
+    const m = new Map();
+    for (const e of filteredEvents) m.set(e.type, (m.get(e.type) || 0) + 1);
+    return [...m.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([type, n]) => ({ type, n }));
+  })();
+
+  renderKpis(snap.kpis || {}, snap.fleet_kpis || {}, snap.tenant_kpis || {});
+  // Pass M: attach the latest vital snapshot from the per-instance
+  // fleet rows onto each machine row by host_id, so the Machines card
+  // grid can render CPU / mem / disk bars without a second backend
+  // shape change. Pick the freshest vitals_at when a host has more
+  // than one registered instance.
+  const machinesEnriched = (snap.machines || []).map(m => {
+    const candidates = (snap.fleet || []).filter(f => f.host_id === m.host_id && f.vitals_at);
+    if (!candidates.length) return m;
+    candidates.sort((a, b) => (Date.parse(b.vitals_at || "") || 0) - (Date.parse(a.vitals_at || "") || 0));
+    const v = candidates[0];
+    return Object.assign({}, m, {
+      cpu_pct:           v.cpu_pct,
+      mem_used_mb:       v.mem_used_mb,
+      mem_total_mb:      v.mem_total_mb,
+      disk_used_gb:      v.disk_used_gb,
+      disk_total_gb:     v.disk_total_gb,
+      load_avg_1m:       v.load_avg_1m,
+      load_avg_5m:       v.load_avg_5m,
+      load_avg_15m:      v.load_avg_15m,
+      spine_cpu_pct:     v.spine_cpu_pct,
+      spine_mem_mb:      v.spine_mem_mb,
+      spine_proc_count:  v.spine_proc_count,
+      vitals_at:         v.vitals_at,
+      instance_id:       v.instance_id,
+    });
+  });
+  renderMachines(machinesEnriched);
+  renderEngagements(snap.engagements || []);
+  renderFleet(snap.fleet || [], (snap.fleet || []).length);
+  renderInvocations(filteredInvocations, (snap.recent_invocations || []).length);
+  renderCostByRole(filteredCostByRole, (snap.cost_by_role || []).length);
+  renderCostByModel(filteredCostByModel, (snap.cost_by_model || []).length);
+  renderActiveWorkers(filteredWorkers, (snap.active_workers || []).length);
+  renderEvents(filteredEvents, typeCounts, (snap.recent_events || []).length);
+  renderStatus(snap);
+}
+
+async function loadSnapshot(options) {
+  options = options || {};
+  const btn = document.getElementById("refresh-btn");
+  if (options.manual) {
+    btn.disabled = true;
+    btn.textContent = "Loading…";
+  }
+  const dot = document.getElementById("live-dot");
+
+  let snap;
+  try {
+    const r = await fetch(`./pg-snapshot.json?t=${Date.now()}`, { cache: "no-store" });
+    if (!r.ok) {
+      let detail = "";
+      try { const j = await r.json(); detail = j.detail || j.error || ""; } catch (e) {}
+      throw new Error(`HTTP ${r.status}${detail ? `: ${detail}` : ""}`);
+    }
+    snap = await r.json();
+  } catch (e) {
+    console.warn("snapshot load failed:", e);
+    if (window.location.protocol === "file:") {
+      showMissing("Snapshot file not found",
+        "Run <code>make snapshot</code> in the <code>db/</code> directory, or <code>make dashboard</code> to start the live server.");
+    } else {
+      showMissing("Snapshot server unreachable",
+        `Try <code>make dashboard</code> in the <code>db/</code> directory. (${escapeHtml(e.message)})`);
+    }
+    if (options.manual) { btn.disabled = false; btn.textContent = "Refresh"; }
+    return;
+  }
+
+  state.lastSnapshot = snap;
+  state.lastFetchAt = new Date();
+
+  showDashboard();
+  renderFilters(snap);
+  rerender();
+  updateTicker();
+
+  // Reset live indicator (clear any prior error).
+  dot.classList.remove("error");
+  dot.classList.toggle("paused", !state.autorefresh);
+
+  if (options.manual) { btn.disabled = false; btn.textContent = "Refresh"; }
+}
+
+// ===========================================================================
+// Last-updated ticker
+// ===========================================================================
+
+function updateTicker() {
+  const el = document.getElementById("generated-at");
+  if (!state.lastFetchAt || !state.lastSnapshot) {
+    el.textContent = "no snapshot loaded";
+    return;
+  }
+  const age = Date.now() - state.lastFetchAt.getTime();
+  el.textContent = `Last update: ${humanizeRelativeAge(age)} (snapshot ${shortTs(state.lastSnapshot.generated_at)})`;
+}
+
+// ===========================================================================
+// Auto-refresh loop
+// ===========================================================================
+
+function startPolling() {
+  stopPolling();
+  if (!state.autorefresh) {
+    document.getElementById("live-dot").classList.add("paused");
+    return;
+  }
+  document.getElementById("live-dot").classList.remove("paused");
+  state.pollTimer = setInterval(() => {
+    loadSnapshot().catch(e => console.warn("poll failed:", e));
+  }, state.intervalMs);
+}
+
+function stopPolling() {
+  if (state.pollTimer) { clearInterval(state.pollTimer); state.pollTimer = null; }
+}
+
+// ===========================================================================
+// Wire up controls + boot
+// ===========================================================================
+
+restoreState();
+
+(function applyControlState() {
+  const cb = document.getElementById("autorefresh");
+  cb.checked = state.autorefresh;
+  cb.addEventListener("change", () => {
+    state.autorefresh = cb.checked;
+    persistState(); startPolling();
+  });
+
+  const sel = document.getElementById("interval-select");
+  sel.value = String(state.intervalMs);
+  sel.addEventListener("change", () => {
+    state.intervalMs = parseInt(sel.value, 10) || 5000;
+    persistState();
+    if (state.autorefresh) startPolling();
+  });
+})();
+
+document.getElementById("refresh-btn").addEventListener("click", () => {
+  loadSnapshot({ manual: true });
+});
+document.getElementById("filter-clear").addEventListener("click", clearAllFilters);
+
+// New Engagement modal wiring (Pass I-1).
+(function wireEngagementModal() {
+  const openBtn = document.getElementById("new-engagement-btn");
+  const cancelBtn = document.getElementById("engagement-cancel");
+  const backdrop = document.getElementById("engagement-modal-backdrop");
+  const form = document.getElementById("engagement-form");
+  if (!openBtn || !backdrop) return;
+
+  openBtn.addEventListener("click", openEngagementModal);
+  cancelBtn.addEventListener("click", closeEngagementModal);
+  // Click on backdrop (outside the modal box) closes.
+  backdrop.addEventListener("click", (e) => {
+    if (e.target === backdrop) closeEngagementModal();
+  });
+  form.addEventListener("submit", submitEngagement);
+})();
+
+// Esc closes the engagement modal (if open) or clears filters.
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    const bd = document.getElementById("engagement-modal-backdrop");
+    if (bd && bd.classList.contains("open")) {
+      closeEngagementModal();
+      return;
+    }
+    if (countActiveFilters() > 0) {
+      clearAllFilters();
+    }
+  }
+});
+
+// ===========================================================================
+// Tooltips: mobile tap-to-toggle (hover handles desktop, focus-within handles
+// keyboard). On touch, tapping the icon toggles a sticky "tooltip-open" class;
+// tapping anywhere else closes any open tooltip.
+// ===========================================================================
+
+function bindTooltipTaps(scope) {
+  const root = scope || document;
+  root.querySelectorAll(".has-tooltip .info-icon").forEach(btn => {
+    if (btn.dataset.tipBound === "1") return;
+    btn.dataset.tipBound = "1";
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const wrap = btn.closest(".has-tooltip");
+      if (!wrap) return;
+      // Close any others.
+      document.querySelectorAll(".has-tooltip.tooltip-open").forEach(el => {
+        if (el !== wrap) el.classList.remove("tooltip-open");
+      });
+      wrap.classList.toggle("tooltip-open");
+    });
+  });
+}
+
+// Wire tap-to-toggle on the static section-header tooltips at boot.
+bindTooltipTaps(document);
+
+// Close sticky tooltips when clicking outside.
+document.addEventListener("click", (e) => {
+  if (!e.target.closest(".has-tooltip")) {
+    document.querySelectorAll(".has-tooltip.tooltip-open")
+      .forEach(el => el.classList.remove("tooltip-open"));
+  }
+});
+// Esc also closes them.
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    document.querySelectorAll(".has-tooltip.tooltip-open")
+      .forEach(el => el.classList.remove("tooltip-open"));
+  }
+});
+
+// Initial paint + start polling.
+loadSnapshot().then(() => startPolling());
+
+// Ticker fires every second between fetches.
+state.tickerTimer = setInterval(updateTicker, 1000);
+</script>
+</body>
+</html>

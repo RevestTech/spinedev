@@ -94,6 +94,10 @@ class IntegrationList(BaseModel):
 # Static catalog — Wave 4 sources this from the active bundle
 # ---------------------------------------------------------------------------
 
+def _charter_ref(role: str) -> str:
+    return f"shared/charters/{role}.md"
+
+
 _MASTER_ROLES: tuple[RoleEntry, ...] = (
     RoleEntry(name="director_engineering", tier="master", description="Master eng director"),
     RoleEntry(name="director_product", tier="master", description="Master product director"),
@@ -101,21 +105,21 @@ _MASTER_ROLES: tuple[RoleEntry, ...] = (
     RoleEntry(name="director_security", tier="master", description="Master security director"),
 )
 _PROJECT_ROLES: tuple[RoleEntry, ...] = (
-    RoleEntry(name="architect", tier="project", description="System architecture"),
-    RoleEntry(name="product", tier="project", description="Product manager"),
-    RoleEntry(name="engineer", tier="project", description="Generalist engineer"),
-    RoleEntry(name="qa", tier="project", description="Quality assurance", charter_ref="lib/role-prompts/qa.md"),
-    RoleEntry(name="ux", tier="project", description="UX / design"),
-    RoleEntry(name="operator", tier="project", description="Spine-internal ops (#11 distinct from devops)"),
-    RoleEntry(name="devops", tier="project", description="Customer-facing devops (#11)", feature_flag="role_devops"),
-    RoleEntry(name="datawright", tier="project", description="Data engineering"),
-    RoleEntry(name="planner", tier="project", description="Planning / scrum master"),
-    RoleEntry(name="conductor", tier="project", description="Squad conductor"),
-    RoleEntry(name="release_manager", tier="project", description="Release coordination", feature_flag="role_release_manager"),
-    RoleEntry(name="tech_writer", tier="project", description="Technical writing", feature_flag="role_tech_writer"),
-    RoleEntry(name="security_engineer", tier="project", description="Security engineer", feature_flag="role_security_engineer"),
-    RoleEntry(name="compliance_officer", tier="project", description="Compliance officer", feature_flag="role_compliance_officer"),
-    RoleEntry(name="customer_support", tier="project", description="Customer support", feature_flag="role_customer_support"),
+    RoleEntry(name="architect", tier="project", description="System architecture", charter_ref=_charter_ref("architect")),
+    RoleEntry(name="product", tier="project", description="Product manager", charter_ref=_charter_ref("product")),
+    RoleEntry(name="engineer", tier="project", description="Generalist engineer", charter_ref=_charter_ref("engineer")),
+    RoleEntry(name="qa", tier="project", description="Quality assurance", charter_ref=_charter_ref("qa")),
+    RoleEntry(name="ux", tier="project", description="UX / design", charter_ref=_charter_ref("ux")),
+    RoleEntry(name="operator", tier="project", description="Spine-internal ops (#11 distinct from devops)", charter_ref=_charter_ref("operator")),
+    RoleEntry(name="devops", tier="project", description="Customer-facing devops (#11)", feature_flag="role_devops", charter_ref=_charter_ref("devops")),
+    RoleEntry(name="datawright", tier="project", description="Data engineering", charter_ref=_charter_ref("datawright")),
+    RoleEntry(name="planner", tier="project", description="Planning / scrum master", charter_ref=_charter_ref("planner")),
+    RoleEntry(name="conductor", tier="project", description="Squad conductor", charter_ref=_charter_ref("conductor")),
+    RoleEntry(name="release_manager", tier="project", description="Release coordination", feature_flag="role_release_manager", charter_ref=_charter_ref("release_manager")),
+    RoleEntry(name="tech_writer", tier="project", description="Technical writing", feature_flag="role_tech_writer", charter_ref=_charter_ref("tech_writer")),
+    RoleEntry(name="security_engineer", tier="project", description="Security engineer", feature_flag="role_security_engineer", charter_ref=_charter_ref("security_engineer")),
+    RoleEntry(name="compliance_officer", tier="project", description="Compliance officer", feature_flag="role_compliance_officer", charter_ref=_charter_ref("compliance_officer")),
+    RoleEntry(name="customer_support", tier="project", description="Customer support", feature_flag="role_customer_support", charter_ref=_charter_ref("customer_support")),
 )
 
 _INTEGRATIONS: tuple[IntegrationEntry, ...] = (
@@ -263,6 +267,41 @@ async def list_integrations(
 ) -> IntegrationList:
     """Return the integration catalog."""
     return IntegrationList(items=list(_INTEGRATIONS))
+
+
+class MasterBriefingPreview(BaseModel):
+    """On-demand portfolio briefing preview (does not enqueue cards)."""
+
+    model_config = ConfigDict(extra="forbid")
+    ok: bool = True
+    director: str
+    title: str
+    body: str
+    project_count: int = 0
+
+
+@router.get("/master-briefings/preview", response_model=MasterBriefingPreview)
+async def preview_master_briefing(
+    user: Annotated[User, Depends(current_user)],
+    director: str = "director_product",
+) -> MasterBriefingPreview:
+    """Return a composed master briefing without pushing to the decision queue."""
+    from shared.runtime.master_briefing import (  # noqa: PLC0415
+        _MASTER_DIRECTORS,
+        compose_director_briefing,
+        fetch_portfolio_snapshot,
+    )
+
+    title_map = dict(_MASTER_DIRECTORS)
+    title = title_map.get(director, "Portfolio status")
+    snap = await fetch_portfolio_snapshot()
+    body = compose_director_briefing(director, title, snap)
+    return MasterBriefingPreview(
+        director=director,
+        title=title,
+        body=body,
+        project_count=snap.active_count,
+    )
 
 
 class WhoamiResponse(BaseModel):

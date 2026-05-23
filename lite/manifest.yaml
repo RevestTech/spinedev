@@ -19,7 +19,7 @@ components:
   role_prompts:
     enabled: true
     description: "All 13 Spine role personas; usable via @-mention in Claude Code."
-    source: "lib/role-prompts/"        # falls back to build/roles/ post-migration
+    source: "shared/charters/"         # canonical; install-lite.sh falls back to build/roles/
     target: "~/.spine-lite/role-prompts/"
     files:
       - engineer.md
