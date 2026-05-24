@@ -10,6 +10,7 @@ import pytest
 from shared.runtime.project_workspace import (
     bootstrap_project_git_repo,
     commit_workspace,
+    count_workspace_files,
     is_spine_on_spine,
     metadata_patch_from_bootstrap,
     project_code_dir,
@@ -17,6 +18,7 @@ from shared.runtime.project_workspace import (
     repo_slug_for_project,
     resolve_code_dir,
     promote_plan_artifacts,
+    workspace_host_path,
 )
 
 
@@ -82,6 +84,34 @@ def test_spine_on_spine_repo_write(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
     monkeypatch.setenv("SPINE_ON_SPINE_ALLOW_REPO_WRITE", "1")
     md = {"spine_on_spine": True}
     assert resolve_code_dir(uid, md) == platform.resolve()
+
+
+def test_spine_on_spine_hub_dogfood_on_projects_mount(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    hub_root = tmp_path / "var_lib_projects"
+    hub_root.mkdir()
+    uid = "00000000-0000-0000-0000-000000000055"
+    md = {"spine_on_spine": True}
+    real_path = Path
+
+    def path_factory(*args: object, **kwargs: object) -> Path:
+        if args and str(args[0]) == "/var/lib/spine/projects":
+            return hub_root
+        return real_path(*args, **kwargs)
+
+    monkeypatch.setattr("shared.runtime.project_workspace.Path", path_factory)
+    code_dir = resolve_code_dir(uid, md)
+    assert code_dir == (hub_root / "dogfood" / uid).resolve()
+    assert workspace_host_path(uid, md).endswith(f"dogfood/{uid}")
+
+
+def test_count_workspace_files(projects_root: Path) -> None:
+    uid = "00000000-0000-0000-0000-000000000044"
+    bootstrap_project_git_repo(uid, "Count Test", cold_index=False)
+    cwd = project_code_dir(uid)
+    (cwd / "main.py").write_text("x", encoding="utf-8")
+    assert count_workspace_files(uid) >= 2  # README + main.py
 
 
 def test_promote_plan_artifacts_writes_and_commits(projects_root: Path) -> None:

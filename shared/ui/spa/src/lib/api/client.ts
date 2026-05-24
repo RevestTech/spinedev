@@ -78,6 +78,22 @@ async function parseError(response: Response): Promise<ApiError> {
   return new ApiError(response.status, detail);
 }
 
+/** Human-readable message for store error banners. */
+export function apiErrorMessage(err: unknown, fallback: string): string {
+  if (err instanceof ApiError) return err.message;
+  if (err instanceof Error && err.message) return err.message;
+  return fallback;
+}
+
+/** True for intentional fetch/SSE aborts (timeout, navigation, reconnect). */
+export function isAbortError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const e = err as { name?: string; message?: string };
+  if (e.name === 'AbortError') return true;
+  const msg = e.message ?? '';
+  return /aborted/i.test(msg);
+}
+
 /**
  * Core fetch wrapper. Returns parsed JSON on 2xx; throws `ApiError` on >= 400.
  *
@@ -123,6 +139,14 @@ export async function apiFetch<T = unknown>(
       credentials: 'include', // ship the signed spine_sid cookie
       signal: rest.signal ?? controller.signal
     });
+  } catch (err) {
+    if (isAbortError(err)) {
+      throw new ApiError(408, {
+        error_code: 'request_timeout',
+        message: 'Request timed out — if you just started a role, check Live activity and refresh.',
+      });
+    }
+    throw err;
   } finally {
     if (timer) clearTimeout(timer);
   }
@@ -167,6 +191,8 @@ export interface SseSubscription {
 export interface SseHandlers<E = unknown> {
   onEvent: (event: { type: string; data: E }) => void;
   onError?: (err: unknown) => void;
+  /** Fired when the server closes the stream without an error (or after EOF). */
+  onClose?: () => void;
   onOpen?: () => void;
 }
 
@@ -183,6 +209,7 @@ export function subscribeSse<E = unknown>(
   options: { body?: unknown; redirectOn401?: boolean } = {}
 ): SseSubscription {
   const controller = new AbortController();
+  let closed = false;
   const headers = new Headers({ accept: 'text/event-stream' });
   let body: BodyInit | undefined;
   if (options.body !== undefined) {
@@ -223,13 +250,19 @@ export function subscribeSse<E = unknown>(
           if (parsed) handlers.onEvent(parsed);
         }
       }
+      if (!closed) handlers.onClose?.();
     } catch (err) {
-      if ((err as Error).name === 'AbortError') return;
+      if (closed || isAbortError(err)) return;
       handlers.onError?.(err);
     }
   })();
 
-  return { close: () => controller.abort() };
+  return {
+    close: () => {
+      closed = true;
+      controller.abort('close');
+    }
+  };
 }
 
 function parseSseFrame<E>(frame: string): { type: string; data: E } | null {

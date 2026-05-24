@@ -43,22 +43,28 @@ import logging
 import secrets
 import time
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Optional
+from typing import Annotated, Any, Awaitable, Callable, Optional
 from urllib.parse import urlencode
 
 try:  # pragma: no cover - guarded for py_compile
-    from fastapi import APIRouter, FastAPI, HTTPException, Request, Response, status
+    from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, Response, status
     from fastapi.responses import RedirectResponse
     from starlette.middleware.base import BaseHTTPMiddleware
     from starlette.types import ASGIApp
+
+    from shared.api.dependencies import current_user
+    from shared.identity.models import User
 except Exception:  # pragma: no cover
     APIRouter = object  # type: ignore[assignment,misc]
+    Depends = lambda x: x  # type: ignore[assignment,misc]
     FastAPI = object  # type: ignore[assignment,misc]
     Request = object  # type: ignore[assignment,misc]
     Response = object  # type: ignore[assignment,misc]
     RedirectResponse = object  # type: ignore[assignment,misc]
     BaseHTTPMiddleware = object  # type: ignore[assignment,misc]
     ASGIApp = object  # type: ignore[assignment,misc]
+    current_user = None  # type: ignore[assignment,misc]
+    User = object  # type: ignore[assignment,misc]
 
     class HTTPException(Exception):  # type: ignore[no-redef]
         """Stand-in HTTPException for py_compile in stripped environments."""
@@ -274,7 +280,7 @@ def install_oidc_routes(
     *,
     token_exchanger: Callable[[str], Awaitable[dict[str, Any]]] | None = None,
 ) -> None:
-    """Register ``/api/v2/auth/{login,callback,logout}`` on ``app``.
+    """Register ``/api/v2/auth/{login,callback,logout,whoami}`` on ``app``.
 
     ``token_exchanger`` is a seam for tests — production callers leave it
     ``None`` and the route uses ``shared.identity.get_keycloak_client()``
@@ -332,6 +338,19 @@ def install_oidc_routes(
             path="/",
         )
         return resp
+
+    @router.get("/whoami")
+    async def whoami(
+        user: Annotated[User, Depends(current_user)],
+    ) -> dict[str, Any]:
+        """Dedicated SPA session probe (Wave 4 contract).
+
+        Mirrors ``GET /api/v2/registry/me`` so callers can use the auth
+        prefix without reaching into the registry surface.
+        """
+        from shared.api.routes.registry import session_user_payload  # noqa: PLC0415
+
+        return {"ok": True, "user": session_user_payload(user)}
 
     @router.post("/logout")
     async def logout(request: "Request") -> "Response":

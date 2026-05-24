@@ -223,6 +223,14 @@ async def dispatch_role_for_kind(
         },
     )
 
+    from shared.runtime.role_activity import role_log  # noqa: PLC0415
+
+    role_log(
+        project_id,
+        spec.role,
+        f"Hub dispatch → {tool} ({spec.directive})",
+    )
+
     raw = await asyncio.to_thread(_dispatch_sync, tool=tool, payload=payload)
     status = raw.get("status")
     data = raw.get("data") or {}
@@ -232,6 +240,7 @@ async def dispatch_role_for_kind(
     directive_id = str(data.get("directive_id") or f"dir_{uuid4().hex[:12]}")
 
     if status == "ok":
+        role_log(project_id, spec.role, "Role finished successfully")
         await _record_route_history(
             project_id=project_id,
             subsystem=spec.subsystem,
@@ -262,6 +271,12 @@ async def dispatch_role_for_kind(
             data=data,
         )
 
+    role_log(
+        project_id,
+        spec.role,
+        f"Role failed: {(err_msg or 'dispatch failed')[:240]}",
+        level="error",
+    )
     return RoleDispatchResult(
         ok=False,
         subsystem=spec.subsystem,
@@ -275,7 +290,7 @@ async def dispatch_role_for_kind(
 
 __all__ = [
     "KIND_ROLE_DISPATCH",
-    "RoleDispatchResult",
     "RoleDispatchSpec",
+    "RoleDispatchResult",
     "dispatch_role_for_kind",
 ]

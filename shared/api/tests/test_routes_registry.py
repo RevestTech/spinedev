@@ -50,6 +50,17 @@ def test_integrations_lists_known_connectors(client, oidc_user) -> None:
     assert {"github", "slack", "vanta"}.issubset(names)
 
 
+def test_registry_me_returns_hub_id(client, oidc_user, monkeypatch) -> None:
+    """Session probe includes hub_id so the SPA skips a federation/status hop."""
+    monkeypatch.setenv("SPINE_HUB_ID", "hub-test-42")
+    r = client.get("/api/v2/registry/me", headers={"Authorization": "Bearer t"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert body["user"]["sub"] == "u-1"
+    assert body["user"]["hub_id"] == "hub-test-42"
+
+
 def test_role_entries_carry_runtime_trio_fields(client, oidc_user) -> None:
     """FIX3: every RoleEntry exposes the runtime trio (status / pushed_at /
     current_responsibility). When the DB is unreachable they fall back to

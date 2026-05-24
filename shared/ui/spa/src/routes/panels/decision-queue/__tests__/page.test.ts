@@ -54,7 +54,7 @@ describe('DecisionQueue page', () => {
     (api.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ ok: true, items: [], total: 0 });
     render(Page);
     await waitFor(() => expect(api.get).toHaveBeenCalledWith(
-      '/api/v2/decisions?status=pending'
+      '/api/v2/decisions?status=pending&scope=project'
     ));
     expect(await screen.findByText(/Inbox zero/i)).toBeInTheDocument();
   });
@@ -67,13 +67,14 @@ describe('DecisionQueue page', () => {
         {
           decision_id: 'dec-1',
           decision_class: 'approval',
-          title: 'Approve refactor of executor.sh',
+          project_id: '9',
+          title: 'Approve CODE output — Sample Website 145200',
           body: 'Engineer proposes splitting executor.sh into 3 modules.',
           severity: 'warning',
           actions: ['ack', 'reject'],
           status: 'pending',
           created_at: Math.floor(Date.now() / 1000),
-          metadata: {}
+          metadata: { project_name: 'Sample Website 145200', project_uuid: 'uuid-9' }
         }
       ]
     });
@@ -81,7 +82,9 @@ describe('DecisionQueue page', () => {
     const card = await screen.findByTestId('decision-card');
     expect(card).toHaveAttribute('data-decision-id', 'dec-1');
     expect(card).toHaveAttribute('data-severity', 'warning');
-    expect(card).toHaveTextContent(/Approve refactor/i);
+    expect(card).toHaveTextContent(/Approve CODE output/i);
+    expect(screen.getAllByTestId('decision-project-link').length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Sample Website 145200/i).length).toBeGreaterThan(0);
   });
 
   it('dispatches POST /ack when the ack button is clicked', async () => {
@@ -110,10 +113,43 @@ describe('DecisionQueue page', () => {
       audit_event_uuid: '00000000-0000-0000-0000-000000000001'
     });
     render(Page);
-    const ackBtn = await screen.findByTestId('decision-ack');
+    const ackBtn = await screen.findByTestId('decision-detail-ack');
     await fireEvent.click(ackBtn);
     await waitFor(() =>
-      expect(api.post).toHaveBeenCalledWith('/api/v2/decisions/dec-9/ack')
+      expect(api.post).toHaveBeenCalledWith('/api/v2/decisions/dec-9/ack', {})
+    );
+  });
+
+  it('dispatches POST /ack from inline list action', async () => {
+    (api.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ok: true,
+      total: 1,
+      items: [
+        {
+          decision_id: 'dec-list',
+          decision_class: 'briefing',
+          title: 'Daily briefing',
+          body: 'All clear.',
+          severity: 'info',
+          actions: ['ack', 'reject'],
+          status: 'pending',
+          created_at: Math.floor(Date.now() / 1000),
+          metadata: {}
+        }
+      ]
+    });
+    (api.post as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ok: true,
+      decision_id: 'dec-list',
+      status: 'acked',
+      actor: 'dev-user',
+      audit_event_uuid: '00000000-0000-0000-0000-000000000002'
+    });
+    render(Page);
+    const ackBtn = await screen.findByTestId('decision-list-ack');
+    await fireEvent.click(ackBtn);
+    await waitFor(() =>
+      expect(api.post).toHaveBeenCalledWith('/api/v2/decisions/dec-list/ack', {})
     );
   });
 

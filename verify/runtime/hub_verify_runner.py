@@ -109,11 +109,28 @@ async def _llm_code_review(project: dict[str, Any]) -> HubVerifyResult:
         _load_charter,
         _load_enterprise_directives,
     )
+    from shared.runtime.role_activity import role_log  # noqa: PLC0415
 
     project_uuid = project["project_uuid"]
     project_name = project["name"]
+    role_log(project_uuid, "security_engineer", "LLM security review started")
     prior = project.get("metadata") or {}
-    from shared.runtime.project_workspace import resolve_code_dir  # noqa: PLC0415
+    from shared.runtime.project_workspace import count_workspace_files, resolve_code_dir  # noqa: PLC0415
+
+    on_disk = count_workspace_files(project_uuid, prior)
+    if on_disk == 0:
+        return HubVerifyResult(
+            ok=False,
+            directive_id=f"dir_{uuid4().hex[:12]}",
+            error_class="workspace_empty",
+            error_message=(
+                "No files on disk in the project workspace — metadata is stale or "
+                "the Hub was rebuilt. Re-run **Engineer** from Pipeline controls, then "
+                "re-submit for security review."
+            ),
+            project_uuid=project_uuid,
+            project_name=project_name,
+        )
 
     workspace = resolve_code_dir(project_uuid, prior).resolve()
     code_blocks: list[str] = []
@@ -162,6 +179,7 @@ async def _llm_code_review(project: dict[str, Any]) -> HubVerifyResult:
         + "\n\n---\n\n" + "\n\n---\n\n".join(context_blocks)
     )
     model = os.environ.get("SPINE_INTAKE_MODEL", "claude-sonnet-4-6")
+    role_log(project_uuid, "security_engineer", f"Scanning workspace ({on_disk} files) via {model}")
     resp = await call_async(LLMRequest(
         model=model,
         messages=[Message(role="user", content=f"Review {project_name} now.")],
@@ -176,6 +194,12 @@ async def _llm_code_review(project: dict[str, Any]) -> HubVerifyResult:
             "## Critical findings" in review_md
             and "_None._" not in review_md.split("## Critical findings", 1)[1].split("##", 1)[0]
         )
+    )
+    role_log(
+        project_uuid,
+        "security_engineer",
+        f"LLM review complete — {'BLOCKED' if blocked else 'PASS'}",
+        level="error" if blocked else "success",
     )
     return HubVerifyResult(
         ok=True,
@@ -210,6 +234,25 @@ def run_hub_code_review(
 
     project_uuid = project["project_uuid"]
     project_name = project["name"]
+    from shared.runtime.role_activity import role_log  # noqa: PLC0415
+
+    role_log(project_uuid, "security_engineer", "Security review started")
+
+    from shared.runtime.project_workspace import count_workspace_files  # noqa: PLC0415
+
+    prior = project.get("metadata") or {}
+    if count_workspace_files(project_uuid, prior) == 0:
+        return HubVerifyResult(
+            ok=False,
+            directive_id=directive_id,
+            error_class="workspace_empty",
+            error_message=(
+                "No files on disk in the project workspace — re-run engineer before "
+                "security review (Hub rebuild may have wiped ephemeral dogfood storage)."
+            ),
+            project_uuid=project_uuid,
+            project_name=project_name,
+        )
 
     from build.runtime.workspace_artifact import (  # noqa: PLC0415
         build_sealed_artifact_from_workspace,
@@ -226,6 +269,7 @@ def run_hub_code_review(
         metadata=project.get("metadata") or {},
     )
     persist_build_artifact(project_id, artifact)
+    role_log(project_uuid, "security_engineer", "Workspace artifact sealed for TRON audit")
 
     blueprint = Blueprint(
         file_patterns=["**/*"],
@@ -248,6 +292,7 @@ def run_hub_code_review(
         if msg and any(tok in str(msg).lower() for tok in (
             "tron", "not importable", "docker", "no_source_files", "artifact_not_sealed",
         )):
+            role_log(project_uuid, "security_engineer", "TRON unavailable — falling back to LLM review", level="warn")
             return asyncio.run(_llm_code_review({
                 "project_uuid": project_uuid,
                 "name": project_name,
@@ -279,6 +324,12 @@ def run_hub_code_review(
         "code_review_blocked": bool(blocked),
         "verify_findings": data,
     })
+    role_log(
+        project_uuid,
+        "security_engineer",
+        f"TRON review complete — {'BLOCKED' if blocked else 'PASS'} ({len(findings)} findings)",
+        level="error" if blocked else "success",
+    )
     return HubVerifyResult(
         ok=True,
         directive_id=directive_id,

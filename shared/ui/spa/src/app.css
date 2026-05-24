@@ -85,4 +85,36 @@
     background-size: 200% 100%;
     @apply animate-shimmer;
   }
+
+  /* Sidebar nav — active uses thick left bar + bright fill (not focus ring). */
+  .sidebar-nav-link {
+    @apply flex items-center gap-2.5 rounded-r-lg border-l-4 border-transparent px-2.5 py-2.5
+           text-base text-surface-400 transition-colors;
+  }
+  .sidebar-nav-link:hover:not([aria-current='page']) {
+    @apply bg-surface-800/90 text-surface-100;
+  }
+  .sidebar-nav-link[aria-current='page'] {
+    @apply border-accent bg-accent/40 font-semibold text-white;
+    box-shadow: inset 0 0 0 1px rgba(139, 92, 246, 0.55);
+  }
+  .sidebar-nav-link:focus-visible {
+    @apply outline-none ring-2 ring-white/25 ring-offset-0;
+  }
+
+  /* Topbar nav — active uses filled pill, distinct from hover. */
+  .topbar-nav-link {
+    @apply inline-flex items-center rounded-lg px-3.5 py-2 text-base font-medium
+           text-surface-400 transition-colors sm:px-4;
+  }
+  .topbar-nav-link:hover:not([aria-current='page']) {
+    @apply bg-surface-800/90 text-surface-50;
+  }
+  .topbar-nav-link[aria-current='page'] {
+    @apply bg-accent/45 font-semibold text-white;
+    box-shadow: inset 0 0 0 1px rgba(139, 92, 246, 0.6);
+  }
+  .topbar-nav-link:focus-visible {
+    @apply outline-none ring-2 ring-white/25 ring-offset-0;
+  }
 }

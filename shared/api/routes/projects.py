@@ -94,6 +94,14 @@ class RollbackBody(BaseModel):
     reason: str = Field(..., min_length=1, max_length=2000)
 
 
+class ProjectRecoveryDispatch(BaseModel):
+    """Body for ``POST /api/v2/projects/{id}/recovery/dispatch``."""
+
+    model_config = _FORBID
+    action: str = Field(..., min_length=1)
+    note: Optional[str] = Field(default=None, max_length=4000)
+
+
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_project(
     body: ProjectCreate,
@@ -248,8 +256,8 @@ async def list_projects(
     if owner:
         where.append(f"owner_user = '{_esc(owner)}'")
     sql = (
-        "SELECT json_build_object('project_id', id::text, 'name', name, "
-        "'project_type', project_type, 'current_phase', current_phase, "
+        "SELECT json_build_object('project_id', id::text, 'project_uuid', project_uuid::text, "
+        "'name', name, 'project_type', project_type, 'current_phase', current_phase, "
         "'status', status, 'owner', owner_user, 'pipeline_version', pipeline_version, "
         "'created_at', created_at, 'updated_at', updated_at)::text "
         f"FROM spine_lifecycle.project WHERE {' AND '.join(where)} "
@@ -276,6 +284,18 @@ async def list_projects(
                 pass
         items.append(raw)
     return {"items": items, "limit": limit, "offset": offset}
+
+
+@router.get("/recovery/summary")
+async def list_recovery_summary(
+    user: Annotated[User, Depends(current_user)],
+    limit: int = Query(default=200, ge=1, le=500),
+) -> dict[str, Any]:
+    """Batch stuck-project scan for the projects dashboard."""
+    from shared.api.routes._project_recovery import recovery_summary  # noqa: PLC0415
+
+    result = await recovery_summary(limit=limit)
+    return {"actor": actor_label(user), **result}
 
 
 @router.get("/{project_id}")
@@ -555,3 +575,60 @@ async def rollback_project(project_id: str, body: RollbackBody,
     """Roll back to ``target_phase`` (stub — wire to transition.sh rollback)."""
     return {"project_id": project_id, "target_phase": body.target_phase,
             "reason": body.reason, "actor": actor_label(user), "note": "stub"}
+
+
+@router.get("/{project_id}/activity/terminal")
+async def get_project_terminal_log(
+    project_id: str,
+    user: Annotated[User, Depends(current_user)],
+    limit: int = Query(default=500, ge=1, le=800),
+) -> dict[str, Any]:
+    """Recent live role output lines for the embedded pipeline terminal."""
+    from shared.runtime.role_activity import get_terminal_log  # noqa: PLC0415
+
+    uid = await _resolve_workspace_uuid(project_id)
+    lines = get_terminal_log(uid, limit=limit)
+    return {"project_id": uid, "lines": lines, "count": len(lines), "actor": actor_label(user)}
+
+
+@router.get("/{project_id}/recovery")
+async def get_project_recovery(
+    project_id: str,
+    user: Annotated[User, Depends(current_user)],
+) -> dict[str, Any]:
+    """Recovery status: stuck reasons + actions the founder can invoke."""
+    from shared.api.routes._project_recovery import recovery_status  # noqa: PLC0415
+
+    result = await recovery_status(project_id)
+    if not result.get("ok"):
+        raise _err(404, "project_not_found", "Project not found")
+    return {"actor": actor_label(user), **result}
+
+
+@router.post("/{project_id}/recovery/dispatch")
+async def dispatch_project_recovery(
+    project_id: str,
+    body: ProjectRecoveryDispatch,
+    user: Annotated[User, Depends(current_user)],
+) -> dict[str, Any]:
+    """Manually dispatch a pipeline role when the SDLC is idle or broken."""
+    from shared.api.routes._project_recovery import recovery_dispatch  # noqa: PLC0415
+
+    actor = actor_label(user)
+    result = await recovery_dispatch(
+        project_id,
+        body.action,  # type: ignore[arg-type]
+        actor=actor,
+        note=body.note,
+    )
+    if not result.get("ok"):
+        code = result.get("error", "dispatch_failed")
+        if code == "project_not_found":
+            raise _err(404, code, result.get("message", "Project not found"))
+        if code == "dispatch_in_flight":
+            raise _err(409, str(code), result.get("message", "Dispatch already running"), result)
+        raise _err(400, str(code), result.get("message", "Dispatch failed"), result)
+    from fastapi.responses import JSONResponse
+
+    status = 202 if result.get("async") else 200
+    return JSONResponse(status_code=status, content={"actor": actor, **result})

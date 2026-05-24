@@ -15,6 +15,7 @@ from shared.api.routes.approvals import router as approvals_router
 from shared.api.routes.audit import router as audit_router
 from shared.api.routes.decisions import router as decisions_router
 from shared.api.routes.federation import router as federation_router
+from shared.api.routes.hub_inbox import router as hub_inbox_router
 from shared.api.routes.intake import router as intake_router
 from shared.api.routes.integrations import router as integrations_router
 from shared.api.routes.kg import router as kg_router
@@ -33,6 +34,7 @@ ALL_ROUTERS = [
     audit_router,
     # Wave 3 part 1 (Hub-as-product surfaces)
     decisions_router,
+    hub_inbox_router,
     role_chat_router,
     registry_router,
     vault_config_router,
@@ -54,6 +56,7 @@ __all__: list[str] = [
     "audit_router",
     "projects_router",
     "decisions_router",
+    "hub_inbox_router",
     "role_chat_router",
     "registry_router",
     "vault_config_router",

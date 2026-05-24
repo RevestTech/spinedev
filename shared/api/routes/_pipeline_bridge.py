@@ -80,12 +80,10 @@ def default_workspace_root() -> Path:
     return repo_root / ".spine" / "work"
 
 
-def workspace_host_path(project_uuid: str) -> str:
-    host = os.environ.get("SPINE_PROJECTS_DIR_HOST", str(default_workspace_root()))
-    host = host.rstrip("/")
-    if host.startswith("~"):
-        host = str(Path(host).expanduser())
-    return f"{host}/{project_uuid}"
+def workspace_host_path(project_uuid: str, metadata: dict[str, Any] | None = None) -> str:
+    from shared.runtime.project_workspace import workspace_host_path as host_path  # noqa: PLC0415
+
+    return host_path(project_uuid, metadata)
 
 
 async def _fallback_advance(project_id: str, target_phase: str) -> bool:

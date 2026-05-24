@@ -362,6 +362,20 @@ DEFAULT_SPA_DIST = Path(
     os.environ.get("SPINE_SPA_DIST", "/app/static/spa")
 ).resolve()
 
+_SPA_INDEX_CACHE = {"Cache-Control": "no-cache, must-revalidate"}
+_SPA_ASSET_CACHE = {"Cache-Control": "public, max-age=31536000, immutable"}
+_SPA_ASSET_SUFFIXES = (
+    ".js", ".css", ".map", ".woff", ".woff2", ".png", ".svg", ".ico", ".webp", ".json",
+)
+
+
+def _spa_is_bundle_asset(path: str) -> bool:
+    """True when a missing path should 404 — not fall back to index.html."""
+    if path.startswith("_app/"):
+        return True
+    lower = path.lower()
+    return any(lower.endswith(sfx) for sfx in _SPA_ASSET_SUFFIXES)
+
 
 def _mount_spa(app: FastAPI, *, dist_dir: Path = DEFAULT_SPA_DIST) -> None:
     """Mount the built Hub SPA at ``/static/spa/`` + catch-all at ``/spa/``.
@@ -409,7 +423,7 @@ def _mount_spa(app: FastAPI, *, dist_dir: Path = DEFAULT_SPA_DIST) -> None:
         """Root of the SPA — serves index.html."""
         if not index_file.exists():
             raise HTTPException(status_code=500, detail="spa index.html missing")
-        return FileResponse(index_file, media_type="text/html")
+        return FileResponse(index_file, media_type="text/html", headers=_SPA_INDEX_CACHE)
 
     @app.get("/spa/{path:path}", include_in_schema=False)
     async def _spa_catchall(path: str) -> FileResponse:
@@ -419,6 +433,10 @@ def _mount_spa(app: FastAPI, *, dist_dir: Path = DEFAULT_SPA_DIST) -> None:
         ``/spa/_app/immutable/foo.js`` still works), and falls back to
         ``index.html`` so the SvelteKit router can claim the URL.
         ``..`` segments are rejected to block path-traversal.
+
+        Hashed bundle paths that are missing return 404 — serving
+        index.html for a stale JS URL breaks module imports and yields a
+        blank page after Hub rebuilds.
         """
         if ".." in path.split("/"):
             raise HTTPException(status_code=400, detail="invalid path")
@@ -428,10 +446,13 @@ def _mount_spa(app: FastAPI, *, dist_dir: Path = DEFAULT_SPA_DIST) -> None:
         except ValueError:
             raise HTTPException(status_code=400, detail="path escapes spa dist") from None
         if candidate.is_file():
-            return FileResponse(candidate)
+            headers = _SPA_ASSET_CACHE if _spa_is_bundle_asset(path) else None
+            return FileResponse(candidate, headers=headers)
+        if _spa_is_bundle_asset(path):
+            raise HTTPException(status_code=404, detail="spa asset not found")
         if not index_file.exists():
             raise HTTPException(status_code=500, detail="spa index.html missing")
-        return FileResponse(index_file, media_type="text/html")
+        return FileResponse(index_file, media_type="text/html", headers=_SPA_INDEX_CACHE)
 
     # Bare-path redirects: bookmarked or pasted URLs like /panels/foo or
     # /auth/login (without the /spa prefix) 301-redirect into the SPA
@@ -439,6 +460,14 @@ def _mount_spa(app: FastAPI, *, dist_dir: Path = DEFAULT_SPA_DIST) -> None:
     @app.get("/panels/{path:path}", include_in_schema=False)
     async def _redirect_panels(path: str) -> RedirectResponse:
         return RedirectResponse(url=f"/spa/panels/{path}", status_code=301)
+
+    @app.get("/projects", include_in_schema=False)
+    async def _redirect_projects_root() -> RedirectResponse:
+        return RedirectResponse(url="/spa/projects", status_code=301)
+
+    @app.get("/projects/{path:path}", include_in_schema=False)
+    async def _redirect_projects(path: str) -> RedirectResponse:
+        return RedirectResponse(url=f"/spa/projects/{path}", status_code=301)
 
     @app.get("/auth/{path:path}", include_in_schema=False)
     async def _redirect_auth(path: str) -> RedirectResponse:

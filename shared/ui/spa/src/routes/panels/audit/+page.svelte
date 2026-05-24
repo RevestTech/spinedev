@@ -85,8 +85,18 @@
     }
   }
 
-  onMount(() => {
-    // No-op on mount: we cannot load without a project_id / correlation_id.
+  onMount(async () => {
+    try {
+      const res = await api.get<{ items?: { project_id?: string; project_uuid?: string }[] }>(
+        '/api/v2/projects?limit=1'
+      );
+      const first = res.items?.[0];
+      if (first && !projectId) {
+        projectId = String(first.project_uuid ?? first.project_id ?? '');
+      }
+    } catch {
+      /* user can enter project id manually */
+    }
   });
 
   function confirmExport(fmt: 'csv' | 'json') {

@@ -42,7 +42,14 @@ describe('KgSearch page', () => {
   });
   afterEach(() => vi.restoreAllMocks());
 
+  function mockProjects() {
+    (api.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      items: [{ project_id: 'demo', name: 'spine' }]
+    });
+  }
+
   it('runs a search and renders KG-node citation chips on each result', async () => {
+    mockProjects();
     (api.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       ok: true,
       query: 'executor',
@@ -60,6 +67,7 @@ describe('KgSearch page', () => {
       ]
     });
     render(Page);
+    await waitFor(() => expect(screen.getByTestId('project-id')).toHaveValue('demo'));
     await fireEvent.input(screen.getByTestId('search-input'), { target: { value: 'executor' } });
     await fireEvent.click(screen.getByTestId('search-submit'));
     await waitFor(() =>
@@ -74,6 +82,7 @@ describe('KgSearch page', () => {
   });
 
   it('loads node detail on result click', async () => {
+    mockProjects();
     (api.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       ok: true,
       query: 'x',
@@ -97,6 +106,7 @@ describe('KgSearch page', () => {
       ]
     });
     render(Page);
+    await waitFor(() => expect(screen.getByTestId('project-id')).toHaveValue('demo'));
     await fireEvent.input(screen.getByTestId('search-input'), { target: { value: 'x' } });
     await fireEvent.click(screen.getByTestId('search-submit'));
     const row = await screen.findByTestId('result-row');
@@ -109,6 +119,7 @@ describe('KgSearch page', () => {
   });
 
   it('dispatches the impact_radius action', async () => {
+    mockProjects();
     (api.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       ok: true, query: 'y', total: 1, query_latency_ms: 1, citations: [],
       results: [{ node_id: 'n-9', name: 'thing', node_type: 'Function', path: 'lib/x.py:1',
@@ -127,6 +138,7 @@ describe('KgSearch page', () => {
       citations: [{ type: 'kg_node', ref: 'n-99' }]
     });
     render(Page);
+    await waitFor(() => expect(screen.getByTestId('project-id')).toHaveValue('demo'));
     await fireEvent.input(screen.getByTestId('search-input'), { target: { value: 'y' } });
     await fireEvent.click(screen.getByTestId('search-submit'));
     const row = await screen.findByTestId('result-row');

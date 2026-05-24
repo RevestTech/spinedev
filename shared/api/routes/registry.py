@@ -23,6 +23,7 @@ Dependencies: ``fastapi``, ``pydantic`` (already required).
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime
 from typing import Annotated, Any, Literal, Optional
 
@@ -310,6 +311,17 @@ class WhoamiResponse(BaseModel):
     user: dict[str, Any]
 
 
+def session_user_payload(user: User) -> dict[str, Any]:
+    """Canonical session user dict for SPA auth probes."""
+    return {
+        "sub": user.id,
+        "username": user.username or user.id,
+        "email": user.email,
+        "roles": user.roles,
+        "hub_id": os.environ.get("SPINE_HUB_ID", "hub-local"),
+    }
+
+
 @router.get("/me", response_model=WhoamiResponse)
 async def whoami(
     user: Annotated[User, Depends(current_user)],
@@ -317,16 +329,7 @@ async def whoami(
     """Session probe consumed by the SPA's +layout.ts. Returns the
     authenticated user; in dev mode this is the synthetic dev user from
     ``shared.identity.middleware.current_user``."""
-    return WhoamiResponse(
-        ok=True,
-        user={
-            "sub": user.id,
-            "username": user.username or user.id,
-            "email": user.email,
-            "roles": user.roles,
-            "hub_id": None,
-        },
-    )
+    return WhoamiResponse(ok=True, user=session_user_payload(user))
 
 
 __all__ = [

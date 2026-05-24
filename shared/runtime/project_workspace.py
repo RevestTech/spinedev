@@ -67,10 +67,46 @@ def resolve_code_dir(project_uuid: str, metadata: dict[str, Any] | None = None) 
         if allow in ("1", "true", "yes"):
             repo = os.environ.get("SPINE_ON_SPINE_REPO", str(_REPO_ROOT))
             return Path(repo).expanduser().resolve()
+        # Hub docker bind-mount: keep dogfood under /var/lib/spine/projects so
+        # code survives container rebuilds. Dev checkout fallback stays under
+        # .spine/dogfood/ in the repo tree.
+        hub_projects = Path("/var/lib/spine/projects")
+        if hub_projects.is_dir():
+            dogfood = (hub_projects / "dogfood" / project_uuid).resolve()
+            dogfood.mkdir(parents=True, exist_ok=True)
+            return dogfood
         dogfood = (_REPO_ROOT / ".spine" / "dogfood" / project_uuid).resolve()
         dogfood.mkdir(parents=True, exist_ok=True)
         return dogfood
     return project_code_dir(project_uuid)
+
+
+def workspace_host_path(project_uuid: str, metadata: dict[str, Any] | None = None) -> str:
+    """Host-visible path for UI (bind-mount target on laptop Hub)."""
+    host = os.environ.get("SPINE_PROJECTS_DIR_HOST", str(projects_root()))
+    host = host.rstrip("/")
+    if host.startswith("~"):
+        host = str(Path(host).expanduser())
+    if is_spine_on_spine(metadata):
+        return f"{host}/dogfood/{project_uuid}"
+    return f"{host}/{project_uuid}"
+
+
+def count_workspace_files(project_uuid: str, metadata: dict[str, Any] | None = None) -> int:
+    """Count implementation files on disk (excludes .git, node_modules, etc.)."""
+    root = resolve_code_dir(project_uuid, metadata)
+    if not root.is_dir():
+        return 0
+    skip_dirs = {".next", "node_modules", ".git", ".claude", "__pycache__"}
+    n = 0
+    for f in root.rglob("*"):
+        if not f.is_file():
+            continue
+        rel = f.relative_to(root)
+        if any(part in skip_dirs for part in rel.parts):
+            continue
+        n += 1
+    return n
 
 
 def repo_slug_for_project(project_uuid: str, metadata: dict[str, Any] | None = None) -> str:
@@ -348,4 +384,6 @@ __all__ = [
     "repo_slug",
     "repo_slug_for_project",
     "resolve_code_dir",
+    "workspace_host_path",
+    "count_workspace_files",
 ]

@@ -10,12 +10,13 @@ import asyncio
 import json
 import os
 import re
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from shared.llm import LLMRequest, Message, call_async
+from shared.llm import LLMRequest, Message, stream_async
 from shared.runtime.project_workspace import (
     bootstrap_project_git_repo,
     commit_workspace,
@@ -76,12 +77,10 @@ def _workspace_root() -> Path:
     return projects_root()
 
 
-def _workspace_host_path(project_uuid: str) -> str:
-    host = os.environ.get("SPINE_PROJECTS_DIR_HOST", str(_workspace_root()))
-    host = host.rstrip("/")
-    if host.startswith("~"):
-        host = str(Path(host).expanduser())
-    return f"{host}/{project_uuid}"
+def _workspace_host_path(project_uuid: str, metadata: dict[str, Any] | None = None) -> str:
+    from shared.runtime.project_workspace import workspace_host_path  # noqa: PLC0415
+
+    return workspace_host_path(project_uuid, metadata)
 
 
 def _load_project(project_id: str) -> dict[str, Any]:
@@ -224,6 +223,9 @@ async def _run_engineer(
     role = "engineer"
     project_uuid = project["project_uuid"]
     project_name = project["name"]
+    from shared.runtime.role_activity import role_log  # noqa: PLC0415
+
+    role_log(project_uuid, role, f"Directive {directive_id} started ({directive})")
     prior = project.get("metadata") or {}
     code_dir = resolve_code_dir(project_uuid, prior)
     kg_repo = str(prior.get("repo") or repo_slug_for_project(project_uuid, prior))
@@ -240,6 +242,7 @@ async def _run_engineer(
     if kg_block:
         append_directive_context(handle, kg_block)
         extra_context = f"{extra_context}\n\n{kg_block}".strip() if extra_context else kg_block
+        role_log(project_uuid, role, f"Loaded KG context ({len(kg_block):,} chars)")
 
     directives = _load_enterprise_directives()
     context_blocks: list[str] = []
@@ -251,6 +254,8 @@ async def _run_engineer(
         context_blocks.append("## Approved sprint plan\n\n" + prior["sprint_plan_md"])
     if extra_context:
         context_blocks.append(_truncate_extra_context(extra_context))
+        if "REMEDIATE" in directive.upper() or "review" in extra_context.lower()[:200]:
+            role_log(project_uuid, role, "Applying code-review remediation feedback")
 
     system = (
         _engineer_prompt_text()
@@ -268,15 +273,34 @@ async def _run_engineer(
     from build.runtime.engineer_squad import run_engineer_squad, squad_enabled
 
     async def _llm_engineer(user: str) -> str:
-        resp = await call_async(LLMRequest(
+        role_log(project_uuid, role, f"Calling LLM ({_DEFAULT_MODEL})…")
+        parts: list[str] = []
+        chars = 0
+        last_emit = time.monotonic()
+        async for chunk in stream_async(LLMRequest(
             model=_DEFAULT_MODEL,
             messages=[Message(role="user", content=user)],
             system=system,
             max_tokens=_ENGINEER_MAX_TOKENS,
             temperature=0.2,
-            stream=False,
-        ))
-        return resp.content.strip()
+        )):
+            delta = chunk.content or ""
+            if not delta:
+                continue
+            parts.append(delta)
+            chars += len(delta)
+            now = time.monotonic()
+            if now - last_emit >= 2.5:
+                role_log(project_uuid, role, f"Generating code… {chars:,} chars received")
+                last_emit = now
+        text = "".join(parts).strip()
+        role_log(
+            project_uuid,
+            role,
+            f"LLM response complete ({chars:,} chars)",
+            level="success" if text else "warn",
+        )
+        return text
 
     raw = ""
     hybrid_used = False
@@ -284,6 +308,7 @@ async def _run_engineer(
     squad_intro = ""
     llm_used = False
     if hybrid_enabled() and executor_available():
+        role_log(project_uuid, role, "Trying hybrid engineer (local executor)…")
         hybrid = run_hybrid_engineer(
             prompt=system + "\n\n---\n\n## Task\n\n" + user_msg,
             workspace=code_dir,
@@ -291,8 +316,10 @@ async def _run_engineer(
         if hybrid.ok and hybrid.output.strip():
             raw = hybrid.output.strip()
             hybrid_used = True
+            role_log(project_uuid, role, "Hybrid engineer returned output", level="success")
 
     if not raw and squad_enabled():
+        role_log(project_uuid, role, "Running engineer squad…")
         squad = await run_engineer_squad(
             system_base=system,
             user_msg=user_msg,
@@ -302,12 +329,14 @@ async def _run_engineer(
             raw = squad.raw_combined.strip()
             squad_intro = squad.intro_md
             squad_used = True
+            role_log(project_uuid, role, "Engineer squad finished", level="success")
 
     if not raw:
         try:
             raw = await _llm_engineer(user_msg)
             llm_used = True
         except Exception as exc:  # noqa: BLE001
+            role_log(project_uuid, role, f"Engineer failed: {type(exc).__name__}: {exc}", level="error")
             fail_directive(handle, str(exc))
             return HubBuildRoleResult(
                 ok=False, role=role, directive_id=directive_id,
@@ -317,7 +346,9 @@ async def _run_engineer(
             )
 
     intro_md, files, run_block = _parse_engineer_output(raw)
+    role_log(project_uuid, role, f"Parsed {len(files)} file block(s) from model output")
     if llm_used and not _has_implementation_files(files):
+        role_log(project_uuid, role, "No implementation files found — retrying with format hint", level="warn")
         try:
             retry_raw = await _llm_engineer(_FORMAT_RETRY_USER)
             retry_intro, retry_files, retry_run = _parse_engineer_output(retry_raw)
@@ -342,6 +373,10 @@ async def _run_engineer(
         )
     elif squad_intro:
         intro_md = squad_intro if not intro_md else f"{squad_intro}\n\n---\n\n{intro_md}"
+    for path, _content in files[:10]:
+        role_log(project_uuid, role, f"Writing {path}")
+    if len(files) > 10:
+        role_log(project_uuid, role, f"… and {len(files) - 10} more file(s)")
     written = _write_workspace_files(code_dir, files)
     if written == 0 or not _has_implementation_files(files):
         msg = (
@@ -350,6 +385,7 @@ async def _run_engineer(
             "Output must use ===== FILE: ... ===== END FILE ===== blocks."
         )
         fail_directive(handle, msg)
+        role_log(project_uuid, role, msg, level="error")
         return HubBuildRoleResult(
             ok=False, role=role, directive_id=directive_id,
             result_kind="code_approval",
@@ -360,12 +396,19 @@ async def _run_engineer(
     if not (code_dir / ".git").exists():
         bootstrap_project_git_repo(project_uuid, project_name, cold_index=False, metadata=prior)
     commit = commit_workspace(project_uuid, f"engineer: {directive_id}", metadata=prior)
+    role_log(
+        project_uuid,
+        role,
+        f"Wrote {written} file(s) to workspace"
+        + (f" · commit {commit.commit_sha[:12]}" if commit.commit_sha else ""),
+        level="success",
+    )
     patch = {
         "code_intro_md": intro_md,
         "code_files": [{"path": p, "bytes": len(c)} for p, c in files],
         "code_run_block": run_block,
         "code_workspace": str(code_dir),
-        "code_workspace_host": _workspace_host_path(project_uuid),
+        "code_workspace_host": _workspace_host_path(project_uuid, prior),
         "repo": kg_repo,
     }
     if commit.commit_sha:
@@ -398,10 +441,13 @@ async def _run_engineer(
 
 
 async def _run_devops_install(project: dict[str, Any]) -> HubBuildRoleResult:
+    from shared.runtime.role_activity import role_log  # noqa: PLC0415
+
     directive_id = f"dir_{uuid4().hex[:12]}"
     role = "devops"
     project_uuid = project["project_uuid"]
     project_name = project["name"]
+    role_log(project_uuid, role, "DevOps install started")
     prior = project.get("metadata") or {}
     workspace = resolve_code_dir(project_uuid, prior)
     run_block = prior.get("code_run_block") or ""
@@ -412,6 +458,7 @@ async def _run_devops_install(project: dict[str, Any]) -> HubBuildRoleResult:
     if workspace.exists():
         for cmd in install:
             log_chunks.append(f"$ {cmd}")
+            role_log(project_uuid, role, f"$ {cmd}")
             try:
                 proc = await asyncio.create_subprocess_shell(
                     cmd,
@@ -433,14 +480,22 @@ async def _run_devops_install(project: dict[str, Any]) -> HubBuildRoleResult:
                 log_chunks.append(tail.rstrip())
                 log_chunks.append(f"[exit={proc.returncode}]")
                 if proc.returncode != 0:
+                    role_log(project_uuid, role, f"Command failed (exit {proc.returncode})", level="error")
                     all_ok = False
                     break
+                role_log(project_uuid, role, f"Command ok (exit 0)", level="success")
             except Exception as exc:  # noqa: BLE001
                 log_chunks.append(f"[devops error: {type(exc).__name__}: {exc}]")
                 all_ok = False
                 break
 
     install_log = "\n".join(log_chunks) if log_chunks else "_(no install commands detected)_"
+    role_log(
+        project_uuid,
+        role,
+        "Install finished — ok" if all_ok else "Install finished — failed",
+        level="success" if all_ok else "error",
+    )
     _persist_metadata(project_uuid, {
         "devops_install_log": install_log,
         "devops_install_ok": bool(all_ok),

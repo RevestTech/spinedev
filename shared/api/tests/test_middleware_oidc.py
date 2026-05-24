@@ -130,3 +130,14 @@ def test_logout_clears_cookie_and_invalidates_session(client) -> None:
         s.access_token == "access-for-logout-test"
         for s in store._sessions.values()  # noqa: SLF001
     )
+
+
+def test_whoami_returns_authenticated_user(client, oidc_user, monkeypatch) -> None:
+    """``GET /auth/whoami`` mirrors registry/me for SPA session probes."""
+    monkeypatch.setenv("SPINE_HUB_ID", "hub-auth-probe")
+    r = client.get("/api/v2/auth/whoami", headers={"Authorization": "Bearer t"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert body["user"]["sub"] == "u-1"
+    assert body["user"]["hub_id"] == "hub-auth-probe"

@@ -12,6 +12,33 @@ This is **not** a vibecoder one-off generator. It is not a SaaS coding agent. It
 
 ---
 
+## In plain English (no jargon)
+
+**What Spine is.** Spine is software that runs an AI engineering team on your machine or in your cloud. You describe what you want built; specialized AI roles draft plans, write code, run security review, set up the environment, and prepare release — the same way a real software organization would, but automated.
+
+**What you do.** You are the decision-maker, not the babysitter. When the pipeline needs you, it creates an **approval** in the Decisions queue — for example, “approve this product requirements document” or “security review found issues — approve remediation.” You approve or reject. That single action unblocks the next automated step.
+
+**What “pipeline paused” means.** The delivery pipeline is waiting for you: either an approval is pending, a step failed and needs a retry, or automated remediation has reached its limit. It is not broken silently — the Hub shows the recommended next step and an activity log of what ran.
+
+**Security remediation (formerly “fix-loop”).** When security review flags critical or high findings, the engineer role can update the code automatically — up to three attempts. Each cycle is: approve findings → engineer updates code → approve updated code → security review runs again. If issues persist after three attempts, you edit code manually or request a new security review.
+
+**What you see in the Hub.**
+
+| Screen | Plain meaning |
+|---|---|
+| **Dashboard** | Your projects and which ones need your attention |
+| **Decisions** | Approvals waiting for you — the gate between automated steps |
+| **Pipeline** | Manual controls when a step failed, plus the live activity log |
+| **Artifacts** | Documents the team produced (PRD, design, test plan, review) |
+| **Code** | Generated source files in the project workspace |
+| **Audit log** | Tamper-evident record of every action for compliance |
+
+**What Spine is not.** Spine does not host your code on our servers. It does not store your API keys in plain text. It is not a chat window where you paste prompts one at a time — it is a structured delivery pipeline with accountability built in.
+
+For technical architecture and locked design decisions, continue with the sections below and [`docs/SPINE_MASTER.md`](docs/SPINE_MASTER.md).
+
+---
+
 ## What you get on Day 1
 
 A single containerized **Hub** that runs on your laptop, your cloud account, or your datacenter — your choice (#17). Inside the Hub:

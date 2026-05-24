@@ -10,10 +10,21 @@
   import PanelHeader from '$lib/components/PanelHeader.svelte';
   import ErrorBanner from '$lib/components/ErrorBanner.svelte';
   import LoadingSpinner from '$lib/components/LoadingSpinner.svelte';
-  import { api, subscribeSse } from '$lib/api/client';
+  import { api, subscribeSse, isAbortError } from '$lib/api/client';
+  import { ApiError } from '$lib/api/types';
+  import { decisions } from '$lib/stores/decisions';
+  import type { DecisionCard } from '$lib/api/types';
+  import { PIPELINE_COPY } from '$lib/projectPipelineCopy';
+  import {
+    filterUserProjects,
+    pendingForProject,
+    stuckForProject,
+    type StuckSummary
+  } from '$lib/projectAttention';
 
   interface ProjectRow {
     project_id: string;
+    project_uuid?: string;
     name: string;
     project_type: string;
     current_phase: string;
@@ -31,46 +42,74 @@
   let pollHandle: number | null = null;
   let showAutomated = false;
 
-  $: filteredProjects = projects.filter(p => {
-    if (showAutomated) return true;
-    const isSmokeOwner = p.owner === 'smoke-harness';
-    const isSmokeName = p.name ? p.name.startsWith('smoke-') : false;
-    const isTerminated = p.status === 'terminated';
-    return !isSmokeOwner && !isSmokeName && !isTerminated;
-  });
+  $: filteredProjects = filterUserProjects(projects, showAutomated);
 
   // Live per-project role tracking via SSE.
   let activeByProject: Record<string, { role: string; startedAt: number }> = {};
-  // Per-project pending-decision count (rolling from SSE).
-  let pendingByProject: Record<string, number> = {};
+  let stuckByProject: Record<string, StuckSummary> = {};
   let sseSub: { close: () => void } | null = null;
   let nowTick = Date.now();
   let nowInterval: number | null = null;
 
-  async function loadPendingCounts() {
-    try {
-      const res = await api.get<{ items: any[] }>('/api/v2/decisions?status=pending');
-      const counts: Record<string, number> = {};
-      for (const card of res.items ?? []) {
-        const pid = card.project_id || card.metadata?.project_uuid;
-        if (!pid) continue;
-        counts[pid] = (counts[pid] ?? 0) + 1;
-      }
-      pendingByProject = counts;
-    } catch {
-      // best-effort
-    }
+  function formatErr(e: unknown, fallback: string): string {
+    if (e instanceof ApiError) return e.message;
+    if (e instanceof Error && e.message) return e.message;
+    return fallback;
   }
+
+  function sseProjectKey(ev: {
+    project_uuid?: string;
+    project_id?: string;
+    card?: { project_id?: string; metadata?: { project_uuid?: string } };
+  }): string | null {
+    const pid =
+      ev.project_uuid ??
+      ev.project_id ??
+      ev.card?.project_id ??
+      ev.card?.metadata?.project_uuid;
+    return pid ? String(pid) : null;
+  }
+
+  function projectNeedsAttention(p: ProjectRow, cards: DecisionCard[]): boolean {
+    return pendingForProject(p, cards) > 0 || stuckForProject(p, stuckByProject) != null;
+  }
+
+  function attentionHint(p: ProjectRow, cards: DecisionCard[]): string | null {
+    const pending = pendingForProject(p, cards);
+    if (pending > 0) {
+      return PIPELINE_COPY.attention.decisionsReview(pending);
+    }
+    if (stuckForProject(p, stuckByProject)) return PIPELINE_COPY.attention.paused;
+    return null;
+  }
+
+  function activeForProject(p: ProjectRow): { role: string; startedAt: number } | undefined {
+    return (
+      activeByProject[p.project_id] ??
+      (p.project_uuid ? activeByProject[p.project_uuid] : undefined)
+    );
+  }
+
+  $: sortedProjects = [...filteredProjects].sort((a, b) => {
+    const aNeeds = projectNeedsAttention(a, $decisions.items) ? 0 : 1;
+    const bNeeds = projectNeedsAttention(b, $decisions.items) ? 0 : 1;
+    if (aNeeds !== bNeeds) return aNeeds - bNeeds;
+    return (b.updated_at ?? '').localeCompare(a.updated_at ?? '');
+  });
+
+  $: attentionCount = sortedProjects.filter((p) =>
+    projectNeedsAttention(p, $decisions.items)
+  ).length;
 
   function subscribeFeed() {
     if (sseSub) return;
     sseSub = subscribeSse<any>(
       '/api/v2/decisions/subscribe',
       {
-        onMessage: (raw) => {
-          if (!raw) return;
-          const ev = raw as any;
-          const pid = ev.project_uuid ?? ev.card?.project_id ?? ev.card?.metadata?.project_uuid;
+        onEvent: ({ data }) => {
+          const ev = data as any;
+          if (!ev?.type) return;
+          const pid = sseProjectKey(ev);
           if (!pid) return;
           if (ev.type === 'role_started') {
             activeByProject = { ...activeByProject, [pid]: { role: ev.role, startedAt: (ev.ts ?? Date.now() / 1000) * 1000 } };
@@ -78,24 +117,44 @@
             const next = { ...activeByProject };
             delete next[pid];
             activeByProject = next;
-            loadPendingCounts();
+            void decisions.load('pending');
+            void loadStuckSummary();
           } else if (ev.type === 'card_created' || ev.type === 'card_updated') {
-            loadPendingCounts();
+            void decisions.load('pending');
+            void loadStuckSummary();
           }
         },
-        onError: () => {
+        onError: (err) => {
+          if (isAbortError(err)) return;
           sseSub = null;
           setTimeout(() => subscribeFeed(), 3000);
         }
-      }
+      },
+      { body: {} }
     );
+  }
+
+  async function loadStuckSummary() {
+    try {
+      const res = await api.get<{ by_project_id?: Record<string, StuckSummary> }>(
+        '/api/v2/projects/recovery/summary?limit=200'
+      );
+      stuckByProject = res.by_project_id ?? {};
+    } catch {
+      stuckByProject = {};
+    }
   }
 
   async function load() {
     try {
-      const res = await api.get<{ items: (string | ProjectRow)[] }>(
-        '/api/v2/projects?limit=200'
-      );
+      const res = await api.get<{
+        items: (string | ProjectRow)[];
+        db_unavailable?: boolean;
+      }>('/api/v2/projects?limit=200');
+      if (res.db_unavailable) {
+        error =
+          'Hub database is unavailable — start Postgres or check vault DB credentials.';
+      }
       const parsed = (res.items ?? []).map((it) =>
         typeof it === 'string' ? (JSON.parse(it) as ProjectRow) : it
       );
@@ -103,9 +162,9 @@
         (b.updated_at ?? '').localeCompare(a.updated_at ?? '')
       );
       projects = parsed;
-      error = null;
+      if (!res.db_unavailable) error = null;
     } catch (e) {
-      error = (e as Error).message || 'failed to load projects';
+      error = formatErr(e, 'Failed to load projects');
     } finally {
       loading = false;
     }
@@ -150,10 +209,14 @@
   }
 
   onMount(() => {
-    load();
-    loadPendingCounts();
+    void load();
+    void decisions.load('pending');
+    void loadStuckSummary();
     subscribeFeed();
-    pollHandle = window.setInterval(load, 5000) as unknown as number;
+    pollHandle = window.setInterval(() => {
+      load();
+      loadStuckSummary();
+    }, 5000) as unknown as number;
     nowInterval = window.setInterval(() => { nowTick = Date.now(); }, 1000) as unknown as number;
   });
 
@@ -167,7 +230,11 @@
 
 <PanelHeader
   title="Projects"
-  subtitle={filteredProjects.length > 0 ? `${filteredProjects.length} project${filteredProjects.length === 1 ? '' : 's'} shown` : 'No projects shown'}
+  subtitle={filteredProjects.length > 0
+    ? attentionCount > 0
+      ? `${filteredProjects.length} project${filteredProjects.length === 1 ? '' : 's'} · ${attentionCount} need${attentionCount === 1 ? 's' : ''} your attention`
+      : `${filteredProjects.length} project${filteredProjects.length === 1 ? '' : 's'} shown`
+    : 'No projects shown'}
 >
   <div class="flex items-center gap-4">
     <label class="flex items-center gap-2 text-xs text-surface-700 dark:text-surface-200 cursor-pointer">
@@ -210,18 +277,26 @@
           <th class="px-3 py-2">Status</th>
           <th class="px-3 py-2">Owner</th>
           <th class="px-3 py-2 text-right">Updated</th>
+          <th class="px-3 py-2 text-right">Action</th>
         </tr>
       </thead>
       <tbody>
-        {#each filteredProjects as p (p.project_id)}
-          {@const active = activeByProject[p.project_id]}
-          {@const pending = pendingByProject[p.project_id] ?? 0}
+        {#each sortedProjects as p (p.project_id)}
+          {@const active = activeForProject(p)}
+          {@const needsAttention = projectNeedsAttention(p, $decisions.items)}
+          {@const hint = attentionHint(p, $decisions.items)}
+          {@const pending = pendingForProject(p, $decisions.items)}
           {@const elapsed = active ? Math.max(0, Math.round((nowTick - active.startedAt) / 1000)) : 0}
-          <tr class="border-t border-surface-200 hover:bg-surface-50 dark:border-surface-700 dark:hover:bg-surface-700">
+          <tr
+            data-testid={needsAttention ? 'project-needs-attention' : undefined}
+            class="border-t border-surface-200 dark:border-surface-700 {needsAttention
+              ? 'bg-amber-500/10 ring-1 ring-inset ring-amber-500/30 hover:bg-amber-500/15'
+              : 'hover:bg-surface-50 dark:hover:bg-surface-700'}"
+          >
             <td class="px-3 py-2">
               <a
                 href="{base}/projects/{p.project_id}"
-                class="font-medium text-accent hover:underline"
+                class="font-medium {needsAttention ? 'text-amber-100 hover:text-amber-50' : 'text-accent hover:underline'}"
               >
                 {p.name}
               </a>
@@ -232,13 +307,12 @@
                     {active.role} · {elapsed}s
                   </span>
                 {/if}
-                {#if pending > 0}
-                  <a
-                    href="{base}/panels/decision-queue"
-                    class="inline-flex items-center gap-1 rounded-full bg-severity-warning px-2 py-0.5 text-[0.65rem] font-medium text-white hover:opacity-90"
+                {#if needsAttention && hint}
+                  <span
+                    class="inline-flex items-center gap-1 rounded-full border border-amber-500/50 bg-amber-500/15 px-2 py-0.5 text-[0.65rem] font-medium text-amber-100"
                   >
-                    ⚠ {pending} pending decision{pending === 1 ? '' : 's'}
-                  </a>
+                    {hint}
+                  </span>
                 {/if}
               </div>
             </td>
@@ -263,6 +337,24 @@
             <td class="px-3 py-2 text-xs text-surface-700/80 dark:text-surface-200/80">{p.owner ?? ''}</td>
             <td class="px-3 py-2 text-right text-xs text-surface-700/80 dark:text-surface-200/80">
               {relTime(p.updated_at)}
+            </td>
+            <td class="px-3 py-2 text-right">
+              {#if needsAttention}
+                <a
+                  href="{base}/projects/{p.project_id}"
+                  class="inline-flex items-center rounded-md border border-amber-500/50 bg-amber-500/15 px-2.5 py-1 text-xs font-medium text-amber-100 transition hover:border-amber-400/70 hover:bg-amber-500/25"
+                  data-testid="project-review-action"
+                >
+                  {pending > 0 ? 'Review & approve →' : 'Open project →'}
+                </a>
+              {:else}
+                <a
+                  href="{base}/projects/{p.project_id}"
+                  class="text-xs text-surface-500 hover:text-accent"
+                >
+                  Open →
+                </a>
+              {/if}
             </td>
           </tr>
         {/each}

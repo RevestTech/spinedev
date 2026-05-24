@@ -9,12 +9,9 @@
     - #8 two-tier role hierarchy (master / project) — this panel filters
          to tier === 'master' and shows project roles as a secondary list
 
-  Backend gap (filed to report): the panel scope asks for per-role
-  `status` (active/idle/paused), `last_decision_card_pushed`, and
-  `current_responsibility`. registry.py currently exposes only static
-  catalog metadata (name, tier, description, charter_ref, feature_flag).
-  The panel renders those fields today and leaves visual slots for the
-  runtime fields Wave 4 must add.
+  Wave 3.5 FIX3: registry.py enriches each role with ``status``,
+  ``last_decision_card_pushed_at``, and ``current_responsibility`` from
+  audit + route_history joins. Null when the Hub has no events yet.
 
   Responsive: single-column < md; 2-col @ md; 3-col @ lg.
 -->
@@ -25,7 +22,7 @@
   import EmptyState from '$lib/components/EmptyState.svelte';
   import ErrorBanner from '$lib/components/ErrorBanner.svelte';
   import { api } from '$lib/api/client';
-  import type { RoleEntry, RoleList } from '$lib/api/types';
+  import type { RoleEntry, RoleList, RoleStatus } from '$lib/api/types';
 
   let loading = true;
   let error: string | null = null;
@@ -51,12 +48,20 @@
   $: masterRoles = roles.filter((r) => r.tier === 'master');
   $: projectRoles = roles.filter((r) => r.tier === 'project');
 
-  // Placeholder runtime fields until Wave 4 adds them backend-side.
-  // Today these render as "unknown" badges; the slot is wired so once
-  // /api/v2/registry/roles starts returning status/last_decision/etc.,
-  // the panel surfaces them without further markup churn.
-  function statusBadge(_r: RoleEntry): { label: string; tone: string } {
-    return { label: 'unknown', tone: 'bg-surface-200 text-surface-700 dark:bg-surface-700 dark:text-surface-200' };
+  function statusBadge(r: RoleEntry): { label: string; tone: string } {
+    const status: RoleStatus = r.status ?? 'idle';
+    const tones: Record<RoleStatus, string> = {
+      active: 'bg-emerald-100 text-emerald-900 dark:bg-emerald-900 dark:text-emerald-100',
+      idle: 'bg-surface-200 text-surface-700 dark:bg-surface-700 dark:text-surface-200',
+      paused: 'bg-amber-100 text-amber-900 dark:bg-amber-900 dark:text-amber-100'
+    };
+    return { label: status, tone: tones[status] };
+  }
+
+  function formatPushedAt(iso: string | null | undefined): string {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();
   }
 </script>
 
@@ -116,7 +121,7 @@
                   {r.name}
                 </h3>
               </div>
-              <span class="rounded-full px-2 py-0.5 text-xs {badge.tone}" title="Runtime status — backend gap, Wave 4">
+              <span class="rounded-full px-2 py-0.5 text-xs {badge.tone}" title="Runtime status from audit + route history">
                 {badge.label}
               </span>
             </header>
@@ -128,11 +133,11 @@
             <dl class="mt-auto grid grid-cols-1 gap-1 text-xs text-surface-700 dark:text-surface-200">
               <div class="flex justify-between gap-2">
                 <dt>Last decision pushed</dt>
-                <dd class="font-mono opacity-70">—</dd>
+                <dd class="font-mono opacity-70">{formatPushedAt(r.last_decision_card_pushed_at)}</dd>
               </div>
               <div class="flex justify-between gap-2">
                 <dt>Current responsibility</dt>
-                <dd class="font-mono opacity-70">—</dd>
+                <dd class="font-mono opacity-70">{r.current_responsibility ?? '—'}</dd>
               </div>
               {#if r.charter_ref}
                 <div class="flex justify-between gap-2">

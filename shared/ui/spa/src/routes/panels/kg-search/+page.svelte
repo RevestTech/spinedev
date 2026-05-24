@@ -85,10 +85,9 @@
     via: string;
   }
 
-  // Wave 4 will surface project/repo via a global picker store; for now we
-  // read from query params with sane defaults that match the smoke test.
-  let projectId = 'demo';
-  let repo = 'spine';
+  // Query params override; otherwise default to the first Hub project.
+  let projectId = '';
+  let repo = '';
   let query = '';
 
   let searching = false;
@@ -106,26 +105,58 @@
   let owners: KgOwner[] = [];
   let actionCitations: Citation[] = [];
 
-  onMount(() => {
+  async function seedProjectContext() {
     const params = $page.url.searchParams;
-    const seedQ = params.get('q');
-    const seedNode = params.get('node');
     const p = params.get('project_id');
     const r = params.get('repo');
-    if (p) projectId = p;
+    if (p) {
+      projectId = p;
+      return;
+    }
+    try {
+      const res = await api.get<{ items: (string | { project_id?: string; name?: string })[] }>(
+        '/api/v2/projects?limit=1'
+      );
+      const first = res.items?.[0];
+      if (!first) return;
+      const row =
+        typeof first === 'string'
+          ? (JSON.parse(first) as { project_id?: string; name?: string })
+          : first;
+      if (row.project_id) projectId = String(row.project_id);
+      if (!r && row.name) {
+        repo = row.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+      }
+    } catch {
+      /* KG search still works when project_id is supplied manually */
+    }
     if (r) repo = r;
-    if (seedQ) {
-      query = seedQ;
-      void runSearch();
-    }
-    if (seedNode) {
-      void loadNode({ node_id: seedNode, name: seedNode, node_type: '', path: '', score: 0 });
-    }
+  }
+
+  onMount(() => {
+    void (async () => {
+      const params = $page.url.searchParams;
+      const seedQ = params.get('q');
+      const seedNode = params.get('node');
+      const r = params.get('repo');
+      await seedProjectContext();
+      if (r) repo = r;
+      if (seedQ) {
+        query = seedQ;
+        void runSearch();
+      }
+      if (seedNode) {
+        void loadNode({ node_id: seedNode, name: seedNode, node_type: '', path: '', score: 0 });
+      }
+    })();
   });
 
   async function runSearch() {
     const q = query.trim();
-    if (!q) return;
+    if (!q || !projectId.trim() || !repo.trim()) {
+      searchError = 'Enter project_id and repo before searching.';
+      return;
+    }
     searching = true;
     searchError = null;
     try {

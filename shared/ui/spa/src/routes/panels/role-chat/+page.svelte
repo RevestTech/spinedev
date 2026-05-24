@@ -27,22 +27,14 @@
     - >= 1024 px (desktop) : same, with role-picker sidebar inline-left
 -->
 <script lang="ts">
-  import { tick } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import PanelHeader from '$lib/components/PanelHeader.svelte';
   import LoadingSpinner from '$lib/components/LoadingSpinner.svelte';
   import ErrorBanner from '$lib/components/ErrorBanner.svelte';
   import CitationChip from '$lib/components/CitationChip.svelte';
   import { api } from '$lib/api/client';
   import { toasts } from '$lib/stores/toasts';
-  import type { Citation, RoleChatRequest, RoleChatResponse } from '$lib/api/types';
-
-  // Mirror the _KNOWN_ROLES frozenset in shared/api/routes/role_chat.py.
-  const KNOWN_ROLES = [
-    'architect', 'product', 'qa', 'operator', 'devops', 'datawright',
-    'ux', 'engineer', 'planner', 'conductor', 'release_manager',
-    'tech_writer', 'security_engineer', 'compliance_officer',
-    'customer_support'
-  ];
+  import type { Citation, RoleChatRequest, RoleChatResponse, RoleList } from '$lib/api/types';
 
   interface ChatMessage {
     id: string;
@@ -55,12 +47,43 @@
     error?: string;
   }
 
-  let selectedRole: string = 'architect';
+  let chatRoles: string[] = [];
+  let rolesLoading = true;
+  let rolesError: string | null = null;
+  let selectedRole = '';
   let messages: ChatMessage[] = [];
   let composer: string = '';
   let busy = false;
   let panelError: string | null = null;
   let scroller: HTMLElement | null = null;
+
+  async function loadRoles() {
+    rolesLoading = true;
+    rolesError = null;
+    try {
+      const res = await api.get<RoleList>('/api/v2/registry/roles');
+      chatRoles = (res.items ?? [])
+        .filter((r) => r.tier === 'project')
+        .map((r) => r.name)
+        .sort();
+      if (chatRoles.length === 0) {
+        rolesError = 'No project-tier roles in the registry.';
+        selectedRole = '';
+        return;
+      }
+      if (!selectedRole || !chatRoles.includes(selectedRole)) {
+        selectedRole = chatRoles[0];
+      }
+    } catch (err) {
+      rolesError = (err as Error).message || 'failed to load roles';
+      chatRoles = [];
+      selectedRole = '';
+    } finally {
+      rolesLoading = false;
+    }
+  }
+
+  onMount(loadRoles);
 
   function newMessageId(): string {
     return `m_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
@@ -68,7 +91,7 @@
 
   async function send() {
     const text = composer.trim();
-    if (!text || busy) return;
+    if (!text || busy || !selectedRole) return;
     panelError = null;
 
     const userMsg: ChatMessage = { id: newMessageId(), role: 'user', text };
@@ -132,14 +155,25 @@
     <select
       class="rounded-md border border-surface-200 bg-white px-2 py-1 text-sm dark:border-surface-700 dark:bg-surface-800"
       bind:value={selectedRole}
+      disabled={rolesLoading || chatRoles.length === 0}
       data-testid="role-select"
     >
-      {#each KNOWN_ROLES as r}
-        <option value={r}>{r}</option>
-      {/each}
+      {#if rolesLoading}
+        <option value="">Loading…</option>
+      {:else if chatRoles.length === 0}
+        <option value="">No roles</option>
+      {:else}
+        {#each chatRoles as r}
+          <option value={r}>{r}</option>
+        {/each}
+      {/if}
     </select>
   </label>
 </PanelHeader>
+
+{#if rolesError}
+  <div class="mb-3"><ErrorBanner kind="error" message={rolesError} onDismiss={() => (rolesError = null)} /></div>
+{/if}
 
 {#if panelError}
   <div class="mb-3"><ErrorBanner kind="error" message={panelError} onDismiss={() => (panelError = null)} /></div>
@@ -226,7 +260,7 @@
     <button
       type="submit"
       class="btn-primary"
-      disabled={busy || composer.trim().length === 0}
+      disabled={busy || !selectedRole || composer.trim().length === 0}
       data-testid="composer-send"
     >
       {busy ? 'Sending…' : 'Send'}

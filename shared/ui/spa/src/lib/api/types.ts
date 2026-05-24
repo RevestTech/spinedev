@@ -185,6 +185,7 @@ export interface RoleChatResponse {
 // ---------------------------------------------------------------------------
 
 export type RoleTier = 'master' | 'project';
+export type RoleStatus = 'active' | 'idle' | 'paused';
 
 export interface RoleEntry {
   name: string;
@@ -192,6 +193,9 @@ export interface RoleEntry {
   description: string;
   charter_ref?: string | null;
   feature_flag?: string | null;
+  status?: RoleStatus | null;
+  last_decision_card_pushed_at?: string | null;
+  current_responsibility?: string | null;
 }
 
 export interface RoleList {

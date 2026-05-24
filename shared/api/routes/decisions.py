@@ -48,6 +48,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from shared.api.dependencies import DbHandle, actor_label, current_user, get_db_pool
+from shared.api.routes.hub_scope import is_project_decision_card
 from shared.audit.audit_record import AuditRecord, chain_to_previous
 from shared.identity.models import User
 
@@ -153,6 +154,10 @@ def _row_to_card(row: dict[str, Any]) -> DecisionCard:
     project_id_str: Optional[str] = None
     if project_id_raw is not None:
         project_id_str = str(project_id_raw)
+    elif isinstance(metadata, dict):
+        meta_uuid = metadata.get("project_uuid")
+        if meta_uuid is not None:
+            project_id_str = str(meta_uuid)
     return DecisionCard(
         decision_id=str(row["id"]),
         decision_class=row.get("kind") or "approval",  # type: ignore[arg-type]
@@ -396,7 +401,13 @@ class _DecisionStore:
         """Async transition: tries DB first, then cache."""
         card = await self._persist_transition(decision_id, new_status, actor)
         if card is None:
+            if self.get(decision_id) is None:
+                await self._hydrate(decision_id)
             card = self.transition(decision_id, new_status)
+            if card is not None and self._db is not None:
+                persisted = await self._persist_transition(decision_id, new_status, actor)
+                if persisted is not None:
+                    card = persisted
         else:
             self._cards[decision_id] = card
             self._publish({"type": "card_updated", "card": card.model_dump()})
@@ -482,15 +493,19 @@ def _audit_decision_event(
 async def list_decisions(
     user: Annotated[User, Depends(current_user)],
     status_filter: Optional[DecisionStatus] = Query(default="pending", alias="status"),
+    scope: Literal["project", "all"] = Query(
+        default="project",
+        description="project = approvals only (default); all = include hub inbox cards",
+    ),
 ) -> DecisionList:
     """List decisions visible to the caller (Wave 3.5: DB + cache merge).
 
-    DB handle is injected once at startup by the FastAPI lifespan in
-    ``shared/api/app.py`` (which calls ``set_decisions_db(pool)``). When
-    the lifespan hasn't run (tests, bootstrap) the store falls back to
-    cache-only mode automatically.
+    Default ``scope=project`` excludes master portfolio briefings — those
+    live on ``GET /api/v2/hub/inbox``.
     """
     items = await _STORE.alist(status_filter=status_filter)
+    if scope == "project":
+        items = [c for c in items if is_project_decision_card(c)]
     return DecisionList(items=items, total=len(items))
 
 

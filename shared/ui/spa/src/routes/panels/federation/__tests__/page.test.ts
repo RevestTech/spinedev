@@ -41,13 +41,16 @@ describe('Federation page', () => {
   });
   afterEach(() => vi.restoreAllMocks());
 
-  function mockLoad(hubs: unknown[], posture: unknown) {
+  function mockLoad(hubs: unknown[], posture: unknown, projects: unknown[] = []) {
     (api.get as ReturnType<typeof vi.fn>).mockImplementation((path: string) => {
       if (path === '/api/v2/federation/hubs') {
         return Promise.resolve({ ok: true, local_hub_id: 'hub-local', items: hubs });
       }
       if (path === '/api/v2/federation/status') {
         return Promise.resolve(posture);
+      }
+      if (path === '/api/v2/projects?limit=200') {
+        return Promise.resolve({ items: projects });
       }
       return Promise.reject(new Error(`unexpected ${path}`));
     });
@@ -56,7 +59,7 @@ describe('Federation page', () => {
   it('renders the local Hub posture even with no peers', async () => {
     mockLoad([], { ok: true, local_hub_id: 'hub-local', children_count: 0, peers_count: 0 });
     render(Page);
-    await waitFor(() => expect(api.get).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(api.get).toHaveBeenCalledTimes(3));
     expect(await screen.findByTestId('local-hub')).toBeInTheDocument();
     expect(screen.getByText(/No federated Hubs yet/i)).toBeInTheDocument();
   });

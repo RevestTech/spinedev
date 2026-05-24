@@ -89,14 +89,23 @@ async def phase_watcher_tick() -> int:
         _load_project_full,
         _require_orchestrate_hub_role,
     )
+    from shared.api.routes._project_recovery import (  # noqa: PLC0415
+        _build_pending_decision_index,
+        pending_count_for_project,
+    )
 
     rows = await _find_pending_work()
+    if not rows:
+        return 0
+    pending_index = await _build_pending_decision_index()
     dispatched = 0
     for row in rows:
         kind = row["dispatch_kind"]
         project_uuid = row["project_uuid"]
         project = await _load_project_full(project_uuid)
         if project is None:
+            continue
+        if pending_count_for_project(project, pending_index) > 0:
             continue
         logger.info(
             "phase_watcher_dispatch",

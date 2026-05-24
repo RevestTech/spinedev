@@ -11,8 +11,9 @@
   icon glyph so the IA reads at a glance.
 -->
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { page } from '$app/stores';
-  import { base } from '$app/paths';
+  import { isNavItemActive, navHref } from '$lib/navActive';
 
   export let open = false;
   export let onClose: (() => void) | null = null;
@@ -37,7 +38,8 @@
       items: [
         { label: 'Dashboard',       href: '/',                       icon: '⌂', desc: 'Start a new project; recent projects',                           shipped: true },
         { label: 'Projects',        href: '/projects',               icon: '▤', desc: 'All projects in this Hub with SDLC phase + status',            shipped: true },
-        { label: 'Decisions',       href: '/panels/decision-queue',  icon: '✓', desc: 'Approval cards waiting on you (PRD, TRD, code review…)',       shipped: true },
+        { label: 'Decisions',       href: '/panels/decision-queue',  icon: '✓', desc: 'Project approvals — PRD, TRD, code review, deploy',            shipped: true },
+        { label: 'Hub inbox',       href: '/panels/hub-inbox',       icon: '✉', desc: 'Portfolio briefings from master directors (Hub-wide)',         shipped: true },
         { label: 'Talk to a role',  href: '/panels/role-chat',       icon: '✎', desc: 'Ad-hoc chat with any role (product, architect, engineer, qa…)', shipped: true },
       ]
     },
@@ -69,11 +71,31 @@
     }
   ];
 
-  $: pathname = $page.url.pathname;
-  function isActive(href: string): boolean {
-    if (href === '/') return pathname === base + '/' || pathname === base;
-    return pathname === base + href;
-  }
+  let isDesktop = false;
+
+  onMount(() => {
+    const mq = window.matchMedia('(min-width: 768px)');
+    const syncViewport = () => {
+      isDesktop = mq.matches;
+    };
+    syncViewport();
+    mq.addEventListener('change', syncViewport);
+
+    const onKeydown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && open && !isDesktop) {
+        onClose?.();
+      }
+    };
+    window.addEventListener('keydown', onKeydown);
+
+    return () => {
+      mq.removeEventListener('change', syncViewport);
+      window.removeEventListener('keydown', onKeydown);
+    };
+  });
+
+  // {#key} below forces nav links to re-bind aria-current on client-side route changes.
+  $: mobileHidden = !open && !isDesktop;
 </script>
 
 <!-- Backdrop (mobile only) -->
@@ -87,19 +109,23 @@
 {/if}
 
 <aside
+  id="hub-sidebar"
   class="fixed inset-y-0 left-0 z-40 w-60 transform overflow-y-auto border-r border-surface-700/60 bg-surface-900/70 p-3 backdrop-blur-md transition-transform md:static md:translate-x-0"
   class:translate-x-0={open}
   class:-translate-x-full={!open}
   aria-label="Hub surfaces"
+  aria-hidden={mobileHidden ? true : undefined}
+  inert={mobileHidden ? true : undefined}
 >
-  <nav class="flex h-full flex-col gap-5">
+  <nav class="flex h-full flex-col gap-5" aria-label="Sidebar">
+    {#key $page.url.pathname + ($page.route.id ?? '')}
     {#each sections as section (section.title)}
       <div>
         <header class="mb-2 px-2">
-          <h2 class="text-[0.7rem] font-semibold uppercase tracking-widest text-accent">
+          <h2 class="text-xs font-semibold uppercase tracking-widest text-accent">
             {section.title}
           </h2>
-          <p class="text-[0.65rem] text-surface-500">
+          <p class="text-sm text-surface-500">
             {section.blurb}
           </p>
         </header>
@@ -108,26 +134,42 @@
             <li>
               {#if it.shipped}
                 <a
-                  href={base + it.href}
+                  href={navHref(it.href)}
                   title={it.desc}
                   aria-label="{it.label} — {it.desc}"
-                  class="group flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm text-surface-300 transition-all hover:bg-surface-800/80 hover:text-white"
-                  class:!bg-gradient-brand={isActive(it.href)}
-                  class:!text-white={isActive(it.href)}
-                  class:shadow-glow-sm={isActive(it.href)}
+                  aria-current={isNavItemActive($page.url.pathname, it.href, $page.route.id)
+                    ? 'page'
+                    : undefined}
+                  class="sidebar-nav-link group"
+                  data-testid="sidebar-nav-{it.href.replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '') || 'home'}"
+                  data-nav-active={isNavItemActive($page.url.pathname, it.href, $page.route.id)
+                    ? 'true'
+                    : 'false'}
+                  data-sveltekit-preload-data="hover"
+                  tabindex={mobileHidden ? -1 : undefined}
                   on:click={() => onClose?.()}
                 >
-                  <span class="w-4 text-center text-base leading-none opacity-70 group-hover:opacity-100">{it.icon}</span>
+                  <span
+                    class="w-4 text-center text-base leading-none {isNavItemActive(
+                      $page.url.pathname,
+                      it.href,
+                      $page.route.id
+                    )
+                      ? 'opacity-100'
+                      : 'opacity-70 group-hover:opacity-100'}"
+                    aria-hidden="true"
+                  >{it.icon}</span>
                   <span class="flex-1">{it.label}</span>
                 </a>
               {:else}
                 <span
                   class="flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm text-surface-500"
-                  title={it.desc}
+                  title="{it.desc} Not available in this Hub build yet."
+                  aria-disabled="true"
                 >
-                  <span class="w-4 text-center opacity-50">{it.icon}</span>
+                  <span class="w-4 text-center opacity-50" aria-hidden="true">{it.icon}</span>
                   <span class="flex-1">{it.label}</span>
-                  <span class="text-[0.6rem] uppercase tracking-wide text-surface-600">soon</span>
+                  <span class="text-[0.6rem] uppercase tracking-wide text-surface-600">planned</span>
                 </span>
               {/if}
             </li>
@@ -135,5 +177,6 @@
         </ul>
       </div>
     {/each}
+    {/key}
   </nav>
 </aside>

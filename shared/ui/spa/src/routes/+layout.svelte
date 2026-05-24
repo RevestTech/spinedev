@@ -12,8 +12,10 @@
   import Topbar from '$lib/components/Topbar.svelte';
   import Sidebar from '$lib/components/Sidebar.svelte';
   import ErrorBanner from '$lib/components/ErrorBanner.svelte';
+  import { normalizePathname } from '$lib/navActive';
   import { toasts } from '$lib/stores/toasts';
   import { decisions } from '$lib/stores/decisions';
+  import { hubInbox } from '$lib/stores/hubInbox';
   import type { LayoutData } from './$types';
 
   export let data: LayoutData;
@@ -24,19 +26,24 @@
   // share the stream + topbar pending-count badge reflects DB truth.
   onMount(() => {
     if (data.user) {
-      decisions.load();      // initial fetch so pendingCount > 0 on first paint
-      decisions.connect();   // SSE keeps it live
+      void decisions.load();
+      void hubInbox.load();
+      decisions.connect();
     }
     return () => decisions.disconnect();
   });
 
   $: liveConnected = $decisions.liveConnected;
-  $: isAuthRoute = $page.url.pathname.startsWith('/auth/');
+  $: isAuthRoute = normalizePathname($page.url.pathname).startsWith('/auth/');
 </script>
 
 <div class="flex min-h-screen flex-col">
   {#if !isAuthRoute}
-    <Topbar title="Spine Hub" onToggleSidebar={() => (sidebarOpen = !sidebarOpen)} />
+    <Topbar
+      title="Spine Hub"
+      sidebarOpen={sidebarOpen}
+      onToggleSidebar={() => (sidebarOpen = !sidebarOpen)}
+    />
     <div class="flex flex-1 md:flex-row">
       <Sidebar open={sidebarOpen} onClose={() => (sidebarOpen = false)} />
       <main
@@ -70,13 +77,13 @@
     </main>
   {/if}
 
-  <!-- Toast island -->
+  <!-- Toast island — top-right -->
   <div
-    class="pointer-events-none fixed inset-x-0 bottom-3 z-50 flex flex-col items-center gap-2 px-3 sm:bottom-6"
+    class="pointer-events-none fixed right-3 top-16 z-50 flex max-w-sm flex-col items-stretch gap-2 sm:right-6 sm:top-[4.5rem]"
     aria-live="polite"
   >
     {#each $toasts as toast (toast.id)}
-      <div class="pointer-events-auto w-full max-w-md">
+      <div class="pointer-events-auto w-full">
         <ErrorBanner
           kind={toast.kind}
           message={toast.message}

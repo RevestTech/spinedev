@@ -64,10 +64,11 @@ class PortfolioSnapshot:
 
 async def fetch_portfolio_snapshot() -> PortfolioSnapshot:
     """Load active projects from Postgres; empty snapshot when DB unavailable."""
-    from shared.api.dependencies import get_db_pool_raw  # noqa: PLC0415
+    from shared.api.dependencies import DbPoolNotInitialized, get_db_pool_raw  # noqa: PLC0415
 
-    pool = get_db_pool_raw()
-    if pool is None:
+    try:
+        pool = get_db_pool_raw()
+    except DbPoolNotInitialized:
         return PortfolioSnapshot()
 
     sql = """
@@ -149,23 +150,20 @@ def compose_director_briefing(director: str, title: str, snap: PortfolioSnapshot
     return "\n".join(lines)
 
 
-def _already_pushed_today(director: str) -> bool:
-    """Skip if a pending master briefing for this director was created today."""
+def _already_pending(director: str) -> bool:
+    """Skip if a pending master briefing for this director already exists."""
     try:
         from shared.api.routes.decisions import get_store  # noqa: PLC0415
     except Exception:
         return False
 
-    today = datetime.now(timezone.utc).date()
     for card in get_store().list(status_filter="pending"):
         meta = card.metadata or {}
         if meta.get("kind") != _BRIEFING_KIND:
             continue
         if meta.get("director") != director:
             continue
-        created = datetime.fromtimestamp(card.created_at, tz=timezone.utc).date()
-        if created >= today:
-            return True
+        return True
     return False
 
 
@@ -178,7 +176,7 @@ def push_master_briefings(snap: PortfolioSnapshot | None = None) -> int:
 
     pushed = 0
     for director, title in _MASTER_DIRECTORS:
-        if _already_pushed_today(director):
+        if _already_pending(director):
             continue
         body = compose_director_briefing(director, title, snap)
         enqueue_decision(DecisionCard(

@@ -64,36 +64,60 @@ const SAMPLE = {
   ]
 };
 
+function mockProjectsSeed(projectId = 'proj-1') {
+  (api.get as ReturnType<typeof vi.fn>).mockImplementation((url: string) => {
+    if (url.includes('/api/v2/projects')) {
+      return Promise.resolve({
+        items: [{ project_id: '9', project_uuid: projectId }]
+      });
+    }
+    if (url.includes('/api/v2/audit')) {
+      return Promise.resolve(SAMPLE);
+    }
+    return Promise.reject(new Error(`unexpected GET ${url}`));
+  });
+}
+
 describe('Audit page', () => {
   beforeEach(() => {
     (api.get as ReturnType<typeof vi.fn>).mockReset();
   });
   afterEach(() => vi.restoreAllMocks());
 
-  it('renders an empty state until a scope key is provided', () => {
-    render(Page);
-    expect(screen.getByText(/requires at least one scope key/i)).toBeInTheDocument();
-    expect(api.get).not.toHaveBeenCalled();
-  });
-
-  it('loads audit rows once a project_id is set and Load is clicked', async () => {
-    (api.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce(SAMPLE);
+  it('seeds project_id from the projects API on mount', async () => {
+    mockProjectsSeed('seed-proj');
     render(Page);
     const projInput = screen.getByTestId('filter-project') as HTMLInputElement;
-    await fireEvent.input(projInput, { target: { value: 'proj-1' } });
+    await waitFor(() => expect(projInput.value).toBe('seed-proj'));
+    expect(api.get).toHaveBeenCalledWith('/api/v2/projects?limit=1');
+  });
+
+  it('loads audit rows once Load is clicked with a project_id', async () => {
+    mockProjectsSeed('proj-1');
+    render(Page);
+    await waitFor(() => {
+      expect((screen.getByTestId('filter-project') as HTMLInputElement).value).toBe('proj-1');
+    });
     await fireEvent.click(screen.getByTestId('audit-load'));
-    await waitFor(() => expect(api.get).toHaveBeenCalled());
-    const call = (api.get as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
-    expect(call).toContain('/api/v2/audit?');
-    expect(call).toContain('project_id=proj-1');
+    await waitFor(() =>
+      expect((api.get as ReturnType<typeof vi.fn>).mock.calls.some((c) =>
+        String(c[0]).includes('/api/v2/audit?')
+      )).toBe(true)
+    );
+    const auditCall = (api.get as ReturnType<typeof vi.fn>).mock.calls.find((c) =>
+      String(c[0]).includes('/api/v2/audit?')
+    )?.[0] as string;
+    expect(auditCall).toContain('project_id=proj-1');
     const rows = await screen.findAllByTestId('audit-row');
     expect(rows).toHaveLength(2);
   });
 
   it('applies client-side subsystem filter', async () => {
-    (api.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce(SAMPLE);
+    mockProjectsSeed('proj-1');
     render(Page);
-    await fireEvent.input(screen.getByTestId('filter-project'), { target: { value: 'proj-1' } });
+    await waitFor(() => {
+      expect((screen.getByTestId('filter-project') as HTMLInputElement).value).toBe('proj-1');
+    });
     await fireEvent.click(screen.getByTestId('audit-load'));
     await screen.findAllByTestId('audit-row');
     const subFilter = screen.getByTestId('filter-subsystem') as HTMLSelectElement;
@@ -104,9 +128,11 @@ describe('Audit page', () => {
   });
 
   it('opens a detail modal on row click', async () => {
-    (api.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce(SAMPLE);
+    mockProjectsSeed('proj-1');
     render(Page);
-    await fireEvent.input(screen.getByTestId('filter-project'), { target: { value: 'proj-1' } });
+    await waitFor(() => {
+      expect((screen.getByTestId('filter-project') as HTMLInputElement).value).toBe('proj-1');
+    });
     await fireEvent.click(screen.getByTestId('audit-load'));
     const [first] = await screen.findAllByTestId('audit-row');
     await fireEvent.click(first);
@@ -114,9 +140,11 @@ describe('Audit page', () => {
   });
 
   it('export buttons prompt for confirmation before navigating', async () => {
-    (api.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce(SAMPLE);
+    mockProjectsSeed('proj-1');
     render(Page);
-    await fireEvent.input(screen.getByTestId('filter-project'), { target: { value: 'proj-1' } });
+    await waitFor(() => {
+      expect((screen.getByTestId('filter-project') as HTMLInputElement).value).toBe('proj-1');
+    });
     await fireEvent.click(screen.getByTestId('audit-load'));
     await screen.findAllByTestId('audit-row');
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);

@@ -11,6 +11,7 @@
   import { onMount } from 'svelte';
   import { browser } from '$app/environment';
   import { base } from '$app/paths';
+  import { navHref } from '$lib/navActive';
   import { clearUser } from '$lib/stores/user';
   import LoadingSpinner from '$lib/components/LoadingSpinner.svelte';
   import ErrorBanner from '$lib/components/ErrorBanner.svelte';
@@ -45,7 +46,7 @@
   <div class="panel-card w-full max-w-md text-center">
     {#if error}
       <ErrorBanner kind="error" message={error} />
-      <a href="/" class="btn-primary mt-4 inline-flex">Return to Hub</a>
+      <a href={navHref('/')} class="btn-primary mt-4 inline-flex">Return to Hub</a>
     {:else}
       <h1 class="text-lg font-semibold text-surface-900 dark:text-surface-50">Signing you out</h1>
       <div class="mt-4 flex justify-center"><LoadingSpinner label="Talking to Keycloak…" /></div>

@@ -18,9 +18,8 @@
   backend reports adapter kind via `type(adapter).__name__`, so we
   pattern-match on common dev / test names.
 
-  Backend gap (filed to report): /vault/status does not expose
-  last-rotation timestamps per vault path. The panel renders a "—" until
-  the backend adds that field.
+  Backend: ``GET /vault/rotations`` supplies per-path last-rotation timestamps
+  when the audit ledger has rotation events.
 -->
 <script lang="ts">
   import { onMount } from 'svelte';
@@ -66,6 +65,23 @@
     }
   }
 
+  async function loadRotations() {
+    try {
+      const res = await api.get<{ items?: { path: string; last_rotated_at: string }[] }>(
+        '/api/v2/vault/rotations'
+      );
+      const map: Record<string, string> = {};
+      for (const item of res.items ?? []) {
+        if (item.path && item.last_rotated_at) {
+          map[item.path] = item.last_rotated_at;
+        }
+      }
+      lastRotation = { ...lastRotation, ...map };
+    } catch {
+      /* rotations history is optional */
+    }
+  }
+
   async function loadPaths() {
     loadingPaths = true;
     pathsError = null;
@@ -99,9 +115,10 @@
     }
   }
 
-  onMount(() => {
+  onMount(async () => {
     loadStatus();
-    loadPaths();
+    await loadPaths();
+    await loadRotations();
   });
 </script>
 
@@ -205,7 +222,7 @@
               </span>
             {:else}
               <span class="text-xs text-surface-700/60 dark:text-surface-200/60">
-                last rotation: — (backend gap)
+                last rotation: —
               </span>
             {/if}
           </div>

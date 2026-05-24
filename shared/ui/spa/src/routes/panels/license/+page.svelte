@@ -170,10 +170,7 @@
           class:text-amber-900={!summary.signed}
           data-testid="signature-status"
         >
-          {summary.signed ? 'signature verified' : 'signature unverified (stub)'}
-        </span>
-        <span class="text-[0.6rem] text-surface-700 dark:text-surface-200">
-          last verify: <span data-testid="last-verify">Wave 4</span>
+          {summary.signed ? 'signature verified' : 'signature unverified'}
         </span>
       </div>
     </div>

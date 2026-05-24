@@ -105,4 +105,22 @@ describe('apiFetch', () => {
     expect(seen.headers?.get('content-type')).toBe('application/json');
     expect(JSON.parse(seen.body ?? '{}')).toEqual({ role: 'qa', message: 'hi' });
   });
+
+  it('maps fetch abort to a timeout ApiError', async () => {
+    globalThis.fetch = vi.fn(async (_url, init) => {
+      return new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          reject(new DOMException('signal is aborted without reason', 'AbortError'));
+        });
+        // Never resolve — test aborts via short timeout.
+      });
+    }) as typeof fetch;
+    const { apiFetch } = await import('../client');
+    await expect(
+      apiFetch('/api/v2/projects/1/recovery/dispatch', { method: 'POST', timeoutMs: 5 })
+    ).rejects.toMatchObject({
+      status: 408,
+      message: expect.stringContaining('timed out')
+    });
+  });
 });
