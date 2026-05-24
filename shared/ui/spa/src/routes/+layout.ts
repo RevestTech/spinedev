@@ -55,18 +55,31 @@ export const load: LayoutLoad = async ({ url }) => {
   }
 
   try {
-    const probe = await api.get<{ ok: boolean; user: Record<string, unknown> }>(
-      '/api/v2/auth/whoami',
-      { redirectOn401: false, timeoutMs: 5_000 }
-    );
+    let rawUser: Record<string, unknown> | null = null;
+    for (const path of ['/api/v2/auth/whoami', '/api/v2/registry/me'] as const) {
+      try {
+        const probe = await api.get<{ ok: boolean; user: Record<string, unknown> }>(
+          path,
+          { redirectOn401: false, timeoutMs: 5_000 }
+        );
+        if (probe?.ok && probe.user) {
+          rawUser = probe.user;
+          break;
+        }
+      } catch (inner) {
+        if (inner instanceof ApiError && inner.status === 401) {
+          throw inner;
+        }
+      }
+    }
 
-    if (!probe?.ok || !probe.user) {
+    if (!rawUser) {
       clearUser();
       redirectToLogin();
       return { user: null };
     }
 
-    let sessionUser = userFromProbe(probe.user);
+    let sessionUser = userFromProbe(rawUser);
     if (!sessionUser.hub_id) {
       const hubId = await resolveHubId();
       if (hubId) sessionUser = { ...sessionUser, hub_id: hubId };

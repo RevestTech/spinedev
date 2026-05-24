@@ -292,6 +292,17 @@ def install_oidc_routes(
 
     @router.get("/login")
     async def login() -> "Response":
+        import os
+
+        if _GLOBAL_CONFIG is None:
+            # Laptop dev (SPINE_HUB_DEV=1) runs without Keycloak/OIDC secrets.
+            # Send the browser back to the SPA instead of a JSON 500 page.
+            if os.environ.get("SPINE_HUB_DEV") == "1":
+                return RedirectResponse(url="/spa/", status_code=302)
+            raise HTTPException(
+                status_code=getattr(status, "HTTP_500_INTERNAL_SERVER_ERROR", 500),
+                detail="OIDC session middleware not configured",
+            )
         cfg = get_session_config()
         state = secrets.token_urlsafe(24)
         nonce = secrets.token_urlsafe(24)

@@ -1,15 +1,15 @@
 /*
  * Spine Hub SPA — global stylesheet (modernized dark-first).
  *
- * Loaded by src/routes/+layout.svelte. Tailwind layers come first;
- * minimal hand-written overrides live in src/lib/responsive.css.
+ * Loaded by src/routes/+layout.svelte. responsive.css must be imported
+ * before @tailwind (Vite/CSS spec: @import precedes other rules).
  */
+
+@import './lib/responsive.css';
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-
-@import './lib/responsive.css';
 
 /* Reset focus rings to a Spine-branded accent — accessibility (WCAG 2.4.7). */
 @layer base {

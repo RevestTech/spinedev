@@ -76,6 +76,21 @@ def test_login_returns_302_to_keycloak(client) -> None:
     assert "/protocol/openid-connect/auth" in r.headers["location"]
 
 
+def test_login_dev_mode_without_oidc_redirects_to_spa(monkeypatch: pytest.MonkeyPatch) -> None:
+    """SPINE_HUB_DEV=1 without OIDC config sends users to the SPA, not JSON 500."""
+    monkeypatch.setenv("SPINE_HUB_DEV", "1")
+    set_session_config(None)
+    app = FastAPI()
+    install_oidc_routes(app)
+    try:
+        with TestClient(app) as c:
+            r = c.get("/api/v2/auth/login", follow_redirects=False)
+            assert r.status_code == 302
+            assert r.headers["location"] == "/spa/"
+    finally:
+        set_session_config(_cfg())
+
+
 # ---------------------------------------------------------------------------
 # Callback sets a signed cookie + stores the session
 # ---------------------------------------------------------------------------
