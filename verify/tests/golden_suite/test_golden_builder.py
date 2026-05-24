@@ -133,7 +133,7 @@ services:
         
         # Secrets in plaintext environment
         assert "DB_PASSWORD=super_secret_123" in vulnerable_compose
-        assert "API_KEY=sk_live" in vulnerable_compose
+        assert "API_KEY=fake_stripe_compose_fixture" in vulnerable_compose
 
 
 # ============================================================================
