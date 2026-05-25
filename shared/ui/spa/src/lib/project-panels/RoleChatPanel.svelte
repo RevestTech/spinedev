@@ -36,6 +36,8 @@
   import { toasts } from '$lib/stores/toasts';
   import type { Citation, RoleChatRequest, RoleChatResponse, RoleList } from '$lib/api/types';
 
+  export let projectId = '';
+
   interface ChatMessage {
     id: string;
     role: 'user' | 'assistant';
@@ -107,7 +109,11 @@
     await tick();
     scrollToBottom();
 
-    const body: RoleChatRequest = { role: selectedRole, message: text };
+    const body: RoleChatRequest = {
+      role: selectedRole,
+      message: text,
+      ...(projectId ? { project_id: projectId } : {})
+    };
     try {
       const resp = await api.post<RoleChatResponse>('/api/v2/role-chat', body);
       const citations = (resp.metadata?.citations ?? []) as Citation[];

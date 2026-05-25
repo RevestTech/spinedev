@@ -54,7 +54,7 @@ describe('DecisionQueue page', () => {
     (api.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ ok: true, items: [], total: 0 });
     render(Page);
     await waitFor(() => expect(api.get).toHaveBeenCalledWith(
-      '/api/v2/decisions?status=pending&scope=project'
+      '/api/v2/decisions?status=pending&scope=project&include_body=false'
     ));
     expect(await screen.findByText(/Inbox zero/i)).toBeInTheDocument();
   });

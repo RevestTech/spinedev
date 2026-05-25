@@ -85,9 +85,11 @@
     via: string;
   }
 
-  // Query params override; otherwise default to the first Hub project.
-  let projectId = '';
-  let repo = '';
+  /** Required when embedded under /projects/{id}/kg — repo key matches project UUID. */
+  export let projectId = '';
+  export let projectName = '';
+
+  $: repo = projectId;
   let query = '';
 
   let searching = false;
@@ -105,47 +107,16 @@
   let owners: KgOwner[] = [];
   let actionCitations: Citation[] = [];
 
-  async function seedProjectContext() {
-    const params = $page.url.searchParams;
-    const p = params.get('project_id');
-    const r = params.get('repo');
-    if (p) {
-      projectId = p;
-      return;
-    }
-    try {
-      const res = await api.get<{ items: (string | { project_id?: string; name?: string })[] }>(
-        '/api/v2/projects?limit=1'
-      );
-      const first = res.items?.[0];
-      if (!first) return;
-      const row =
-        typeof first === 'string'
-          ? (JSON.parse(first) as { project_id?: string; name?: string })
-          : first;
-      if (row.project_id) projectId = String(row.project_id);
-      if (!r && row.name) {
-        repo = row.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-      }
-    } catch {
-      /* KG search still works when project_id is supplied manually */
-    }
-    if (r) repo = r;
-  }
-
   onMount(() => {
     void (async () => {
       const params = $page.url.searchParams;
       const seedQ = params.get('q');
       const seedNode = params.get('node');
-      const r = params.get('repo');
-      await seedProjectContext();
-      if (r) repo = r;
       if (seedQ) {
         query = seedQ;
         void runSearch();
       }
-      if (seedNode) {
+      if (seedNode && projectId) {
         void loadNode({ node_id: seedNode, name: seedNode, node_type: '', path: '', score: 0 });
       }
     })();
@@ -153,8 +124,8 @@
 
   async function runSearch() {
     const q = query.trim();
-    if (!q || !projectId.trim() || !repo.trim()) {
-      searchError = 'Enter project_id and repo before searching.';
+    if (!q || !projectId.trim()) {
+      searchError = 'Open this panel from a project workspace to search its knowledge graph.';
       return;
     }
     searching = true;
@@ -258,23 +229,12 @@
 
 <PanelHeader
   title="Knowledge graph search"
-  subtitle="Search structural + semantic KG; per #12 every result IS a citation"
->
-  <input
-    class="rounded border border-surface-200 bg-white px-2 py-1 text-xs dark:border-surface-700 dark:bg-surface-800"
-    placeholder="project_id"
-    bind:value={projectId}
-    aria-label="Project ID"
-    data-testid="project-id"
-  />
-  <input
-    class="rounded border border-surface-200 bg-white px-2 py-1 text-xs dark:border-surface-700 dark:bg-surface-800"
-    placeholder="repo"
-    bind:value={repo}
-    aria-label="Repo"
-    data-testid="repo"
-  />
-</PanelHeader>
+  subtitle={projectName
+    ? `Structural + semantic KG for “${projectName}” — per #12 every result IS a citation`
+    : 'Search structural + semantic KG; per #12 every result IS a citation'}
+/>
+<input type="hidden" value={projectId} data-testid="project-id" />
+<input type="hidden" value={repo} data-testid="repo" />
 
 <form
   class="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center"

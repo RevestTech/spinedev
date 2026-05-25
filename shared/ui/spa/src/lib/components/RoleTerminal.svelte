@@ -1,19 +1,19 @@
 <script lang="ts">
-  export interface TerminalLine {
-    formatted?: string;
-    message?: string;
-    level?: string;
-    ts?: number;
-  }
+  import type { TerminalLine } from '$lib/terminalLine';
 
   export let lines: TerminalLine[] = [];
   export let active = false;
   export let title = 'Activity log';
   export let emptyMessage = 'No activity yet. Output will appear here when a pipeline step runs.';
+  /** Cap DOM nodes — SSE can stream hundreds of lines during engineer runs. */
+  export let maxLines = 120;
 
   let scroller: HTMLPreElement;
 
-  $: if (scroller && lines.length) {
+  $: visibleLines = lines.length > maxLines ? lines.slice(-maxLines) : lines;
+  $: lineOffset = Math.max(0, lines.length - visibleLines.length);
+
+  $: if (scroller && visibleLines.length) {
     queueMicrotask(() => {
       scroller.scrollTop = scroller.scrollHeight;
     });
@@ -28,6 +28,10 @@
     if (line.level === 'warn') return 'text-amber-200';
     if (line.level === 'success') return 'text-emerald-300';
     return 'text-emerald-100/90';
+  }
+
+  function lineKey(line: TerminalLine, i: number): string {
+    return `${lineOffset + i}:${line.ts ?? 0}:${lineText(line).slice(0, 48)}`;
   }
 </script>
 
@@ -59,13 +63,16 @@
     aria-live="polite"
     aria-relevant="additions"
   >
-{#if lines.length === 0}
+{#if visibleLines.length === 0}
 <span class="text-surface-500">{emptyMessage}</span>
 {:else}
-{#each lines as line, i (i)}
+{#if lineOffset > 0}
+<span class="mb-2 block text-surface-500">… {lineOffset} earlier lines hidden</span>
+{/if}
+{#each visibleLines as line, i (lineKey(line, i))}
 <span class="block whitespace-pre-wrap break-words {lineClass(line)}">{lineText(line)}</span>
 {/each}
-{/if}{#if active && lines.length > 0}
+{/if}{#if active && visibleLines.length > 0}
 <span class="mt-1 inline-block h-4 w-2 animate-pulse bg-accent/80 align-middle" aria-hidden="true"></span>
 {/if}
   </pre>

@@ -25,13 +25,16 @@ const TERMINAL_PHASES = new Set(['released', 'retro', 'terminated', 'release', '
 
 export function filterUserProjects(
   projects: HubProjectRow[],
-  showAutomated = false
+  showAutomated = false,
+  showArchived = false
 ): HubProjectRow[] {
   return projects.filter((p) => {
-    if (showAutomated) return p.status !== 'terminated';
+    if (p.status === 'terminated') return false;
+    if (!showArchived && p.status === 'completed') return false;
+    if (showAutomated) return true;
     const isSmokeOwner = p.owner === 'smoke-harness';
     const isSmokeName = p.name?.startsWith('smoke-') ?? false;
-    return !isSmokeOwner && !isSmokeName && p.status !== 'terminated';
+    return !isSmokeOwner && !isSmokeName;
   });
 }
 

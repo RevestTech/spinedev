@@ -204,6 +204,42 @@ export interface RoleList {
 }
 
 // ---------------------------------------------------------------------------
+// Audit trail (GET /api/v2/audit)
+// ---------------------------------------------------------------------------
+
+export interface AuditRow {
+  event_id?: number;
+  event_uuid?: string;
+  ts?: string;
+  project_id?: number | string;
+  phase?: string;
+  role?: string;
+  subsystem?: string;
+  action?: string;
+  subject_type?: string;
+  subject_id?: string;
+  actor?: string;
+  rationale?: string;
+  cost_usd?: number | null;
+  correlation_id?: string | null;
+  pipeline_version?: string | null;
+  content_hash?: string;
+  prev_content_hash?: string | null;
+  metadata?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface AuditListResponse {
+  ok: boolean;
+  items: (string | AuditRow)[];
+  count?: number;
+  project_id?: string | null;
+  correlation_id?: string | null;
+  limit?: number;
+  next_cursor?: number | null;
+}
+
+// ---------------------------------------------------------------------------
 // Error envelope (FastAPI HTTPException detail)
 // ---------------------------------------------------------------------------
 

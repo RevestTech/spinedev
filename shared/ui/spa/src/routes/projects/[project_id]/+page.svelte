@@ -3,32 +3,54 @@
 
   Phase-aware: shows intake chat during intake; shows artifacts (PRD,
   TRD, impl plan, QA plan) as they accumulate in project metadata.
-  Polls every 4s to pick up live phase + artifact updates from the
-  background role dispatcher.
+  Polls recovery via SSE recovery_pulse when live; falls back to GET /recovery
+  only when the stream is offline. Full project metadata reloads are deferred
+  during in-flight dispatches unless the user is on Artifacts or Code tabs.
 -->
 <script lang="ts">
   import { onMount, onDestroy, tick } from 'svelte';
-  import { afterNavigate } from '$app/navigation';
+  import { afterNavigate, goto } from '$app/navigation';
   import { page } from '$app/stores';
   import { base } from '$app/paths';
+  import ProjectSubnav from '$lib/components/ProjectSubnav.svelte';
   import ErrorBanner from '$lib/components/ErrorBanner.svelte';
   import LoadingSpinner from '$lib/components/LoadingSpinner.svelte';
-  import RoleTerminal, { type TerminalLine } from '$lib/components/RoleTerminal.svelte';
-  import { api, subscribeSse, isAbortError } from '$lib/api/client';
+  import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
+  import ProjectEditDialog from '$lib/components/ProjectEditDialog.svelte';
+  import ProjectWorkspaceChrome from '$lib/components/ProjectWorkspaceChrome.svelte';
+  import ProjectPipelinePanel from '$lib/components/ProjectPipelinePanel.svelte';
+  import ProjectDecisionsPanel from '$lib/components/ProjectDecisionsPanel.svelte';
+  import { api } from '$lib/api/client';
   import { decisions } from '$lib/stores/decisions';
   import { toasts } from '$lib/stores/toasts';
   import {
-    stuckForProject,
-    type StuckSummary
-  } from '$lib/projectAttention';
-  import {
     PIPELINE_COPY,
-    humanStuckReason,
-    dispatchKindLabel,
     formatProjectSubtitle,
-    recoveryActionInfo,
   } from '$lib/projectPipelineCopy';
   import type { DecisionCard } from '$lib/api/types';
+  import {
+    archiveProject,
+    deleteProject,
+    isArchived,
+    projectBrief,
+    restoreProject,
+    updateProject,
+  } from '$lib/projectLifecycle';
+  import { yieldMainThread } from '$lib/yieldMainThread';
+  import { dispatchInFlightActive } from '$lib/projectRecoveryUtils';
+  import {
+    wsRecovery,
+    wsRunState,
+    wsBind,
+    wsUnbind,
+    wsResetTransient,
+    wsSetSseLive,
+    wsSetMetadataPatchHandler,
+    wsSetArtifactsRefreshHandler,
+    scheduleLoadRecovery,
+    wsLoadTerminal,
+    wsDispatchRecovery,
+  } from '$lib/stores/projectWorkspace';
 
   $: projectId = $page.params.project_id;
 
@@ -44,11 +66,10 @@
     prd_md?: string | null;
   }
   let project: ProjectFull | null = null;
-  let projectLoading = true;
+  let projectLoading = false;
   let projectError: string | null = null;
+  let workspaceLoadPromise: Promise<void> | null = null;
 
-  const PHASES = ['intake', 'plan', 'build', 'verify', 'release'] as const;
-  type Phase = (typeof PHASES)[number];
 
   function phaseIndex(phase: string | undefined): number {
     if (!phase) return -1;
@@ -72,41 +93,117 @@
   let intakeDone = false;
   let chatScroller: HTMLDivElement;
 
-  let pollHandle: number | null = null;
-
-  interface RecoveryActionSpec {
-    action: string;
-    label: string;
-    description: string;
-  }
-  interface RecoveryStatus {
-    stuck: boolean;
-    reasons: string[];
-    pending_decisions: number;
-    recommended_action?: string | null;
-    last_role_failure?: { role?: string; error?: string; retry_action?: string } | null;
-    dispatch_in_flight?: { dispatch_kind?: string; action?: string; started_at?: string } | null;
-    actions: RecoveryActionSpec[];
-    code_fix_iteration?: number;
-    max_code_fix_iterations?: number;
-    fix_loop_exhausted?: boolean;
-  }
-  let recovery: RecoveryStatus | null = null;
-  let recoveryLoading = false;
-  let recoveryBusy = false;
-  let recoveryError: string | null = null;
-  let recoveryStarted: string | null = null;
-  let recoveryNote = '';
-  let selectedRecoveryAction: string | null = null;
-  let selectedArtifactKey: string | null = null;
-  let stuckByProject: Record<string, StuckSummary> = {};
+  let pollHandle: number | null = null; // legacy — cleared on 404 if ever set
+  let projectArtifactsLoaded = false;
   let lastLoadedProjectId: string | null = null;
+  let sseLiveConnected = false;
+  $: sseLiveConnected = $decisions.liveConnected;
+  $: wsSetSseLive(sseLiveConnected);
+  $: wsActiveRole = $wsRunState.activeRole;
+  $: wsRecoverySnap = $wsRecovery;
 
   type WorkspaceTab = 'intake' | 'decisions' | 'pipeline' | 'artifacts' | 'code';
   let workspaceTab: WorkspaceTab = 'pipeline';
   let workspaceTabPinned = false;
-  let selectedProjectDecisionId: string | null = null;
-  let decisionBusyId: string | null = null;
+  /** One-shot auto tab pick on project open — avoids yanking tabs on every poll refresh. */
+  let initialWorkspaceTabSet = false;
+  let workspaceLoadInFlight = false;
+  let workspaceRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+  type ConfirmKind = 'archive' | 'delete' | 'restore';
+  let confirmOpen = false;
+  let confirmKind: ConfirmKind = 'archive';
+  let confirmBusy = false;
+
+  let editOpen = false;
+  let editName = '';
+  let editDescription = '';
+  let editBusy = false;
+  let editError: string | null = null;
+
+  function openEditDialog() {
+    if (!project) return;
+    editName = project.name;
+    editDescription = projectBrief(project);
+    editError = null;
+    editOpen = true;
+  }
+
+  function openConfirm(kind: ConfirmKind) {
+    confirmKind = kind;
+    confirmOpen = true;
+  }
+
+  async function handleConfirm() {
+    if (!project || !projectId) return;
+    confirmBusy = true;
+    try {
+      if (confirmKind === 'archive') {
+        await archiveProject(projectId);
+        toasts.push({ kind: 'success', message: `Archived "${project.name}"`, ttlMs: 4000 });
+        await loadProject();
+      } else if (confirmKind === 'restore') {
+        await restoreProject(projectId);
+        toasts.push({ kind: 'success', message: `Restored "${project.name}"`, ttlMs: 4000 });
+        await loadProject();
+      } else {
+        await deleteProject(projectId);
+        toasts.push({ kind: 'success', message: `Deleted "${project.name}"`, ttlMs: 4000 });
+        confirmOpen = false;
+        await goto(`${base}/projects`);
+        return;
+      }
+      confirmOpen = false;
+    } catch (e) {
+      toasts.push({ kind: 'error', message: (e as Error).message || 'Project action failed' });
+    } finally {
+      confirmBusy = false;
+    }
+  }
+
+  async function handleEditSave(e: CustomEvent<{ name: string; description: string }>) {
+    if (!projectId) return;
+    editBusy = true;
+    editError = null;
+    try {
+      await updateProject(projectId, {
+        name: e.detail.name,
+        description: e.detail.description || undefined,
+      });
+      toasts.push({ kind: 'success', message: 'Project updated', ttlMs: 3500 });
+      editOpen = false;
+      await loadProject();
+    } catch (err) {
+      editError = (err as Error).message || 'Save failed';
+    } finally {
+      editBusy = false;
+    }
+  }
+
+  $: confirmCopy = (() => {
+    const name = project?.name ?? 'this project';
+    if (confirmKind === 'archive') {
+      return {
+        title: 'Archive project?',
+        message: `"${name}" will move to archived projects. You can restore it later.`,
+        confirmLabel: 'Archive',
+        variant: 'warning' as const,
+      };
+    }
+    if (confirmKind === 'restore') {
+      return {
+        title: 'Restore project?',
+        message: `"${name}" will return to your active project list.`,
+        confirmLabel: 'Restore',
+        variant: 'default' as const,
+      };
+    }
+    return {
+      title: 'Delete project?',
+      message: `"${name}" will be permanently removed from the Hub UI. This cannot be undone from the SPA.`,
+      confirmLabel: 'Delete',
+      variant: 'danger' as const,
+    };
+  })();
 
   function decisionMatchesProject(card: DecisionCard, proj: ProjectFull): boolean {
     const pid = card.project_id;
@@ -118,169 +215,143 @@
     );
   }
 
-  $: projectDecisions = project
+  let projectDecisions: DecisionCard[] = [];
+  $: projectDecisions = project && Array.isArray($decisions.items)
     ? $decisions.items.filter((c) => decisionMatchesProject(c, project!))
     : [];
 
-  $: {
-    if (projectDecisions.length === 0) {
-      selectedProjectDecisionId = null;
-    } else if (
-      !selectedProjectDecisionId ||
-      !projectDecisions.some((c) => c.decision_id === selectedProjectDecisionId)
-    ) {
-      selectedProjectDecisionId = projectDecisions[0].decision_id;
+  $: if (project && !$decisions.loading && !initialWorkspaceTabSet && !workspaceTabPinned) {
+    void tick().then(() => {
+      if (project && !initialWorkspaceTabSet && !workspaceTabPinned) {
+        syncInitialWorkspaceTab();
+      }
+    });
+  }
+
+  function syncInitialWorkspaceTab() {
+    if (!project || initialWorkspaceTabSet || workspaceTabPinned) return;
+    const decisions = projectDecisions ?? [];
+    if (project.current_phase === 'intake') workspaceTab = 'intake';
+    else if (decisions.length > 0) workspaceTab = 'decisions';
+    else if (isPipelineStuck && !wsActiveRole) workspaceTab = 'pipeline';
+    initialWorkspaceTabSet = true;
+    validateWorkspaceTab();
+    if (workspaceTab === 'pipeline' && projectId) {
+      void wsLoadTerminal(projectId);
     }
   }
-  $: selectedProjectDecision =
-    projectDecisions.find((c) => c.decision_id === selectedProjectDecisionId) ?? null;
+
+  function validateWorkspaceTab() {
+    if (!project) return;
+    const tabs = buildWorkspaceTabs();
+    if (!tabs.some((t) => t.id === workspaceTab)) {
+      workspaceTab =
+        tabs.find((t) => t.id === 'decisions')?.id ??
+        tabs.find((t) => t.id === 'pipeline')?.id ??
+        tabs[0]?.id ??
+        'pipeline';
+    }
+  }
+
+  function showArtifactsTab(): boolean {
+    if (!project) return false;
+    if (projectArtifactsLoaded && (artifacts?.length ?? 0) > 0) return true;
+    return phaseIndex(project.current_phase) >= 1;
+  }
+
+  function codeFilesCount(p: ProjectFull | null): number {
+    if (!p?.metadata) return 0;
+    const md = p.metadata;
+    if (typeof md.code_files_count === 'number') return md.code_files_count;
+    return Array.isArray(md.code_files) ? md.code_files.length : 0;
+  }
+
+  function buildWorkspaceTabs(): { id: WorkspaceTab; label: string; count?: number; attention?: boolean }[] {
+    const decisions = projectDecisions ?? [];
+    const artifactList = artifacts ?? [];
+    const tabs: { id: WorkspaceTab; label: string; count?: number; attention?: boolean }[] = [];
+    if (project?.current_phase === 'intake') tabs.push({ id: 'intake', label: 'Intake' });
+    tabs.push({
+      id: 'decisions',
+      label: 'Decisions',
+      count: decisions.length || undefined,
+    });
+    tabs.push({
+      id: 'pipeline',
+      label: 'Pipeline',
+      attention: Boolean(isPipelineStuck && !wsActiveRole && decisions.length === 0),
+    });
+    if (showArtifactsTab()) {
+      tabs.push({
+        id: 'artifacts',
+        label: 'Artifacts',
+        count: artifactList.length || undefined,
+      });
+    }
+    const fileCount = codeFiles.length > 0 ? codeFiles.length : codeFilesCount(project);
+    if (fileCount > 0) {
+      tabs.push({ id: 'code', label: 'Code', count: fileCount });
+    }
+    return tabs;
+  }
 
   function selectWorkspaceTab(tab: WorkspaceTab) {
+    if (workspaceTab === 'code' && tab !== 'code') stopDeployPoll();
     workspaceTabPinned = true;
     workspaceTab = tab;
-  }
-
-  async function ackProjectDecision(card: DecisionCard) {
-    decisionBusyId = card.decision_id;
-    try {
-      await decisions.ack(card.decision_id);
-      toasts.push({ kind: 'success', message: `Approved: ${card.title}`, ttlMs: 3500 });
-      await loadWorkspace(projectId);
-    } catch (err) {
-      toasts.push({ kind: 'error', message: (err as Error).message || 'ack failed' });
-    } finally {
-      decisionBusyId = null;
+    if (tab === 'artifacts' && project && !projectArtifactsLoaded) {
+      void loadProjectFull(true);
+    }
+    if (tab === 'code' && project) {
+      void ensureCodeTabLoaded();
+      startDeployPollIfNeeded();
+    }
+    if (tab === 'pipeline' && projectId) {
+      void wsLoadTerminal(projectId);
     }
   }
 
-  async function rejectProjectDecision(card: DecisionCard) {
-    decisionBusyId = card.decision_id;
-    try {
-      await decisions.reject(card.decision_id);
-      toasts.push({ kind: 'success', message: `Rejected: ${card.title}`, ttlMs: 3500 });
-      await loadWorkspace(projectId);
-    } catch (err) {
-      toasts.push({ kind: 'error', message: (err as Error).message || 'reject failed' });
-    } finally {
-      decisionBusyId = null;
-    }
+  function patchProjectMetadata(patch: Record<string, unknown>, phase?: string) {
+    if (!project) return;
+    project = {
+      ...project,
+      current_phase: phase ?? project.current_phase,
+      metadata: { ...(project.metadata ?? {}), ...patch },
+    };
   }
 
-  function projectDecisionHint(card: DecisionCard): string {
-    if (card.decision_class === 'briefing') return PIPELINE_COPY.decisions.hintBriefing;
-    if (card.decision_class === 'approval') return PIPELINE_COPY.decisions.hintApproval;
-    return PIPELINE_COPY.decisions.hintDefault;
-  }
-
-  async function loadStuckSummary() {
-    try {
-      const res = await api.get<{ by_project_id?: Record<string, StuckSummary> }>(
-        '/api/v2/projects/recovery/summary?limit=200'
-      );
-      stuckByProject = res.by_project_id ?? {};
-    } catch {
-      stuckByProject = {};
-    }
-  }
-
-  async function loadRecovery() {
-    if (!projectId) return;
-    recoveryLoading = true;
-    try {
-      const res = await api.get<RecoveryStatus & { ok?: boolean }>(
-        `/api/v2/projects/${projectId}/recovery`
-      );
-      recovery = {
-        stuck: Boolean(res.stuck),
-        reasons: res.reasons ?? [],
-        pending_decisions: res.pending_decisions ?? 0,
-        recommended_action: res.recommended_action,
-        last_role_failure: res.last_role_failure ?? null,
-        dispatch_in_flight: res.dispatch_in_flight ?? null,
-        actions: res.actions ?? [],
-        code_fix_iteration: res.code_fix_iteration,
-        max_code_fix_iterations: res.max_code_fix_iterations,
-        fix_loop_exhausted: res.fix_loop_exhausted,
-      };
-      // Only clear dispatch errors on successful refresh — not poll timeouts.
-      if (!recoveryBusy) recoveryError = null;
-    } catch (e) {
-      const msg = (e as Error).message || 'failed to load recovery status';
-      // Background poll must not mask a successful dispatch start.
-      if (!recoveryBusy && !recoveryStarted) recoveryError = msg;
-    } finally {
-      recoveryLoading = false;
-    }
-  }
-
-  async function dispatchRecovery(action: string) {
-    if (recoveryBusy || !projectId) return;
-    recoveryBusy = true;
-    recoveryError = null;
-    recoveryStarted = null;
-    const actionInfo = recoveryActionInfo(action);
-    try {
-      const res = await api.post<{ message?: string; action?: string; dispatch_kind?: string }>(
-        `/api/v2/projects/${projectId}/recovery/dispatch`,
-        {
-          action,
-          note: recoveryNote.trim() || undefined,
-        },
-      );
-      lastDispatchedAction = action;
-      lastDispatchAt = Date.now();
-      recoveryStarted =
-        res.message ??
-        PIPELINE_COPY.dispatch.queued(actionInfo?.label ?? 'Pipeline step');
-      recoveryNote = '';
-      selectWorkspaceTab('pipeline');
-      const role = actionInfo?.role ?? 'engineer';
-      activeRole = role;
-      activeRoleStartedAt = Date.now();
-      activeRoleMessage = actionInfo?.steps?.[0] ?? null;
-      pushFeed({
-        type: 'dispatch_started',
-        role,
-        message: actionInfo?.label ?? action,
-        ts: Date.now() / 1000
-      });
-      appendTerminalLine({
-        formatted: PIPELINE_COPY.dispatch.terminalQueued(actionInfo?.label ?? action),
-        level: 'info',
-        ts: Date.now() / 1000
-      });
-      await loadRecovery();
-      void loadTerminalLog();
-      void loadProject();
-      startFastPoll();
-    } catch (e) {
-      recoveryError = (e as Error).message || 'dispatch failed';
-    } finally {
-      recoveryBusy = false;
-    }
-  }
-
-  function projectMatchKeys(): Set<string> {
-    const keys = new Set<string>();
-    if (projectId) keys.add(String(projectId));
-    if (project?.id != null) keys.add(String(project.id));
-    if (project?.project_id) keys.add(String(project.project_id));
+  function projectMatchKeys(): string[] {
+    const keys: string[] = [];
+    if (projectId) keys.push(String(projectId));
+    if (project?.id != null) keys.push(String(project.id));
+    if (project?.project_id) keys.push(String(project.project_id));
     return keys;
   }
 
-  function matchesThisProject(evProject: string | undefined | null): boolean {
-    if (!evProject) return false;
-    return projectMatchKeys().has(String(evProject));
+  async function refreshProjectLite() {
+    if (!projectId) return;
+    scheduleLoadRecovery(projectId, true, true);
+    try {
+      const summary = await api.get<ProjectFull>(`/api/v2/projects/${projectId}/summary`);
+      project = project
+        ? {
+            ...project,
+            ...summary,
+            metadata: { ...(project.metadata ?? {}), ...(summary.metadata ?? {}) },
+          }
+        : summary;
+      await yieldMainThread();
+    } catch {
+      /* summary refresh is best-effort */
+    }
   }
 
-  function startFastPoll() {
-    if (fastPollHandle !== null) return;
-    fastPollHandle = window.setInterval(() => {
-      void loadRecovery();
-      void loadProject();
-      void loadTerminalLog();
-    }, 3000) as unknown as number;
+  function dispatchFromChrome(action: string) {
+    if (!projectId) return;
+    wsDispatchRecovery(projectId, action, undefined, () => selectWorkspaceTab('pipeline'));
   }
+
+  let fastPollHandle: number | null = null;
 
   function stopFastPoll() {
     if (fastPollHandle !== null) {
@@ -298,109 +369,76 @@
 
   /** Clear live UI state when switching projects so tabs/logs do not bleed across workspaces. */
   function resetTransientWorkspaceState() {
-    terminalLines = [];
-    feed = [];
-    activeRole = null;
-    activeRoleStartedAt = null;
-    activeRoleMessage = null;
-    lastDispatchedAction = null;
-    lastDispatchAt = null;
-    recoveryStarted = null;
-    recoveryError = null;
-    recoveryNote = '';
+    wsResetTransient();
     codeFiles = [];
     openFile = null;
     openFileContent = '';
     deployment = { running: false };
     stopDeployPoll();
     stopFastPoll();
+    projectArtifactsLoaded = false;
   }
 
-  // Live activity feed — subscribes to /api/v2/decisions/subscribe and
-  // filters events scoped to this project (role_started, role_finished,
-  // role_failed, card_created, card_updated).
-  interface FeedEvent {
-    type: string;
-    role?: string;
-    message?: string;
-    ts: number;
-    artifact_chars?: number;
-    files_written?: number;
-    install_ok?: boolean;
-    error?: string;
-    title?: string;
-    formatted?: string;
-    level?: string;
-  }
-  let feed: FeedEvent[] = [];
-  let activeRole: string | null = null;
-  let activeRoleStartedAt: number | null = null;
-  let activeRoleMessage: string | null = null;
-  let lastDispatchedAction: string | null = null;
-  let lastDispatchAt: number | null = null;
-  let fastPollHandle: number | null = null;
-  let nowTick = Date.now();
-  let nowInterval: number | null = null;
-  let sseSub: { close: () => void } | null = null;
-  let terminalLines: TerminalLine[] = [];
-
-  function appendTerminalLine(line: TerminalLine) {
-    const text = (line.formatted || line.message || '').trim();
-    if (!text) return;
-    const prev = terminalLines[terminalLines.length - 1];
-    if (prev && (prev.formatted || prev.message) === text) return;
-    terminalLines = [...terminalLines, { ...line, formatted: line.formatted || text }].slice(-500);
+  function isTurn(value: unknown): value is Turn {
+    if (!value || typeof value !== 'object') return false;
+    const t = value as Turn;
+    return (t.role === 'user' || t.role === 'assistant') && typeof t.content === 'string' && t.content.length > 0;
   }
 
-  function formatFeedAsTerminal(ev: FeedEvent): string | null {
-    switch (ev.type) {
-      case 'dispatch_started':
-        return `[hub] You started ${ev.message ?? 'a role'}`;
-      case 'role_started':
-        return `[${ev.role ?? 'role'}] ${ev.message ?? 'started'}`;
-      case 'role_finished':
-        return `[${ev.role ?? 'role'}] finished${
-          ev.files_written != null ? ` · ${ev.files_written} files written` : ''
-        }${ev.artifact_chars != null ? ` · ${ev.artifact_chars} chars` : ''}`;
-      case 'role_failed':
-        return `[${ev.role ?? 'role'}] FAILED — ${ev.error ?? 'unknown error'}`;
-      default:
-        return null;
+  /** Restore intake chat from project.metadata after refresh or first open. */
+  function restoreIntakeFromMetadata(p: ProjectFull) {
+    if (transcript.length > 0) return;
+    const saved = p.metadata?.intake_transcript;
+    if (Array.isArray(saved)) {
+      const turns = saved.filter(isTurn);
+      if (turns.length) transcript = turns;
     }
+    if (p.metadata?.intake_done === true) intakeDone = true;
   }
 
-  async function loadTerminalLog() {
+  let projectFullLoadPromise: Promise<void> | null = null;
+  async function loadProjectFull(includeArtifacts: boolean): Promise<void> {
     if (!projectId) return;
-    try {
-      const res = await api.get<{ lines?: TerminalLine[] }>(
-        `/api/v2/projects/${projectId}/activity/terminal?limit=500`
-      );
-      if (res.lines) {
-        terminalLines = res.lines;
+    const run = async () => {
+      try {
+        const res = await api.getOffThread<ProjectFull>(
+          `/api/v2/projects/${projectId}/full?include_artifacts=${includeArtifacts ? 'true' : 'false'}`
+        );
+        if (project && !includeArtifacts) {
+          project = {
+            ...project,
+            ...res,
+            metadata: { ...(project.metadata ?? {}), ...(res.metadata ?? {}) },
+          };
+        } else {
+          project = res;
+        }
+        if (includeArtifacts) projectArtifactsLoaded = true;
+        await yieldMainThread();
+      } catch {
+        /* Summary already painted; full fetch can retry on tab open. */
       }
-    } catch {
-      /* terminal history is best-effort */
+    };
+    if (projectFullLoadPromise) {
+      await projectFullLoadPromise;
     }
+    projectFullLoadPromise = run().finally(() => {
+      projectFullLoadPromise = null;
+    });
+    await projectFullLoadPromise;
   }
 
-  function pipelineRoleInfo(role: string) {
-    const r = PIPELINE_COPY.roles[role as keyof typeof PIPELINE_COPY.roles];
-    return r ?? { label: role, what: 'Processing project work', typical: '~60s' };
-  }
-  $: roleInfo = activeRole ? pipelineRoleInfo(activeRole) : null;
-  $: elapsedSecs = activeRoleStartedAt ? Math.max(0, Math.round((nowTick - activeRoleStartedAt) / 1000)) : 0;
-  $: progressCeiling = (() => {
-    if (!roleInfo) return 60;
-    const m = roleInfo.typical.match(/(\d+)\s*-\s*(\d+)/);
-    return m ? parseInt(m[2], 10) : 60;
-  })();
-
-  async function loadProject(): Promise<boolean> {
+  async function loadProject(includeArtifacts = false): Promise<boolean> {
     if (!projectId) return false;
     try {
-      const res = await api.get<ProjectFull>(`/api/v2/projects/${projectId}/full`);
-      project = res;
+      const summary = await api.get<ProjectFull>(`/api/v2/projects/${projectId}/summary`);
       projectError = null;
+      projectLoading = false;
+      project = summary;
+      await yieldMainThread();
+      if (includeArtifacts) {
+        await loadProjectFull(true);
+      }
       return true;
     } catch (e) {
       const msg = (e as Error).message || 'failed to load project';
@@ -419,34 +457,92 @@
   }
 
   /** Load project + recovery; full-page spinner only on first open of a project id. */
-  async function loadWorkspace(id: string, opts: { initial?: boolean } = {}) {
-    if (!id) return;
+  async function loadWorkspace(
+    id: string,
+    opts: { initial?: boolean; refreshProject?: boolean; includeArtifacts?: boolean } = {}
+  ) {
+    if (!id) {
+      projectLoading = false;
+      projectError = 'Missing project id in route';
+      return;
+    }
+    if (workspaceLoadPromise) {
+      if (opts.initial) return workspaceLoadPromise;
+      if (!opts.initial) return;
+    }
+    workspaceLoadPromise = loadWorkspaceInner(id, opts).finally(() => {
+      workspaceLoadPromise = null;
+    });
+    return workspaceLoadPromise;
+  }
+
+  async function loadWorkspaceInner(
+    id: string,
+    opts: { initial?: boolean; refreshProject?: boolean; includeArtifacts?: boolean }
+  ) {
+    if (workspaceLoadInFlight && !opts.initial) return;
+    workspaceLoadInFlight = true;
     const isNewProject = id !== lastLoadedProjectId;
+    const shouldRefreshProject =
+      opts.refreshProject ?? Boolean(opts.initial || isNewProject);
+    const includeArtifacts = opts.includeArtifacts ?? false;
     if (opts.initial || isNewProject) {
       projectLoading = true;
       if (isNewProject) {
         lastLoadedProjectId = id;
         project = null;
-        recovery = null;
-        stuckByProject = {};
+        wsUnbind();
+        wsRecovery.set(null);
         workspaceTabPinned = false;
+        initialWorkspaceTabSet = false;
         workspaceTab = 'pipeline';
         transcript = [];
         intakeDone = false;
+        lastCodeFilesSig = '';
+        projectArtifactsLoaded = false;
         resetTransientWorkspaceState();
       }
     }
+    wsSetMetadataPatchHandler(patchProjectMetadata);
+    wsSetArtifactsRefreshHandler(() => {
+      if (workspaceTab === 'artifacts') scheduleProjectRefresh(true);
+    });
     try {
-      const ok = await loadProject();
-      if (!ok) return;
-      await Promise.all([loadRecovery(), loadStuckSummary()]);
-      if (isNewProject) void loadTerminalLog();
-      if (project?.current_phase === 'intake' && transcript.length === 0) {
-        await kickoff();
+      if (shouldRefreshProject) {
+        const ok = await loadProject(includeArtifacts);
+        if (!ok) return;
+        if (project) restoreIntakeFromMetadata(project);
+        await yieldMainThread();
+        syncInitialWorkspaceTab();
+      }
+      if (project) wsBind(id, projectMatchKeys());
+      scheduleLoadRecovery(id, true);
+      if (
+        project?.current_phase === 'intake' &&
+        transcript.length === 0 &&
+        !intakeDone
+      ) {
+        void kickoff();
       }
     } finally {
+      workspaceLoadInFlight = false;
       projectLoading = false;
     }
+  }
+
+  function scheduleProjectRefresh(wantArtifacts = false) {
+    if (!projectId) return;
+    if (sseLiveConnected && dispatchInFlightActive(wsRecoverySnap) && workspaceTab !== 'artifacts') {
+      return;
+    }
+    if (wantArtifacts && workspaceTab === 'artifacts') {
+      if (workspaceRefreshTimer !== null) clearTimeout(workspaceRefreshTimer);
+      workspaceRefreshTimer = setTimeout(() => {
+        workspaceRefreshTimer = null;
+        void loadProjectFull(true);
+      }, 500);
+    }
+    if (!sseLiveConnected) scheduleLoadRecovery(projectId);
   }
 
   async function sendIntake() {
@@ -495,210 +591,119 @@
     await sendIntake();
   }
 
-  function pushFeed(ev: FeedEvent) {
-    if (ev.type === 'role_log') {
-      appendTerminalLine({
-        formatted: ev.formatted ?? ev.message,
-        message: ev.message,
-        level: ev.level,
-        ts: ev.ts
-      });
-    } else {
-      const formatted = formatFeedAsTerminal(ev);
-      if (formatted) {
-        appendTerminalLine({
-          formatted,
-          level: ev.type === 'role_failed' ? 'error' : 'info',
-          ts: ev.ts
-        });
-      }
-    }
-    feed = [...feed, ev].slice(-50);
-    if (ev.type === 'role_started') {
-      activeRole = ev.role ?? null;
-      activeRoleStartedAt = (ev.ts ?? Date.now() / 1000) * 1000;
-      activeRoleMessage = ev.message ?? null;
-    }
-    if (ev.type === 'role_finished' || ev.type === 'role_failed') {
-      // Card landing also implies role is idle until next dispatch.
-      if (activeRole === ev.role) {
-        activeRole = null;
-        activeRoleStartedAt = null;
-        activeRoleMessage = null;
-      }
-      if (ev.type === 'role_finished') {
-        lastDispatchedAction = null;
-        recoveryStarted = null;
-      }
-      void loadWorkspace(projectId);
-    }
-    if (ev.type === 'card_created' || ev.type === 'card_updated') {
-      void loadWorkspace(projectId);
-      void decisions.load('pending');
+  let fallbackPollHandle: number | null = null;
+  let dispatchPollHandle: number | null = null;
+  const FALLBACK_POLL_MS = 45_000;
+  const DISPATCH_POLL_MS = 10_000;
+
+  function startDeployPollIfNeeded() {
+    if (deployPollHandle !== null) return;
+    if (codeFilesCount(project) <= 0 && codeFiles.length <= 0) return;
+    void loadDeployment();
+    deployPollHandle = window.setInterval(loadDeployment, 8000) as unknown as number;
+  }
+
+  function startFallbackPoll() {
+    if (fallbackPollHandle !== null) return;
+    fallbackPollHandle = window.setInterval(() => {
+      if (projectId) scheduleLoadRecovery(projectId);
+    }, FALLBACK_POLL_MS) as unknown as number;
+  }
+
+  function stopFallbackPoll() {
+    if (fallbackPollHandle !== null) {
+      window.clearInterval(fallbackPollHandle);
+      fallbackPollHandle = null;
     }
   }
 
-  function subscribeLiveFeed() {
-    if (sseSub) return;
-    sseSub = subscribeSse<FeedEvent & { card?: any; project_uuid?: string }>(
-      '/api/v2/decisions/subscribe',
-      {
-        onEvent: ({ data }) => {
-          const ev = data as FeedEvent & { card?: any; project_uuid?: string };
-          if (!ev?.type) return;
-          const evProject =
-            ev.project_uuid ??
-            ev.card?.project_id ??
-            ev.card?.metadata?.project_uuid;
-          if (!matchesThisProject(evProject)) return;
-          pushFeed({
-            type: ev.type,
-            role: ev.role ?? ev.card?.metadata?.produced_by,
-            message: ev.message ?? ev.card?.title,
-            title: ev.card?.title,
-            ts: ev.ts ?? Date.now() / 1000,
-            artifact_chars: ev.artifact_chars,
-            files_written: ev.files_written,
-            install_ok: ev.install_ok,
-            error: ev.error,
-            formatted: (ev as FeedEvent).formatted,
-            level: (ev as FeedEvent).level
-          });
-        },
-        onError: (err) => {
-          if (isAbortError(err)) return;
-          sseSub = null;
-          setTimeout(() => subscribeLiveFeed(), 3000);
-        }
-      },
-      { body: {} }
-    );
+  function startDispatchPoll() {
+    if (dispatchPollHandle !== null) return;
+    dispatchPollHandle = window.setInterval(() => {
+      if (projectId) scheduleLoadRecovery(projectId, true);
+    }, DISPATCH_POLL_MS) as unknown as number;
   }
 
-  onMount(() => {
-    decisions.load('pending');
-    void loadWorkspace(projectId, { initial: true });
-    pollHandle = window.setInterval(() => {
-      if (projectId) void loadWorkspace(projectId);
-    }, 8000) as unknown as number;
-    subscribeLiveFeed();
-    void loadTerminalLog();
-    nowInterval = window.setInterval(() => { nowTick = Date.now(); }, 1000) as unknown as number;
+  function stopDispatchPoll() {
+    if (dispatchPollHandle !== null) {
+      window.clearInterval(dispatchPollHandle);
+      dispatchPollHandle = null;
+    }
+  }
+
+  onMount(async () => {
+    await tick();
+    await loadWorkspace($page.params.project_id, { initial: true });
   });
 
-  afterNavigate(({ to, from }) => {
+  $: if ($decisions.liveConnected) {
+    stopFallbackPoll();
+  } else {
+    startFallbackPoll();
+  }
+
+  $: if (dispatchInFlightActive(wsRecoverySnap) && !sseLiveConnected) {
+    startDispatchPoll();
+  } else {
+    stopDispatchPoll();
+  }
+
+  afterNavigate(async ({ to, from }) => {
     const nextId = to?.params?.project_id;
     const prevId = from?.params?.project_id;
     if (nextId && nextId !== prevId) {
-      void loadWorkspace(nextId, { initial: true });
+      await loadWorkspace(nextId, { initial: true });
     }
   });
 
   onDestroy(() => {
     if (pollHandle !== null) window.clearInterval(pollHandle);
+    stopFallbackPoll();
+    stopDispatchPoll();
     stopDeployPoll();
-    if (nowInterval !== null) window.clearInterval(nowInterval);
     stopFastPoll();
-    sseSub?.close();
-    sseSub = null;
+    if (workspaceRefreshTimer !== null) clearTimeout(workspaceRefreshTimer);
+    wsUnbind();
+    wsSetMetadataPatchHandler(null);
+    wsSetArtifactsRefreshHandler(null);
   });
 
-  $: if (dispatchInFlightActive(recovery) || activeRole || recoveryBusy) {
-    startFastPoll();
-  } else if (!lastDispatchAt || Date.now() - lastDispatchAt > 5 * 60 * 1000) {
-    stopFastPoll();
-  }
-
-  function feedLabel(ev: FeedEvent): string {
-    if (ev.type === 'dispatch_started') {
-      return `You started ${ev.message ?? ev.role ?? 'a role'}`;
-    }
-    if (ev.type === 'role_started') return `${ev.role} started${ev.message ? ' — ' + ev.message : ''}`;
-    if (ev.type === 'role_finished') {
-      if (ev.files_written !== undefined) return `${ev.role} wrote ${ev.files_written} files`;
-      if (ev.install_ok !== undefined) return `${ev.role} install ${ev.install_ok ? 'succeeded' : 'failed'}`;
-      if (ev.artifact_chars !== undefined) return `${ev.role} produced ${ev.artifact_chars.toLocaleString()} chars`;
-      return `${ev.role} finished`;
-    }
-    if (ev.type === 'role_failed') return `${ev.role} failed: ${ev.error ?? 'unknown error'}`;
-    if (ev.type === 'card_created') return `Decision: ${ev.title ?? ev.message ?? '(no title)'}`;
-    if (ev.type === 'card_updated') return `Decision updated: ${ev.title ?? ev.message ?? ''}`;
-    return ev.type.replace(/_/g, ' ');
-  }
-
-  function feedTime(ts: number): string {
-    return new Date(ts * 1000).toLocaleTimeString();
-  }
-
-  function feedEmptyMessage(): string {
-    if (activeRole && roleInfo) {
-      return `${roleInfo.label}: ${roleInfo.what} Typical duration: ${roleInfo.typical}.`;
-    }
-    if (dispatchInFlightActive(recovery)) {
-      const kind = recovery?.dispatch_in_flight?.dispatch_kind;
-      const label = dispatchKindLabel(kind);
-      return `${label} is in progress. Log output will appear here shortly (typically within 30–90 seconds).`;
-    }
-    if (recoveryStarted || lastDispatchedAction) {
-      return 'Your request was accepted. Output will stream here as the step runs.';
-    }
-    return PIPELINE_COPY.terminal.emptyIdle;
-  }
-
-  $: terminalActive = Boolean(activeRole || recoveryBusy || dispatchInFlightActive(recovery));
-  $: terminalTitle = activeRole
-    ? PIPELINE_COPY.terminal.titleLive(pipelineRoleInfo(activeRole).label)
-    : dispatchInFlightActive(recovery)
-      ? PIPELINE_COPY.terminal.titleLive(
-          dispatchKindLabel(recovery?.dispatch_in_flight?.dispatch_kind)
-        )
-      : PIPELINE_COPY.terminal.titleIdle;
-  $: terminalEmptyMessage = terminalActive
-    ? PIPELINE_COPY.terminal.emptyRunning
-    : feedEmptyMessage();
-
-  $: activityAction =
-    recovery?.dispatch_in_flight?.action ??
-    lastDispatchedAction ??
-    selectedRecoveryAction;
-  $: activityInfo = activityAction ? recoveryActionInfo(activityAction) : null;
-  $: showActivityPanel =
-    Boolean(activityInfo) &&
-    (dispatchInFlightActive(recovery) ||
-      activeRole ||
-      recoveryBusy ||
-      recoveryStarted ||
-      lastDispatchedAction);
-  $: dispatchElapsedSecs =
-    recovery?.dispatch_in_flight?.started_at
-      ? Math.max(
-          0,
-          Math.round(
-            (nowTick -
-              Date.parse(String(recovery.dispatch_in_flight.started_at).replace('Z', '+00:00'))) /
-              1000
-          )
-        )
-      : lastDispatchAt
-        ? Math.max(0, Math.round((nowTick - lastDispatchAt) / 1000))
-        : elapsedSecs;
-
-  // Pre-computed artifact list per current state. Order matches the
-  // dispatch chain so artifacts appear top-down in the order roles ran.
-  $: artifacts = (() => {
-    if (!project) return [] as { label: string; key: string; md: string }[];
-    const md = project.metadata || {};
-    const out: { label: string; key: string; md: string }[] = [];
-    if (md.prd_md) out.push({ label: 'PRD (product role)', key: 'prd_md', md: md.prd_md });
-    if (md.roadmap_md) out.push({ label: 'Roadmap (planner role)', key: 'roadmap_md', md: md.roadmap_md });
-    if (md.trd_md) out.push({ label: 'TRD (architect role)', key: 'trd_md', md: md.trd_md });
-    if (md.sprint_plan_md) out.push({ label: 'Sprint plan (conductor role)', key: 'sprint_plan_md', md: md.sprint_plan_md });
-    if (md.code_intro_md) out.push({ label: 'Engineer intro', key: 'code_intro_md', md: md.code_intro_md });
-    if (md.code_review_md) out.push({ label: `Security review (security_engineer) ${md.code_review_blocked ? '⛔ BLOCKED' : '✅ PASS'}`, key: 'code_review_md', md: md.code_review_md });
-    if (md.qa_md) out.push({ label: 'Test plan (qa role)', key: 'qa_md', md: md.qa_md });
-    if (md.release_gate_md) out.push({ label: 'Ship gate (release_manager)', key: 'release_gate_md', md: md.release_gate_md });
-    return out;
-  })();
+  // Artifact markdown is heavy (~100KB+). Only materialize when the Artifacts tab is open.
+  let artifacts: { label: string; key: string; md: string }[] = [];
+  let selectedArtifactKey: string | null = null;
+  $: artifacts =
+    workspaceTab === 'artifacts' && project
+      ? (() => {
+          const md = project.metadata || {};
+          const out: { label: string; key: string; md: string }[] = [];
+          if (md.prd_md) out.push({ label: 'PRD (product role)', key: 'prd_md', md: md.prd_md });
+          if (md.roadmap_md)
+            out.push({ label: 'Roadmap (planner role)', key: 'roadmap_md', md: md.roadmap_md });
+          if (md.trd_md) out.push({ label: 'TRD (architect role)', key: 'trd_md', md: md.trd_md });
+          if (md.sprint_plan_md)
+            out.push({
+              label: 'Sprint plan (conductor role)',
+              key: 'sprint_plan_md',
+              md: md.sprint_plan_md,
+            });
+          if (md.code_intro_md)
+            out.push({ label: 'Engineer intro', key: 'code_intro_md', md: md.code_intro_md });
+          if (md.code_review_md)
+            out.push({
+              label: `Security review (security_engineer) ${md.code_review_blocked ? '⛔ BLOCKED' : '✅ PASS'}`,
+              key: 'code_review_md',
+              md: md.code_review_md,
+            });
+          if (md.qa_md) out.push({ label: 'Test plan (qa role)', key: 'qa_md', md: md.qa_md });
+          if (md.release_gate_md)
+            out.push({
+              label: 'Ship gate (release_manager)',
+              key: 'release_gate_md',
+              md: md.release_gate_md,
+            });
+          return out;
+        })()
+      : [];
 
   $: if (artifacts.length > 0) {
     const keys = artifacts.map((a) => a.key);
@@ -712,192 +717,13 @@
 
   $: selectedArtifact = artifacts.find((a) => a.key === selectedArtifactKey) ?? null;
 
-  $: if (recovery?.actions?.length) {
-    const ids = recovery.actions.map((a) => a.action);
-    const rec = recovery.recommended_action;
-    if (!selectedRecoveryAction || !ids.includes(selectedRecoveryAction)) {
-      selectedRecoveryAction =
-        rec && ids.includes(rec) ? rec : ids[0] ?? null;
-    }
-  } else {
-    selectedRecoveryAction = null;
-  }
-
-  $: selectedRecoverySpec =
-    recovery?.actions.find((a) => a.action === selectedRecoveryAction) ?? null;
-
-  const DISPATCH_STALE_MS = 20 * 60 * 1000;
-
-  function isDispatchStale(
-    inflight: RecoveryStatus['dispatch_in_flight']
-  ): boolean {
-    if (!inflight?.started_at) return true;
-    const started = Date.parse(String(inflight.started_at).replace('Z', '+00:00'));
-    if (Number.isNaN(started)) return true;
-    return Date.now() - started > DISPATCH_STALE_MS;
-  }
-
-  function dispatchInFlightActive(rec: RecoveryStatus | null): boolean {
-    const inflight = rec?.dispatch_in_flight;
-    return Boolean(inflight && !isDispatchStale(inflight));
-  }
-
-  function primaryStuckReason(reasons: string[]): string {
-    const order = [
-      'fix_loop_exhausted',
-      'code_review_blocked',
-      'last_role_failed',
-      'workspace_empty_stale_metadata',
-      'workspace_empty_no_code',
-      'no_pending_decisions',
-    ];
-    for (const r of order) {
-      if (reasons.includes(r)) return r;
-    }
-    return reasons[0] ?? 'no_pending_decisions';
-  }
-
-  $: stuckSummaryEntry = project
-    ? stuckForProject(
-        {
-          project_id: String(project.id),
-          project_uuid: project.project_id,
-          name: project.name,
-          project_type: project.project_type,
-          current_phase: project.current_phase,
-          status: project.status
-        },
-        stuckByProject
-      )
-    : stuckForProject(
-        { project_id: projectId, name: '', project_type: '', current_phase: '', status: '' },
-        stuckByProject
-      );
-
   $: isPipelineStuck = Boolean(
-    recovery?.stuck ||
-      stuckSummaryEntry ||
+    wsRecoverySnap?.stuck ||
       (project?.metadata?.code_review_blocked &&
-        !activeRole &&
+        !wsActiveRole &&
         projectDecisions.length === 0 &&
-        !dispatchInFlightActive(recovery))
+        !dispatchInFlightActive(wsRecoverySnap))
   );
-
-  $: effectiveStuckReasons =
-    recovery?.reasons && recovery.reasons.length > 0
-      ? recovery.reasons
-      : (stuckSummaryEntry?.reasons ?? []);
-
-  $: projectNeedsAttention = projectDecisions.length > 0 || isPipelineStuck;
-
-  $: attentionLabel = (() => {
-    if (projectDecisions.length > 0) {
-      return PIPELINE_COPY.attention.decisionsReview(projectDecisions.length);
-    }
-    if (isPipelineStuck) return PIPELINE_COPY.attention.paused;
-    return null;
-  })();
-
-  $: recoveryActionsSorted = recovery?.actions
-    ? [...recovery.actions].sort((a, b) => {
-        const rec = recovery?.recommended_action;
-        if (a.action === rec) return -1;
-        if (b.action === rec) return 1;
-        return 0;
-      })
-    : [];
-
-  $: recoveryDispatchBlocked =
-    recoveryBusy || activeRole !== null || dispatchInFlightActive(recovery);
-
-  $: pipelineStatusMode = (() => {
-    if (activeRole) return 'working';
-    if (dispatchInFlightActive(recovery)) return 'running';
-    if (projectDecisions.length > 0) return 'decisions';
-    if (recovery?.last_role_failure?.error) return 'failed';
-    if (isPipelineStuck) return 'blocked';
-    return 'idle';
-  })();
-
-  $: pipelineHeadline = (() => {
-    if (activeRole && roleInfo) return PIPELINE_COPY.status.working(roleInfo.label);
-    const inflight = recovery?.dispatch_in_flight;
-    if (dispatchInFlightActive(recovery) && inflight) {
-      const label = dispatchKindLabel(inflight.dispatch_kind);
-      return PIPELINE_COPY.status.starting(label);
-    }
-    if (projectDecisions.length > 0) {
-      return PIPELINE_COPY.status.decisions(projectDecisions.length);
-    }
-    if (isPipelineStuck && effectiveStuckReasons.length > 0) {
-      return `${PIPELINE_COPY.status.pausedPrefix} — ${humanStuckReason(primaryStuckReason(effectiveStuckReasons))}`;
-    }
-    if (isPipelineStuck) {
-      return PIPELINE_COPY.attention.paused;
-    }
-    if (recovery?.last_role_failure?.error) {
-      const failedRole = recovery.last_role_failure.role ?? 'Previous step';
-      return PIPELINE_COPY.status.failed(pipelineRoleInfo(failedRole).label);
-    }
-    return PIPELINE_COPY.status.idle;
-  })();
-
-  $: pipelineSubtext = (() => {
-    if (activeRole && roleInfo) {
-      return PIPELINE_COPY.subtext.roleProgress(
-        activeRoleMessage ?? roleInfo.what,
-        elapsedSecs,
-        roleInfo.typical
-      );
-    }
-    if (projectDecisions.length > 0) {
-      return PIPELINE_COPY.subtext.decisions;
-    }
-    if (isPipelineStuck && selectedRecoverySpec) {
-      return PIPELINE_COPY.subtext.suggestedAction(selectedRecoverySpec.label);
-    }
-    if (dispatchInFlightActive(recovery)) {
-      if (activityInfo) {
-        return PIPELINE_COPY.subtext.dispatchProgress(
-          activityInfo.steps[0],
-          dispatchElapsedSecs,
-          activityInfo.typical
-        );
-      }
-      return PIPELINE_COPY.subtext.dispatchWaiting;
-    }
-    if (recovery?.last_role_failure?.error) {
-      return recovery.last_role_failure.error;
-    }
-    return PIPELINE_COPY.subtext.background;
-  })();
-
-  function statusStripClass(mode: string): string {
-    switch (mode) {
-      case 'working':
-      case 'running':
-        return 'border-accent/40 bg-accent/10';
-      case 'decisions':
-      case 'blocked':
-        return 'border-amber-400/40 bg-amber-400/10';
-      case 'failed':
-        return 'border-rose-500/40 bg-rose-500/10';
-      default:
-        return 'border-surface-600/80 bg-surface-800/50';
-    }
-  }
-
-  function feedTone(ev: FeedEvent): string {
-    if (ev.type === 'dispatch_started') return 'border border-violet-400/40 bg-violet-400/10 text-violet-200';
-    if (ev.type === 'role_started') return 'border border-accent/40 bg-accent/10 text-accent';
-    if (ev.type === 'role_finished' && ev.install_ok === false) {
-      return 'border border-amber-400/40 bg-amber-400/10 text-amber-200';
-    }
-    if (ev.type === 'role_finished') return 'border border-sky-400/40 bg-sky-400/10 text-sky-200';
-    if (ev.type === 'role_failed') return 'border border-rose-500/40 bg-rose-500/10 text-rose-200';
-    if (ev.type === 'card_created') return 'border border-violet-400/40 bg-violet-400/10 text-violet-200';
-    return 'border border-surface-600 bg-surface-800/60 text-surface-300';
-  }
 
   function artifactShortLabel(label: string): string {
     return label.split(' (')[0];
@@ -910,17 +736,23 @@
     return '';
   }
 
-  // Generated code files (if engineer produced any).
+  $: workspaceTabs = buildWorkspaceTabs();
+
   interface FileEntry { path: string; bytes: number }
   let codeFiles: FileEntry[] = [];
   let codeFilesLoading = false;
+  let lastCodeFilesSig = '';
   let openFile: string | null = null;
   let openFileContent = '';
   let openFileLoading = false;
 
   async function refreshCodeFiles() {
     if (!project) return;
-    if (!(project.metadata?.code_files?.length > 0 || project.metadata?.code_workspace)) {
+    const hasCode =
+      codeFilesCount(project) > 0 ||
+      project.metadata?.code_workspace ||
+      (Array.isArray(project.metadata?.code_files) && project.metadata.code_files.length > 0);
+    if (!hasCode) {
       codeFiles = [];
       return;
     }
@@ -953,13 +785,29 @@
     }
   }
 
-  $: if (codeFiles.length > 0 && (!openFile || !codeFiles.some((f) => f.path === openFile))) {
-    void loadFile(codeFiles[0].path);
+  async function ensureCodeTabLoaded() {
+    if (!project) return;
+    const sig = codeFilesMetadataSig(project);
+    if (sig && sig !== lastCodeFilesSig) {
+      lastCodeFilesSig = sig;
+      await refreshCodeFiles();
+    } else if (!sig) {
+      lastCodeFilesSig = '';
+      codeFiles = [];
+    }
+    if (codeFiles.length > 0 && (!openFile || !codeFiles.some((f) => f.path === openFile))) {
+      void loadFile(codeFiles[0].path);
+    }
   }
 
-  $: if (project?.metadata?.code_files) refreshCodeFiles();
+  function codeFilesMetadataSig(p: ProjectFull | null): string {
+    if (!p?.metadata) return '';
+    const count = codeFilesCount(p);
+    const workspace = p.metadata.code_workspace ? '1' : '0';
+    return `${count}:${workspace}`;
+  }
 
-  // Deployment status — polls /deployment for live process state.
+  // Deployment status — polls /deployment only while Code tab is open.
   interface Deployment {
     running: boolean;
     cli_mode?: boolean;
@@ -1020,48 +868,6 @@
     }
   }
 
-  $: if (project?.metadata?.code_files?.length > 0 && deployPollHandle === null) {
-    loadDeployment();
-    deployPollHandle = window.setInterval(loadDeployment, 5000) as unknown as number;
-  }
-
-  $: workspaceTabs = (() => {
-    const tabs: { id: WorkspaceTab; label: string; count?: number; attention?: boolean }[] = [];
-    if (project?.current_phase === 'intake') tabs.push({ id: 'intake', label: 'Intake' });
-    tabs.push({
-      id: 'decisions',
-      label: 'Decisions',
-      count: projectDecisions.length || undefined,
-    });
-    tabs.push({
-      id: 'pipeline',
-      label: 'Pipeline',
-      attention: Boolean(
-        isPipelineStuck && !activeRole && projectDecisions.length === 0
-      ),
-    });
-    if (artifacts.length > 0) {
-      tabs.push({ id: 'artifacts', label: 'Artifacts', count: artifacts.length });
-    }
-    if (codeFiles.length > 0) {
-      tabs.push({ id: 'code', label: 'Code', count: codeFiles.length });
-    }
-    return tabs;
-  })();
-
-  $: if (project) {
-    if (!workspaceTabs.some((t) => t.id === workspaceTab)) {
-      workspaceTab =
-        workspaceTabs.find((t) => t.id === 'decisions')?.id ??
-        workspaceTabs.find((t) => t.id === 'pipeline')?.id ??
-        workspaceTabs[0]?.id ??
-        'pipeline';
-    } else if (!workspaceTabPinned) {
-      if (project.current_phase === 'intake') workspaceTab = 'intake';
-      else if (projectDecisions.length > 0) workspaceTab = 'decisions';
-      else if (isPipelineStuck && !activeRole) workspaceTab = 'pipeline';
-    }
-  }
 </script>
 
 <header class="project-workspace-header mb-5 flex flex-col gap-2 border-b border-surface-700 pb-4 sm:flex-row sm:items-center sm:justify-between">
@@ -1077,8 +883,37 @@
       {/if}
     </p>
   </div>
-  <a href="{base}/" class="btn-ghost text-base">← Dashboard</a>
+  <div class="flex flex-wrap items-center gap-2">
+    {#if project}
+      <button type="button" class="btn-ghost text-sm" on:click={openEditDialog} data-testid="project-edit-btn">
+        Edit
+      </button>
+      {#if isArchived(project)}
+        <button type="button" class="btn-secondary text-sm" on:click={() => openConfirm('restore')}>
+          Restore
+        </button>
+      {:else}
+        <button type="button" class="btn-secondary text-sm" on:click={() => openConfirm('archive')}>
+          Archive
+        </button>
+      {/if}
+      <button type="button" class="btn-danger text-sm" on:click={() => openConfirm('delete')} data-testid="project-delete-btn">
+        Delete
+      </button>
+    {/if}
+    <a href="{base}/projects" class="btn-ghost text-base">← All projects</a>
+  </div>
 </header>
+
+{#if project}
+  <ProjectSubnav projectId={project.project_id} projectName={project.name} active="workspace" />
+{/if}
+
+{#if project && isArchived(project)}
+  <div class="mb-4 rounded-lg border border-surface-600 bg-surface-800/50 px-4 py-3 text-sm text-surface-300">
+    This project is archived. Restore it to resume the pipeline, or delete it to remove it from the Hub.
+  </div>
+{/if}
 
 {#if projectError}
   <div class="mb-4"><ErrorBanner kind="error" message={projectError} onDismiss={() => (projectError = null)} /></div>
@@ -1090,75 +925,13 @@
   <div class="mb-4"><ErrorBanner kind="error" message={projectError} onDismiss={() => (projectError = null)} /></div>
 {:else if project}
   <div class="project-workspace">
-  {#if attentionLabel}
-    <div class="mb-4 flex flex-wrap items-center gap-3" data-testid="project-attention-badge">
-      <span
-        class="inline-flex items-center gap-2 rounded-full border border-amber-500/50 bg-amber-500/15 px-4 py-1.5 text-sm font-semibold text-amber-100"
-      >
-        {#if recovery?.stuck && projectDecisions.length === 0}
-          <span class="inline-block h-1.5 w-1.5 rounded-full bg-amber-400" aria-hidden="true"></span>
-        {/if}
-        {attentionLabel}
-      </span>
-      {#if isPipelineStuck && selectedRecoverySpec && projectDecisions.length === 0}
-        <button
-          type="button"
-          class="btn-primary text-sm sm:text-base"
-          disabled={recoveryDispatchBlocked}
-          on:click={() => {
-            selectWorkspaceTab('pipeline');
-            dispatchRecovery(selectedRecoverySpec.action);
-          }}
-        >
-          {recoveryBusy ? 'Starting…' : `Run ${selectedRecoverySpec.label}`}
-        </button>
-      {/if}
-    </div>
-  {/if}
-  <div
-    class="mb-5 rounded-lg border px-5 py-4 {statusStripClass(pipelineStatusMode)}"
-    data-testid="pipeline-status-strip"
-  >
-    <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-      <div class="min-w-0 flex-1">
-        {#if activeRole && roleInfo}
-          <div class="flex items-start gap-3">
-            <span class="relative mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center">
-              <span class="relative h-4 w-4 animate-spin rounded-full border-2 border-accent border-t-transparent"></span>
-            </span>
-            <div class="min-w-0">
-              <p class="pw-status-headline text-surface-50">{pipelineHeadline}</p>
-              <p class="pw-status-sub mt-1 text-surface-300">{pipelineSubtext}</p>
-            </div>
-          </div>
-        {:else}
-          <p class="pw-status-headline text-surface-50">{pipelineHeadline}</p>
-          <p class="pw-status-sub mt-1 text-surface-300">{pipelineSubtext}</p>
-        {/if}
-      </div>
-      <div class="flex shrink-0 flex-wrap items-center gap-2">
-        {#if projectDecisions.length > 0}
-          <button type="button" class="btn-primary text-base" on:click={() => selectWorkspaceTab('decisions')}>
-            {PIPELINE_COPY.decisions.reviewButton(projectDecisions.length)}
-          </button>
-        {:else if isPipelineStuck && selectedRecoverySpec && !recoveryDispatchBlocked}
-          <button type="button" class="btn-primary text-base" on:click={() => { selectWorkspaceTab('pipeline'); dispatchRecovery(selectedRecoverySpec.action); }}>
-            {recoveryBusy ? 'Starting…' : `Run ${selectedRecoverySpec.label}`}
-          </button>
-        {/if}
-      </div>
-    </div>
-    <div class="mt-3 flex flex-wrap items-center gap-2">
-      {#each PHASES as ph, i (ph)}
-        {@const state = (() => {
-          const idx = phaseIndex(project.current_phase);
-          return idx < 0 ? 'pending' : i < idx ? 'done' : i === idx ? 'active' : 'pending';
-        })()}
-        <span class="rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide sm:text-sm {state === 'active' ? 'bg-accent text-white' : state === 'done' ? 'border border-sky-500/40 bg-sky-500/10 text-sky-200' : 'border border-surface-600 bg-surface-800/40 text-surface-400'}">{ph}</span>
-        {#if i < PHASES.length - 1}<span class="text-base text-surface-600">→</span>{/if}
-      {/each}
-    </div>
-  </div>
+  <ProjectWorkspaceChrome
+    projectPhase={project.current_phase}
+    {projectDecisions}
+    codeReviewBlocked={Boolean(project.metadata?.code_review_blocked)}
+    onSelectDecisions={() => selectWorkspaceTab('decisions')}
+    onSelectPipelineAndDispatch={dispatchFromChrome}
+  />
 
   <section class="workspace-shell panel-card mb-6" data-testid="project-pipeline">
     <nav class="workspace-tab-bar flex flex-wrap items-center gap-1 border-b border-surface-700/60 pb-0" role="tablist" aria-label="Project workspace">
@@ -1178,7 +951,6 @@
           {/if}
         </button>
       {/each}
-      <a href="{base}/panels/decision-queue" class="ml-auto text-sm text-surface-500 hover:text-accent">All decisions →</a>
     </nav>
 
     <div class="workspace-tab-panel min-h-0 flex-1 pt-4" role="tabpanel">
@@ -1208,166 +980,20 @@
         </div>
 
       {:else if workspaceTab === 'decisions'}
-        <div class="workspace-pane workspace-split grid h-full grid-cols-1 lg:grid-cols-12 lg:gap-0" data-testid="project-decisions">
-          {#if projectDecisions.length === 0}
-            <div class="space-y-3 py-6 lg:col-span-12">
-              <p class="text-base text-surface-300 sm:text-lg">No pending decisions for this project.</p>
-              {#if isPipelineStuck}
-                <p class="text-base text-amber-100 sm:text-lg">
-                  {PIPELINE_COPY.pipelineTab.decisionsEmptyLead}
-                  <button type="button" class="font-semibold text-accent underline hover:text-accent/80" on:click={() => selectWorkspaceTab('pipeline')}>Pipeline</button>
-                  {PIPELINE_COPY.pipelineTab.decisionsEmptyTrail}
-                </p>
-              {/if}
-            </div>
-          {:else}
-            <ul class="workspace-list divide-y divide-surface-700/60 overflow-y-auto rounded-lg border border-surface-700/60 lg:col-span-4 lg:rounded-r-none lg:border-r-0" role="listbox">
-              {#each projectDecisions as card (card.decision_id)}
-                <li class="flex items-stretch border-l-2 {card.decision_id === selectedProjectDecisionId ? 'border-accent bg-accent/10' : 'border-transparent'}">
-                  <button type="button" class="min-w-0 flex-1 px-3 py-2 text-left text-sm" on:click={() => (selectedProjectDecisionId = card.decision_id)}>
-                    <span class="text-[0.6rem] uppercase text-surface-500">{card.decision_class}</span>
-                    <span class="mt-0.5 line-clamp-2 block font-medium text-surface-100">{card.title}</span>
-                  </button>
-                  <div class="flex flex-col justify-center gap-1 border-l border-surface-700/60 px-1 py-1">
-                    <button type="button" class="inline-flex h-7 w-7 items-center justify-center rounded text-emerald-400 hover:bg-emerald-500/15" title="Approve" disabled={decisionBusyId === card.decision_id} on:click|stopPropagation={() => ackProjectDecision(card)}>✓</button>
-                    <button type="button" class="inline-flex h-7 w-7 items-center justify-center rounded text-rose-400 hover:bg-rose-500/15" title="Reject" disabled={decisionBusyId === card.decision_id} on:click|stopPropagation={() => rejectProjectDecision(card)}>✕</button>
-                  </div>
-                </li>
-              {/each}
-            </ul>
-            <div class="workspace-detail flex flex-col overflow-hidden rounded-lg border border-surface-700/60 lg:col-span-8 lg:rounded-l-none">
-              {#if selectedProjectDecision}
-                <header class="shrink-0 border-b border-surface-700/60 px-4 py-3">
-                  <h3 class="text-sm font-semibold text-surface-50">{selectedProjectDecision.title}</h3>
-                  <p class="mt-1 text-xs text-surface-400">{projectDecisionHint(selectedProjectDecision)}</p>
-                </header>
-                <div class="workspace-scroll min-h-0 flex-1 overflow-y-auto p-4">
-                  <pre class="whitespace-pre-wrap text-sm leading-relaxed text-surface-300">{selectedProjectDecision.body || 'No details.'}</pre>
-                </div>
-                <footer class="flex shrink-0 justify-end gap-2 border-t border-surface-700/60 px-4 py-3">
-                  <button type="button" class="btn-ghost text-sm" disabled={decisionBusyId === selectedProjectDecision.decision_id} on:click={() => rejectProjectDecision(selectedProjectDecision)}>Reject</button>
-                  <button type="button" class="btn-primary text-sm" disabled={decisionBusyId === selectedProjectDecision.decision_id} on:click={() => ackProjectDecision(selectedProjectDecision)}>
-                    {decisionBusyId === selectedProjectDecision.decision_id ? 'Working…' : 'Approve'}
-                  </button>
-                </footer>
-              {/if}
-            </div>
-          {/if}
-        </div>
+        <ProjectDecisionsPanel
+          {projectDecisions}
+          {isPipelineStuck}
+          onSelectPipelineTab={() => selectWorkspaceTab('pipeline')}
+          onAfterAction={refreshProjectLite}
+        />
 
       {:else if workspaceTab === 'pipeline'}
-        {#if recoveryError}<div class="mb-3"><ErrorBanner kind="error" message={recoveryError} onDismiss={() => (recoveryError = null)} /></div>{/if}
-        {#if recovery?.fix_loop_exhausted}
-          <div class="mb-3 rounded-lg border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-base text-rose-100">
-            {PIPELINE_COPY.fixLoop.exhausted(
-              recovery.code_fix_iteration ?? 0,
-              recovery.max_code_fix_iterations ?? 3
-            )}
-          </div>
-        {:else if project?.metadata?.code_review_blocked && (recovery?.code_fix_iteration ?? 0) > 0}
-          <div class="mb-3 rounded-lg border border-surface-700/60 bg-surface-900/40 px-4 py-3 text-base text-surface-300">
-            {PIPELINE_COPY.fixLoop.iteration(
-              recovery?.code_fix_iteration ?? project.metadata.code_fix_iteration ?? 0,
-              recovery?.max_code_fix_iterations ?? 3
-            )}
-          </div>
-        {/if}
-        {#if showActivityPanel && activityInfo}
-          <div class="mb-4 rounded-lg border border-accent/30 bg-accent/5 p-4" data-testid="pipeline-activity-panel">
-            <div class="flex flex-wrap items-start justify-between gap-3">
-              <div class="min-w-0">
-                <p class="text-lg font-semibold text-surface-50">{PIPELINE_COPY.pipelineTab.activityTitle(activityInfo.label)}</p>
-                <p class="mt-1 text-base text-surface-400">
-                  Typical duration: {activityInfo.typical}
-                  · {dispatchElapsedSecs}s elapsed
-                  {#if dispatchInFlightActive(recovery)}
-                    · {PIPELINE_COPY.pipelineTab.hubActive}
-                  {/if}
-                </p>
-              </div>
-              {#if recoveryBusy}
-                <span class="text-base text-accent">{PIPELINE_COPY.pipelineTab.sending}</span>
-              {:else if activeRole || dispatchInFlightActive(recovery)}
-                <span class="inline-flex items-center gap-2 text-base text-accent">
-                  <span class="h-2.5 w-2.5 animate-pulse rounded-full bg-accent" aria-hidden="true"></span>
-                  {PIPELINE_COPY.pipelineTab.roleRunning}
-                </span>
-              {/if}
-            </div>
-            <ol class="mt-4 space-y-2.5 text-base text-surface-200">
-              {#each activityInfo.steps as step, i}
-                <li class="flex gap-3">
-                  <span class="shrink-0 font-mono text-sm text-surface-500">{i + 1}.</span>
-                  <span>{step}</span>
-                </li>
-              {/each}
-            </ol>
-            <p class="mt-4 text-base text-surface-400">
-              <span class="font-medium text-surface-200">{PIPELINE_COPY.pipelineTab.activityWhenDone}</span>
-              {activityInfo.outcome}
-            </p>
-          </div>
-        {:else if recoveryStarted}
-          <div class="mb-3 rounded-lg border border-accent/30 bg-accent/5 px-4 py-3 text-base text-surface-200">{recoveryStarted}</div>
-        {/if}
-        <div class="workspace-pane workspace-split grid h-full grid-cols-1 lg:grid-cols-12 lg:gap-0" data-testid="pipeline-controls">
-          <div class="lg:col-span-5 lg:border-r lg:border-surface-700/60 lg:pr-4">
-            <p class="mb-2 text-base text-surface-400">{PIPELINE_COPY.pipelineTab.controlsLead}</p>
-            {#if recoveryLoading && !recovery}
-              <LoadingSpinner label="Loading actions" />
-            {:else if !recovery?.actions?.length}
-              <p class="text-base text-surface-400">{PIPELINE_COPY.pipelineTab.noActions}</p>
-            {:else}
-              <ul class="mb-3 divide-y divide-surface-700/60 overflow-y-auto rounded-lg border border-surface-700/60" role="listbox">
-                {#each recoveryActionsSorted as act (act.action)}
-                  <li>
-                    <button type="button" class="flex w-full items-center justify-between gap-2 border-l-2 px-3 py-2 text-left text-sm hover:bg-surface-800/60 disabled:opacity-50 {act.action === selectedRecoveryAction ? 'border-accent bg-accent/10' : 'border-transparent'}" disabled={recoveryDispatchBlocked} on:click={() => (selectedRecoveryAction = act.action)}>
-                      <span class="text-surface-100">{act.label}</span>
-                      {#if act.action === recovery.recommended_action}<span class="text-[0.55rem] uppercase text-accent">{PIPELINE_COPY.pipelineTab.suggested}</span>{/if}
-                    </button>
-                  </li>
-                {/each}
-              </ul>
-              {#if selectedRecoverySpec}
-                <p class="mb-2 text-base text-surface-300">{selectedRecoverySpec.description}</p>
-                <textarea class="input-field mb-2 resize-none text-base" rows="2" bind:value={recoveryNote} placeholder={PIPELINE_COPY.pipelineTab.notePlaceholder} disabled={recoveryDispatchBlocked}></textarea>
-                <button type="button" class="btn-primary w-full text-base" disabled={recoveryDispatchBlocked} on:click={() => dispatchRecovery(selectedRecoverySpec.action)}>{recoveryBusy ? PIPELINE_COPY.pipelineTab.starting : PIPELINE_COPY.pipelineTab.runAction(selectedRecoverySpec.label)}</button>
-              {/if}
-            {/if}
-          </div>
-          <div class="workspace-activity flex min-h-[22rem] flex-col lg:col-span-7 lg:pl-4">
-            <div class="mb-2 flex items-center justify-between gap-2">
-              <p class="text-base text-surface-400">{PIPELINE_COPY.pipelineTab.liveTerminalLabel}</p>
-              {#if terminalActive}
-                <span class="text-xs text-surface-500">{PIPELINE_COPY.pipelineTab.refreshHint}</span>
-              {/if}
-            </div>
-            <div class="min-h-0 flex-1">
-              <RoleTerminal
-                lines={terminalLines}
-                active={terminalActive}
-                title={terminalTitle}
-                emptyMessage={terminalEmptyMessage}
-              />
-            </div>
-            {#if feed.length > 0}
-              <details class="mt-3 rounded-lg border border-surface-700/60 bg-surface-950/30 px-3 py-2">
-                <summary class="cursor-pointer text-sm text-surface-400">
-                  Event summary ({feed.length})
-                </summary>
-                <ol class="mt-2 max-h-40 space-y-1 overflow-y-auto">
-                  {#each [...feed].reverse().slice(0, 12) as ev, i (i)}
-                    <li class="flex items-start gap-2 text-xs text-surface-400">
-                      <span class="shrink-0 uppercase {feedTone(ev)}">{ev.type.replace(/_/g, ' ')}</span>
-                      <span class="min-w-0 flex-1">{feedLabel(ev)}</span>
-                      <time class="shrink-0">{feedTime(ev.ts)}</time>
-                    </li>
-                  {/each}
-                </ol>
-              </details>
-            {/if}
-          </div>
-        </div>
+        <ProjectPipelinePanel
+          projectId={project.project_id}
+          codeReviewBlocked={Boolean(project.metadata?.code_review_blocked)}
+          codeFixIteration={project.metadata?.code_fix_iteration ?? 0}
+          onSelectPipelineTab={() => selectWorkspaceTab('pipeline')}
+        />
 
       {:else if workspaceTab === 'artifacts'}
         <div class="workspace-pane workspace-split grid h-full grid-cols-1 lg:grid-cols-12 lg:gap-0" data-testid="artifacts-panel">
@@ -1430,6 +1056,28 @@
     </div>
   </section>
   </div>
+
+  <ConfirmDialog
+    bind:open={confirmOpen}
+    title={confirmCopy.title}
+    message={confirmCopy.message}
+    confirmLabel={confirmCopy.confirmLabel}
+    variant={confirmCopy.variant}
+    busy={confirmBusy}
+    on:confirm={handleConfirm}
+  />
+
+  <ProjectEditDialog
+    bind:open={editOpen}
+    name={editName}
+    description={editDescription}
+    busy={editBusy}
+    error={editError}
+    on:save={handleEditSave}
+    on:cancel={() => {
+      if (!editBusy) editError = null;
+    }}
+  />
 
 {/if}
 
@@ -1494,7 +1142,6 @@
   }
   .workspace-list,
   .workspace-detail,
-  .workspace-activity,
   .workspace-scroll {
     min-height: 0;
   }
@@ -1517,8 +1164,7 @@
     .workspace-list {
       max-height: 10rem;
     }
-    .workspace-scroll,
-    .workspace-activity .workspace-scroll {
+    .workspace-scroll {
       max-height: 14rem;
     }
   }

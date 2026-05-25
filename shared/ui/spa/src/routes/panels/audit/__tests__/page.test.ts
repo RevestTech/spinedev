@@ -21,12 +21,12 @@ vi.mock('$lib/api/client', () => {
 });
 vi.mock('$app/stores', () => {
   const { readable } = require('svelte/store');
-  return { page: readable({ url: new URL('http://localhost/panels/audit') }) };
+  return { page: readable({ url: new URL('http://localhost/projects/proj-1/audit') }) };
 });
 vi.mock('$app/environment', () => ({ browser: true }));
 
 import { api } from '$lib/api/client';
-import Page from '../+page.svelte';
+import AuditPanel from '$lib/project-panels/AuditPanel.svelte';
 
 const SAMPLE = {
   ok: true,
@@ -64,13 +64,8 @@ const SAMPLE = {
   ]
 };
 
-function mockProjectsSeed(projectId = 'proj-1') {
+function mockAudit(projectId = 'proj-1') {
   (api.get as ReturnType<typeof vi.fn>).mockImplementation((url: string) => {
-    if (url.includes('/api/v2/projects')) {
-      return Promise.resolve({
-        items: [{ project_id: '9', project_uuid: projectId }]
-      });
-    }
     if (url.includes('/api/v2/audit')) {
       return Promise.resolve(SAMPLE);
     }
@@ -78,26 +73,33 @@ function mockProjectsSeed(projectId = 'proj-1') {
   });
 }
 
-describe('Audit page', () => {
+describe('AuditPanel', () => {
   beforeEach(() => {
     (api.get as ReturnType<typeof vi.fn>).mockReset();
   });
   afterEach(() => vi.restoreAllMocks());
 
-  it('seeds project_id from the projects API on mount', async () => {
-    mockProjectsSeed('seed-proj');
-    render(Page);
-    const projInput = screen.getByTestId('filter-project') as HTMLInputElement;
-    await waitFor(() => expect(projInput.value).toBe('seed-proj'));
-    expect(api.get).toHaveBeenCalledWith('/api/v2/projects?limit=1');
+  it('auto-loads audit on mount when projectId is set', async () => {
+    mockAudit('seed-proj');
+    render(AuditPanel, { props: { projectId: 'seed-proj', projectName: 'Seed' } });
+    await waitFor(() =>
+      expect((api.get as ReturnType<typeof vi.fn>).mock.calls.some((c) =>
+        String(c[0]).includes('/api/v2/audit?')
+      )).toBe(true)
+    );
+    const rows = await screen.findAllByTestId('audit-row');
+    expect(rows.length).toBeGreaterThan(0);
   });
 
-  it('loads audit rows once Load is clicked with a project_id', async () => {
-    mockProjectsSeed('proj-1');
-    render(Page);
+  it('loads audit rows when Refresh is clicked', async () => {
+    mockAudit('proj-1');
+    render(AuditPanel, { props: { projectId: 'proj-1' } });
     await waitFor(() => {
       expect((screen.getByTestId('filter-project') as HTMLInputElement).value).toBe('proj-1');
     });
+    await waitFor(() => screen.findAllByTestId('audit-row'));
+    (api.get as ReturnType<typeof vi.fn>).mockClear();
+    mockAudit('proj-1');
     await fireEvent.click(screen.getByTestId('audit-load'));
     await waitFor(() =>
       expect((api.get as ReturnType<typeof vi.fn>).mock.calls.some((c) =>
@@ -108,17 +110,14 @@ describe('Audit page', () => {
       String(c[0]).includes('/api/v2/audit?')
     )?.[0] as string;
     expect(auditCall).toContain('project_id=proj-1');
-    const rows = await screen.findAllByTestId('audit-row');
-    expect(rows).toHaveLength(2);
   });
 
   it('applies client-side subsystem filter', async () => {
-    mockProjectsSeed('proj-1');
-    render(Page);
+    mockAudit('proj-1');
+    render(AuditPanel, { props: { projectId: 'proj-1' } });
     await waitFor(() => {
       expect((screen.getByTestId('filter-project') as HTMLInputElement).value).toBe('proj-1');
     });
-    await fireEvent.click(screen.getByTestId('audit-load'));
     await screen.findAllByTestId('audit-row');
     const subFilter = screen.getByTestId('filter-subsystem') as HTMLSelectElement;
     await fireEvent.change(subFilter, { target: { value: 'verify' } });
@@ -128,24 +127,22 @@ describe('Audit page', () => {
   });
 
   it('opens a detail modal on row click', async () => {
-    mockProjectsSeed('proj-1');
-    render(Page);
+    mockAudit('proj-1');
+    render(AuditPanel, { props: { projectId: 'proj-1' } });
     await waitFor(() => {
       expect((screen.getByTestId('filter-project') as HTMLInputElement).value).toBe('proj-1');
     });
-    await fireEvent.click(screen.getByTestId('audit-load'));
     const [first] = await screen.findAllByTestId('audit-row');
     await fireEvent.click(first);
     expect(await screen.findByTestId('audit-detail')).toBeInTheDocument();
   });
 
   it('export buttons prompt for confirmation before navigating', async () => {
-    mockProjectsSeed('proj-1');
-    render(Page);
+    mockAudit('proj-1');
+    render(AuditPanel, { props: { projectId: 'proj-1' } });
     await waitFor(() => {
       expect((screen.getByTestId('filter-project') as HTMLInputElement).value).toBe('proj-1');
     });
-    await fireEvent.click(screen.getByTestId('audit-load'));
     await screen.findAllByTestId('audit-row');
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
     await fireEvent.click(screen.getByTestId('export-csv'));

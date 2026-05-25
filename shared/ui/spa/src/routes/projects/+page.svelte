@@ -10,11 +10,22 @@
   import PanelHeader from '$lib/components/PanelHeader.svelte';
   import ErrorBanner from '$lib/components/ErrorBanner.svelte';
   import LoadingSpinner from '$lib/components/LoadingSpinner.svelte';
+  import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
+  import ProjectEditDialog from '$lib/components/ProjectEditDialog.svelte';
   import { api, subscribeSse, isAbortError } from '$lib/api/client';
   import { ApiError } from '$lib/api/types';
   import { decisions } from '$lib/stores/decisions';
+  import { toasts } from '$lib/stores/toasts';
   import type { DecisionCard } from '$lib/api/types';
   import { PIPELINE_COPY } from '$lib/projectPipelineCopy';
+  import {
+    archiveProject,
+    deleteProject,
+    isArchived,
+    projectBrief,
+    restoreProject,
+    updateProject,
+  } from '$lib/projectLifecycle';
   import {
     filterUserProjects,
     pendingForProject,
@@ -41,8 +52,22 @@
   let error: string | null = null;
   let pollHandle: number | null = null;
   let showAutomated = false;
+  let showArchived = false;
 
-  $: filteredProjects = filterUserProjects(projects, showAutomated);
+  type ConfirmKind = 'archive' | 'delete' | 'restore';
+  let confirmOpen = false;
+  let confirmKind: ConfirmKind = 'archive';
+  let confirmTarget: ProjectRow | null = null;
+  let confirmBusy = false;
+
+  let editOpen = false;
+  let editTarget: ProjectRow | null = null;
+  let editName = '';
+  let editDescription = '';
+  let editBusy = false;
+  let editError: string | null = null;
+
+  $: filteredProjects = filterUserProjects(projects, showAutomated, showArchived);
 
   // Live per-project role tracking via SSE.
   let activeByProject: Record<string, { role: string; startedAt: number }> = {};
@@ -147,10 +172,11 @@
 
   async function load() {
     try {
+      const qs = showArchived ? '?limit=200&include_archived=true' : '?limit=200';
       const res = await api.get<{
         items: (string | ProjectRow)[];
         db_unavailable?: boolean;
-      }>('/api/v2/projects?limit=200');
+      }>(`/api/v2/projects${qs}`);
       if (res.db_unavailable) {
         error =
           'Hub database is unavailable — start Postgres or check vault DB credentials.';
@@ -193,9 +219,111 @@
   function statusBadge(s: string): string {
     if (s === 'active') return 'bg-severity-info text-white';
     if (s === 'paused') return 'bg-severity-warning text-white';
+    if (s === 'completed') return 'bg-surface-600 text-surface-100';
     if (s === 'terminated') return 'bg-severity-critical text-white';
     return 'bg-surface-200 text-surface-700 dark:bg-surface-700 dark:text-surface-200';
   }
+
+  function statusLabel(s: string): string {
+    if (s === 'completed') return 'archived';
+    return s;
+  }
+
+  async function openEdit(p: ProjectRow) {
+    editTarget = p;
+    editName = p.name;
+    editDescription = '';
+    editError = null;
+    editOpen = true;
+    try {
+      const full = await api.get<{ name: string; metadata?: Record<string, unknown> }>(
+        `/api/v2/projects/${p.project_id}/full`
+      );
+      editName = full.name;
+      editDescription = projectBrief(full);
+    } catch (e) {
+      editError = formatErr(e, 'Could not load project details');
+    }
+  }
+
+  function openConfirm(kind: ConfirmKind, p: ProjectRow) {
+    confirmKind = kind;
+    confirmTarget = p;
+    confirmOpen = true;
+  }
+
+  async function handleConfirm() {
+    if (!confirmTarget) return;
+    confirmBusy = true;
+    const id = confirmTarget.project_id;
+    const label = confirmTarget.name;
+    try {
+      if (confirmKind === 'archive') {
+        await archiveProject(id);
+        toasts.push({ kind: 'success', message: `Archived "${label}"`, ttlMs: 4000 });
+      } else if (confirmKind === 'restore') {
+        await restoreProject(id);
+        toasts.push({ kind: 'success', message: `Restored "${label}"`, ttlMs: 4000 });
+      } else {
+        await deleteProject(id);
+        toasts.push({ kind: 'success', message: `Deleted "${label}"`, ttlMs: 4000 });
+      }
+      confirmOpen = false;
+      confirmTarget = null;
+      await load();
+      void loadStuckSummary();
+    } catch (e) {
+      toasts.push({ kind: 'error', message: formatErr(e, 'Project action failed') });
+    } finally {
+      confirmBusy = false;
+    }
+  }
+
+  async function handleEditSave(e: CustomEvent<{ name: string; description: string }>) {
+    if (!editTarget) return;
+    editBusy = true;
+    editError = null;
+    try {
+      await updateProject(editTarget.project_id, {
+        name: e.detail.name,
+        description: e.detail.description || undefined,
+      });
+      toasts.push({ kind: 'success', message: `Updated "${e.detail.name}"`, ttlMs: 3500 });
+      editOpen = false;
+      editTarget = null;
+      await load();
+    } catch (err) {
+      editError = formatErr(err, 'Save failed');
+    } finally {
+      editBusy = false;
+    }
+  }
+
+  $: confirmCopy = (() => {
+    const name = confirmTarget?.name ?? 'this project';
+    if (confirmKind === 'archive') {
+      return {
+        title: 'Archive project?',
+        message: `"${name}" will move to archived projects. You can restore it later; the workspace and audit trail stay on the Hub.`,
+        confirmLabel: 'Archive',
+        variant: 'warning' as const,
+      };
+    }
+    if (confirmKind === 'restore') {
+      return {
+        title: 'Restore project?',
+        message: `"${name}" will return to your active project list.`,
+        confirmLabel: 'Restore',
+        variant: 'default' as const,
+      };
+    }
+    return {
+      title: 'Delete project?',
+      message: `"${name}" will be permanently removed from the Hub UI. This cannot be undone from the SPA.`,
+      confirmLabel: 'Delete',
+      variant: 'danger' as const,
+    };
+  })();
 
   function relTime(iso: string | undefined): string {
     if (!iso) return '';
@@ -236,7 +364,11 @@
       : `${filteredProjects.length} project${filteredProjects.length === 1 ? '' : 's'} shown`
     : 'No projects shown'}
 >
-  <div class="flex items-center gap-4">
+  <div class="flex flex-wrap items-center gap-4">
+    <label class="flex items-center gap-2 text-xs text-surface-700 dark:text-surface-200 cursor-pointer">
+      <input type="checkbox" bind:checked={showArchived} on:change={() => load()} class="rounded border-surface-300 text-accent focus:ring-accent" />
+      Show archived
+    </label>
     <label class="flex items-center gap-2 text-xs text-surface-700 dark:text-surface-200 cursor-pointer">
       <input type="checkbox" bind:checked={showAutomated} class="rounded border-surface-300 text-accent focus:ring-accent" />
       Show automated test runs
@@ -277,7 +409,7 @@
           <th class="px-3 py-2">Status</th>
           <th class="px-3 py-2">Owner</th>
           <th class="px-3 py-2 text-right">Updated</th>
-          <th class="px-3 py-2 text-right">Action</th>
+          <th class="px-3 py-2 text-right">Manage</th>
         </tr>
       </thead>
       <tbody>
@@ -287,6 +419,7 @@
           {@const hint = attentionHint(p, $decisions.items)}
           {@const pending = pendingForProject(p, $decisions.items)}
           {@const elapsed = active ? Math.max(0, Math.round((nowTick - active.startedAt) / 1000)) : 0}
+          {@const archived = isArchived(p)}
           <tr
             data-testid={needsAttention ? 'project-needs-attention' : undefined}
             class="border-t border-surface-200 dark:border-surface-700 {needsAttention
@@ -331,7 +464,7 @@
             </td>
             <td class="px-3 py-2">
               <span class="rounded-full px-2 py-0.5 text-xs {statusBadge(p.status)}">
-                {p.status}
+                {statusLabel(p.status)}
               </span>
             </td>
             <td class="px-3 py-2 text-xs text-surface-700/80 dark:text-surface-200/80">{p.owner ?? ''}</td>
@@ -339,22 +472,32 @@
               {relTime(p.updated_at)}
             </td>
             <td class="px-3 py-2 text-right">
-              {#if needsAttention}
-                <a
-                  href="{base}/projects/{p.project_id}"
-                  class="inline-flex items-center rounded-md border border-amber-500/50 bg-amber-500/15 px-2.5 py-1 text-xs font-medium text-amber-100 transition hover:border-amber-400/70 hover:bg-amber-500/25"
-                  data-testid="project-review-action"
-                >
-                  {pending > 0 ? 'Review & approve →' : 'Open project →'}
-                </a>
-              {:else}
-                <a
-                  href="{base}/projects/{p.project_id}"
-                  class="text-xs text-surface-500 hover:text-accent"
-                >
-                  Open →
-                </a>
-              {/if}
+              <div class="flex flex-wrap items-center justify-end gap-1">
+                {#if needsAttention}
+                  <a
+                    href="{base}/projects/{p.project_id}"
+                    class="inline-flex items-center rounded-md border border-amber-500/50 bg-amber-500/15 px-2.5 py-1 text-xs font-medium text-amber-100 transition hover:border-amber-400/70 hover:bg-amber-500/25"
+                    data-testid="project-review-action"
+                  >
+                    {pending > 0 ? 'Review →' : 'Open →'}
+                  </a>
+                {/if}
+                <button type="button" class="btn-ghost px-2 py-1 text-xs" on:click={() => openEdit(p)} data-testid="project-edit-btn">
+                  Edit
+                </button>
+                {#if archived}
+                  <button type="button" class="btn-ghost px-2 py-1 text-xs" on:click={() => openConfirm('restore', p)}>
+                    Restore
+                  </button>
+                {:else}
+                  <button type="button" class="btn-ghost px-2 py-1 text-xs" on:click={() => openConfirm('archive', p)}>
+                    Archive
+                  </button>
+                {/if}
+                <button type="button" class="btn-ghost px-2 py-1 text-xs text-rose-300 hover:text-rose-200" on:click={() => openConfirm('delete', p)} data-testid="project-delete-btn">
+                  Delete
+                </button>
+              </div>
             </td>
           </tr>
         {/each}
@@ -362,3 +505,31 @@
     </table>
   </section>
 {/if}
+
+<ConfirmDialog
+  bind:open={confirmOpen}
+  title={confirmCopy.title}
+  message={confirmCopy.message}
+  confirmLabel={confirmCopy.confirmLabel}
+  variant={confirmCopy.variant}
+  busy={confirmBusy}
+  on:confirm={handleConfirm}
+  on:cancel={() => {
+    if (!confirmBusy) confirmTarget = null;
+  }}
+/>
+
+<ProjectEditDialog
+  bind:open={editOpen}
+  name={editName}
+  description={editDescription}
+  busy={editBusy}
+  error={editError}
+  on:save={handleEditSave}
+  on:cancel={() => {
+    if (!editBusy) {
+      editTarget = null;
+      editError = null;
+    }
+  }}
+/>

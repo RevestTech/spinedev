@@ -24,6 +24,9 @@
 
   let busyId: string | null = null;
   let selectedDecisionId: string | null = null;
+  let selectedBodyText = '';
+  let selectedBodyLoading = false;
+  let lastLoadedBodyId: string | null = null;
 
   onMount(() => {
     decisions.load('pending');
@@ -45,6 +48,33 @@
     }
   }
   $: selectedCard = items.find((c) => c.decision_id === selectedDecisionId) ?? null;
+  $: if (selectedDecisionId !== lastLoadedBodyId) {
+    lastLoadedBodyId = selectedDecisionId;
+    void loadSelectedBody(selectedDecisionId);
+  }
+
+  async function loadSelectedBody(id: string | null) {
+    if (!id) {
+      selectedBodyText = '';
+      selectedBodyLoading = false;
+      return;
+    }
+    const card = items.find((c) => c.decision_id === id);
+    if (card?.body) {
+      selectedBodyText = card.body;
+      selectedBodyLoading = false;
+      return;
+    }
+    selectedBodyLoading = true;
+    selectedBodyText = '';
+    try {
+      selectedBodyText = await decisions.fetchBody(id);
+    } catch {
+      selectedBodyText = 'Failed to load decision details.';
+    } finally {
+      selectedBodyLoading = false;
+    }
+  }
 
   async function ack(card: DecisionCard) {
     busyId = card.decision_id;
@@ -358,10 +388,12 @@
           </header>
 
           <div class="decision-queue-body bg-surface-50 p-4 dark:bg-surface-900/50">
-            {#if selectedCard.body}
+            {#if selectedBodyLoading}
+              <LoadingSpinner label="Loading decision" />
+            {:else if selectedBodyText || selectedCard?.body}
               <pre
                 class="whitespace-pre-wrap break-words text-sm leading-relaxed text-surface-700 dark:text-surface-200"
-              >{selectedCard.body}</pre>
+              >{selectedBodyText || selectedCard?.body}</pre>
             {:else}
               <p class="text-sm text-surface-700/70 dark:text-surface-200/70">No body text.</p>
             {/if}

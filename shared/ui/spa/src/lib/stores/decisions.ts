@@ -29,6 +29,37 @@ interface DecisionStoreState {
   liveConnected: boolean;
 }
 
+/** Non-card SSE payloads (role_log, role_started, …) for project workspace feeds. */
+export type DecisionActivityEvent = DecisionSseEvent & {
+  type: string;
+  project_uuid?: string;
+  role?: string;
+  message?: string;
+  ts?: number;
+  artifact_chars?: number;
+  files_written?: number;
+  install_ok?: boolean;
+  error?: string;
+  formatted?: string;
+  refresh_artifacts?: boolean;
+  dispatch_in_flight?: boolean;
+  dispatch_kind?: string;
+  current_phase?: string;
+  /** recovery_pulse — SSE push of GET /recovery fields */
+  stuck?: boolean;
+  reasons?: string[];
+  pending_decisions?: number;
+  recommended_action?: string | null;
+  last_role_failure?: { role?: string; error?: string; retry_action?: string } | null;
+  actions?: { action: string; label: string; description: string }[];
+  code_fix_iteration?: number;
+  max_code_fix_iterations?: number;
+  fix_loop_exhausted?: boolean;
+  workspace_files_on_disk?: number;
+  code_review_blocked?: boolean;
+  code_files_count?: number;
+};
+
 const initial: DecisionStoreState = {
   items: [],
   loading: false,
@@ -37,6 +68,8 @@ const initial: DecisionStoreState = {
 };
 
 const state = writable<DecisionStoreState>(initial);
+const activity = writable<DecisionActivityEvent | null>(null);
+const bodyCache = writable<Record<string, string>>({});
 let sseHandle: SseSubscription | null = null;
 /** Bumped on disconnect so stale reconnect timers no-op. */
 let connectGeneration = 0;
@@ -67,8 +100,10 @@ export const decisions = {
   async load(statusFilter: DecisionStatus = 'pending'): Promise<void> {
     state.update((s) => ({ ...s, loading: true, error: null }));
     try {
-      const res = await api.get<DecisionList>(`/api/v2/decisions?status=${statusFilter}&scope=project`);
-      state.update((s) => ({ ...s, items: res.items, loading: false }));
+      const res = await api.get<DecisionList>(
+        `/api/v2/decisions?status=${statusFilter}&scope=project&include_body=false`
+      );
+      state.update((s) => ({ ...s, items: res.items ?? [], loading: false }));
     } catch (err) {
       state.update((s) => ({
         ...s,
@@ -92,7 +127,9 @@ export const decisions = {
         },
         onEvent: ({ data }) => {
           const evt = data as DecisionSseEvent;
-          if (!evt?.card) return;
+          if (!evt?.type) return;
+          activity.set(evt as DecisionActivityEvent);
+          if (!evt.card) return;
           const card = evt.card;
           if (isHubInboxCard(card)) {
             if (card.status === 'pending') hubInbox.upsert(card);
@@ -121,6 +158,11 @@ export const decisions = {
     try {
       const res = await api.post<DecisionActionResponse>(path, {});
       state.update((s) => ({ ...s, items: s.items.filter((c) => c.decision_id !== id) }));
+      bodyCache.update((c) => {
+        const next = { ...c };
+        delete next[id];
+        return next;
+      });
       return res;
     } catch (err) {
       await decisions.load('pending');
@@ -132,11 +174,29 @@ export const decisions = {
     try {
       const res = await api.post<DecisionActionResponse>(path, {});
       state.update((s) => ({ ...s, items: s.items.filter((c) => c.decision_id !== id) }));
+      bodyCache.update((c) => {
+        const next = { ...c };
+        delete next[id];
+        return next;
+      });
       return res;
     } catch (err) {
       await decisions.load('pending');
       throw err;
     }
+  },
+  /** Fetch full card body on demand (list/SSE omit bodies for performance). */
+  async fetchBody(id: string): Promise<string> {
+    const cached = get(bodyCache)[id];
+    if (cached !== undefined) return cached;
+    const card = await api.get<DecisionCard>(`/api/v2/decisions/${encodeURIComponent(id)}`);
+    const body = card.body || '';
+    bodyCache.update((c) => ({ ...c, [id]: body }));
+    state.update((s) => ({
+      ...s,
+      items: s.items.map((c) => (c.decision_id === id ? { ...c, body } : c))
+    }));
+    return body;
   },
   /** Test seam: replace the items array directly. */
   __setItems(items: DecisionCard[]): void {
@@ -145,6 +205,11 @@ export const decisions = {
 };
 
 export const pendingCount = derived(state, ($s) => $s.items.length);
+
+/** Live role / terminal events from the shared layout SSE connection. */
+export const decisionActivity = {
+  subscribe: activity.subscribe
+};
 
 export function snapshot(): DecisionStoreState {
   return get(state);

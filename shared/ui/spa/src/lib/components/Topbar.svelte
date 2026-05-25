@@ -8,7 +8,6 @@
   import { page } from '$app/stores';
   import { isNavItemActive, navHref } from '$lib/navActive';
   import { user } from '$lib/stores/user';
-  import { pendingCount } from '$lib/stores/decisions';
   import { hubInboxCount } from '$lib/stores/hubInbox';
 
   export let title: string = 'Spine Hub';
@@ -71,30 +70,6 @@
           {$hubInboxCount}
         </span>
       {/if}
-    </a>
-    <a
-      href={navHref('/panels/decision-queue')}
-      class="topbar-nav-link"
-      aria-current={isNavItemActive($page.url.pathname, '/panels/decision-queue', $page.route.id)
-        ? 'page'
-        : undefined}
-      aria-label={$pendingCount > 0 ? `Decisions, ${$pendingCount} pending` : 'Decisions'}
-    >
-      Decisions
-      {#if $pendingCount > 0}
-        <span class="ml-1.5 rounded-full bg-severity-warning px-2 py-0.5 text-sm font-semibold text-white" aria-hidden="true">
-          {$pendingCount}
-        </span>
-      {/if}
-    </a>
-    <a
-      href={navHref('/panels/role-chat')}
-      class="topbar-nav-link"
-      aria-current={isNavItemActive($page.url.pathname, '/panels/role-chat', $page.route.id)
-        ? 'page'
-        : undefined}
-    >
-      Talk to a Role
     </a>
     {/key}
   </nav>

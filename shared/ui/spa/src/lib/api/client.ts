@@ -165,6 +165,39 @@ export async function apiFetch<T = unknown>(
   return (await response.text()) as unknown as T;
 }
 
+/** GET + JSON.parse after yielding the main thread (large project payloads). */
+async function apiFetchJsonOffThread<T>(path: string, opts?: FetchOptions): Promise<T> {
+  const { yieldMainThread } = await import('$lib/yieldMainThread');
+  const url = urlFor(path);
+  const { body: _body, timeoutMs = DEFAULT_TIMEOUT_MS, redirectOn401 = true, headers: extraHeaders, ...rest } =
+    opts ?? {};
+  const controller = new AbortController();
+  const timer =
+    typeof setTimeout !== 'undefined' ? setTimeout(() => controller.abort(), timeoutMs) : null;
+  const headers = new Headers(extraHeaders ?? {});
+  if (!headers.has('accept')) headers.set('accept', 'application/json');
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      ...rest,
+      method: 'GET',
+      headers,
+      credentials: 'include',
+      signal: rest.signal ?? controller.signal,
+    });
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+  if (response.status === 401) {
+    if (redirectOn401) redirectToLogin();
+    throw new ApiError(401, 'unauthorized');
+  }
+  if (!response.ok) throw await parseError(response);
+  const text = await response.text();
+  await yieldMainThread();
+  return JSON.parse(text) as T;
+}
+
 // ---------------------------------------------------------------------------
 // Convenience verb wrappers
 // ---------------------------------------------------------------------------
@@ -172,6 +205,8 @@ export async function apiFetch<T = unknown>(
 export const api = {
   get: <T>(path: string, opts?: FetchOptions) =>
     apiFetch<T>(path, { ...opts, method: 'GET' }),
+  /** Prefer for large GET JSON payloads (project /full). */
+  getOffThread: <T>(path: string, opts?: FetchOptions) => apiFetchJsonOffThread<T>(path, opts),
   post: <T>(path: string, body?: unknown, opts?: FetchOptions) =>
     apiFetch<T>(path, { ...opts, method: 'POST', body }),
   patch: <T>(path: string, body?: unknown, opts?: FetchOptions) =>
@@ -247,7 +282,10 @@ export function subscribeSse<E = unknown>(
           const frame = buffer.slice(0, idx);
           buffer = buffer.slice(idx + 2);
           const parsed = parseSseFrame<E>(frame);
-          if (parsed) handlers.onEvent(parsed);
+          if (parsed) {
+            handlers.onEvent(parsed);
+            await new Promise<void>((resolve) => setTimeout(resolve, 0));
+          }
         }
       }
       if (!closed) handlers.onClose?.();

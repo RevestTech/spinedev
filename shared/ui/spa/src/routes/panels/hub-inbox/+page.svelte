@@ -176,8 +176,8 @@
               <h2 class="text-base font-semibold text-surface-50">{selected.title}</h2>
               <time class="mt-1 block text-xs text-surface-500">{formatTime(selected.created_at)}</time>
               <p class="mt-2 text-xs text-surface-400">
-                Summarizes all active projects. For per-project approvals, see
-                <a href="{base}/panels/decision-queue" class="text-accent hover:underline">Decisions</a>.
+                Summarizes all active projects. For per-project approvals, open a project from
+                <a href="{base}/projects" class="text-accent hover:underline">Projects</a>.
               </p>
             </header>
             <div class="inbox-body p-4">

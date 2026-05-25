@@ -3,7 +3,6 @@
 
   Surfaces grouped by user-job:
     BUILD       — what you do to make software
-    OBSERVE     — what's happening + history
     OPERATE     — Hub itself + integrations + secrets
     GOVERNANCE  — federation across Hubs + license / entitlements
 
@@ -38,17 +37,7 @@
       items: [
         { label: 'Dashboard',       href: '/',                       icon: '⌂', desc: 'Start a new project; recent projects',                           shipped: true },
         { label: 'Projects',        href: '/projects',               icon: '▤', desc: 'All projects in this Hub with SDLC phase + status',            shipped: true },
-        { label: 'Decisions',       href: '/panels/decision-queue',  icon: '✓', desc: 'Project approvals — PRD, TRD, code review, deploy',            shipped: true },
         { label: 'Hub inbox',       href: '/panels/hub-inbox',       icon: '✉', desc: 'Portfolio briefings from master directors (Hub-wide)',         shipped: true },
-        { label: 'Talk to a role',  href: '/panels/role-chat',       icon: '✎', desc: 'Ad-hoc chat with any role (product, architect, engineer, qa…)', shipped: true },
-      ]
-    },
-    {
-      title: 'Observe',
-      blurb: 'What is happening',
-      items: [
-        { label: 'Audit log',     href: '/panels/audit',     icon: '⌽', desc: 'Hash-chained ledger — every LLM call, every role action',         shipped: true },
-        { label: 'Knowledge graph', href: '/panels/kg-search', icon: '◈', desc: 'Search the project KG — symbols, files, decisions, citations',   shipped: true },
       ]
     },
     {

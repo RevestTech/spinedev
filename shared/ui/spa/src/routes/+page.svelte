@@ -49,17 +49,8 @@
     {
       label: 'Build',
       links: [
-        { href: '/panels/decision-queue', label: 'Decisions' },
         { href: '/projects', label: 'All projects' },
-        { href: '/panels/role-chat', label: 'Talk to a role' }
-      ]
-    },
-    {
-      label: 'Observe',
-      links: [
-        { href: '/panels/hub-inbox', label: 'Hub inbox' },
-        { href: '/panels/audit', label: 'Audit log' },
-        { href: '/panels/kg-search', label: 'Knowledge graph' }
+        { href: '/panels/hub-inbox', label: 'Hub inbox' }
       ]
     },
     {
@@ -318,11 +309,13 @@
       </h2>
       {#if $pendingCount > 0}
         <a
-          href={navHref('/panels/decision-queue')}
+          href={pendingByProject.length
+            ? `${base}/projects/${pendingByProject[0].project.project_id}`
+            : navHref('/projects')}
           class="text-xs font-medium text-amber-200/90 hover:text-amber-100"
           data-testid="dashboard-decisions-badge-link"
         >
-          {$pendingCount} approval{$pendingCount === 1 ? '' : 's'} · Open Decisions →
+          {$pendingCount} approval{$pendingCount === 1 ? '' : 's'} · Open project →
         </a>
       {/if}
     </div>

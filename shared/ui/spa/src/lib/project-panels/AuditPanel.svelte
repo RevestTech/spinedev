@@ -5,17 +5,11 @@
     GET /api/v2/audit?project_id=&correlation_id=&limit=  → AuditListResponse
     GET /api/v2/audit/export?project_id=&format=csv|json  → file download
 
-  The basic /audit endpoint requires project_id OR correlation_id and
-  returns raw JSON-line strings per row (not objects); we parse client-
-  side. Subsystem / role / action filters are applied client-side over
-  the fetched window — backend gap noted in squad report: a paginated
-  cursor-based timeline endpoint with these filters is needed.
+  Scope: backend requires project_id OR correlation_id (filter-or-refuse).
+  project_id accepts UUID (Hub default) or numeric lifecycle PK.
 
-  Per design decisions:
-    - #3 one of the 9 enumerated Hub surfaces
-    - #5 active push — Wave 4 will SSE-tail new audit rows; for now we
-         poll on demand via the Refresh button
-    - #28 mobile responsive — table collapses to stacked rows < md
+  Subsystem / role / action filters are applied client-side over the fetched
+  window — a paginated hub-wide timeline endpoint is a known follow-up.
 -->
 <script lang="ts">
   import { onMount } from 'svelte';
@@ -26,29 +20,28 @@
   import { api, getApiBase } from '$lib/api/client';
   import type { AuditListResponse, AuditRow } from '$lib/api/types';
 
-  // The 9 subsystems per design decision #3 / audit_record taxonomy.
+  export let projectId = '';
+  export let projectName = '';
+
   const SUBSYSTEMS = [
     'plan', 'build', 'verify', 'operate', 'orchestrator',
     'integration', 'identity', 'hub', 'platform'
   ] as const;
 
   let loading = false;
+  let bootstrapping = true;
+  let hasLoaded = false;
   let error: string | null = null;
   let rows: AuditRow[] = [];
-
-  // Query scope (backend requires one of these).
-  let projectId = '';
   let correlationId = '';
   let limit = 500;
 
-  // Client-side filters.
   let subsystemFilter = '';
   let roleFilter = '';
   let actionFilter = '';
   let fromTs = '';
   let toTs = '';
 
-  // Detail modal.
   let detailRow: AuditRow | null = null;
 
   function parseRow(raw: string | AuditRow): AuditRow | null {
@@ -62,8 +55,9 @@
 
   async function load() {
     if (!projectId && !correlationId) {
-      error = 'Enter a project_id or correlation_id to load the audit trail.';
+      error = 'Select a project or enter a correlation ID to load the audit trail.';
       rows = [];
+      hasLoaded = false;
       return;
     }
     loading = true;
@@ -77,34 +71,29 @@
       rows = (res.items ?? [])
         .map(parseRow)
         .filter((r): r is AuditRow => r !== null);
+      hasLoaded = true;
     } catch (err) {
       error = (err as Error).message || 'failed to load audit trail';
       rows = [];
+      hasLoaded = true;
     } finally {
       loading = false;
     }
   }
 
   onMount(async () => {
-    try {
-      const res = await api.get<{ items?: { project_id?: string; project_uuid?: string }[] }>(
-        '/api/v2/projects?limit=1'
-      );
-      const first = res.items?.[0];
-      if (first && !projectId) {
-        projectId = String(first.project_uuid ?? first.project_id ?? '');
-      }
-    } catch {
-      /* user can enter project id manually */
+    bootstrapping = false;
+    if (projectId || correlationId) {
+      await load();
     }
   });
 
   function confirmExport(fmt: 'csv' | 'json') {
     if (!projectId) {
-      error = 'Audit export requires a project_id (see /api/v2/audit/export contract).';
+      error = 'Audit export requires a project (see /api/v2/audit/export contract).';
       return;
     }
-    const msg = `Download ${rows.length || 'all'} audit rows for project ${projectId} as ${fmt.toUpperCase()}?`;
+    const msg = `Download ${rows.length || 'all'} audit rows for this project as ${fmt.toUpperCase()}?`;
     if (typeof window === 'undefined' || !window.confirm(msg)) return;
     const base = getApiBase();
     const url = `${base}/api/v2/audit/export?project_id=${encodeURIComponent(projectId)}&format=${fmt}`;
@@ -120,11 +109,16 @@
     return true;
   });
 
-  // Unique role values across the current window — populates the role filter.
   $: roleOptions = Array.from(new Set(rows.map((r) => r.role).filter((x): x is string => !!x))).sort();
+  $: selectedProjectName = projectName || null;
 </script>
 
-<PanelHeader title="Audit" subtitle="Append-only chronological event log — backed by spine_audit.audit_event">
+<PanelHeader
+  title="Audit log"
+  subtitle={projectName
+    ? `Hash-chained ledger for “${projectName}” — role actions, phase transitions, LLM/tool calls`
+    : 'Hash-chained append-only ledger — role actions, phase transitions, LLM/tool calls (scoped per project)'}
+>
   <button type="button" class="btn-ghost" on:click={() => confirmExport('csv')} data-testid="export-csv">
     Export CSV
   </button>
@@ -132,27 +126,23 @@
     Export JSON
   </button>
   <button type="button" class="btn-primary" on:click={load} data-testid="audit-load">
-    Load
+    Refresh
   </button>
 </PanelHeader>
+
+<p class="mb-4 text-sm text-surface-700 dark:text-surface-200">
+  Each row is one immutable audit event from <code>spine_audit.audit_event</code>.
+  Events include who acted, which subsystem/role, and the hash chain link to the prior row.
+</p>
 
 <form
   class="mb-4 grid grid-cols-1 gap-2 rounded-md border border-surface-200 bg-white p-3 dark:border-surface-700 dark:bg-surface-800 md:grid-cols-3"
   on:submit|preventDefault={load}
   aria-label="Audit filters"
 >
-  <label class="flex flex-col gap-1 text-xs">
-    <span class="text-surface-700 dark:text-surface-200">Project ID</span>
-    <input
-      type="text"
-      bind:value={projectId}
-      class="rounded border border-surface-200 px-2 py-1 text-sm dark:border-surface-700 dark:bg-surface-800"
-      placeholder="proj-123"
-      data-testid="filter-project"
-    />
-  </label>
-  <label class="flex flex-col gap-1 text-xs">
-    <span class="text-surface-700 dark:text-surface-200">Correlation ID</span>
+  <input type="hidden" value={projectId} data-testid="filter-project" />
+  <label class="flex flex-col gap-1 text-xs md:col-span-2">
+    <span class="text-surface-700 dark:text-surface-200">Correlation ID (optional)</span>
     <input
       type="text"
       bind:value={correlationId}
@@ -223,12 +213,21 @@
   <div class="mb-4"><ErrorBanner kind="error" message={error} onDismiss={() => (error = null)} /></div>
 {/if}
 
-{#if loading}
+{#if bootstrapping || loading}
   <div class="flex items-center justify-center py-10"><LoadingSpinner label="Loading audit" /></div>
+{:else if !projectId && !correlationId}
+  <EmptyState
+    title="No project scope"
+    message="Open the audit log from a project workspace, or enter a correlation ID above."
+  />
+{:else if !hasLoaded}
+  <EmptyState title="Ready to load" message="Click Refresh to load audit events." />
 {:else if rows.length === 0}
   <EmptyState
-    title="Enter a project_id or correlation_id"
-    message="The /api/v2/audit endpoint requires at least one scope key. Pick a project or correlation ID, then click Load."
+    title="No audit events yet"
+    message={selectedProjectName
+      ? `No rows recorded for “${selectedProjectName}”. Events appear as the pipeline runs — create, phase advance, role dispatch, decisions, etc.`
+      : 'No rows for this scope. Events appear as the pipeline runs.'}
   />
 {:else if filtered.length === 0}
   <EmptyState title="No matches" message="No audit rows match your client-side filters." />
@@ -276,7 +275,7 @@
   </div>
 
   <p class="mt-2 text-xs text-surface-700 dark:text-surface-200">
-    Showing {filtered.length} of {rows.length} rows (limit {limit}).
+    Showing {filtered.length} of {rows.length} rows{selectedProjectName ? ` for ${selectedProjectName}` : ''} (limit {limit}).
   </p>
 {/if}
 

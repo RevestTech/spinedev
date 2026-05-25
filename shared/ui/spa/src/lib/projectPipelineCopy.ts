@@ -46,7 +46,7 @@ export const PIPELINE_COPY = {
   },
   fixLoop: {
     exhausted: (iteration: number, max: number) =>
-      `Security review remains blocked after ${iteration} automated remediation ${iteration === 1 ? 'attempt' : 'attempts'} (maximum ${max}). Further engineer runs are disabled. Edit code in the Code tab, request a new security review, or reject the blocked review to proceed without remediation.`,
+      `Security review remains blocked after ${iteration} automated remediation ${iteration === 1 ? 'attempt' : 'attempts'} (maximum ${max} automatic retries). Click **Resume pipeline** — Spine will scan for findings, patch targeted files, and re-run security automatically.`,
     iteration: (current: number, max: number) =>
       `Remediation attempt ${current} of ${max}. Workflow: approve security findings → engineer updates code → approve code output → security review runs again. If an approval is already waiting, use Decisions instead of starting another run.`,
   },
@@ -82,7 +82,7 @@ export const PIPELINE_COPY = {
   },
   reasons: {
     fix_loop_exhausted:
-      'Maximum remediation attempts reached — manual edit or a new security review required',
+      'Security still failing after automatic fix attempts — resume runs targeted remediation',
     code_review_blocked:
       'Security review flagged issues — approve the findings in Decisions or start remediation',
     no_pending_decisions:

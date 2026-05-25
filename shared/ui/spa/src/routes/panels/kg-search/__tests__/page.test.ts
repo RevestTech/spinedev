@@ -27,29 +27,22 @@ vi.mock('$lib/api/client', () => {
 vi.mock('$app/stores', () => {
   const { readable } = require('svelte/store');
   return {
-    page: readable({ url: new URL('http://localhost/panels/kg-search') })
+    page: readable({ url: new URL('http://localhost/projects/demo/kg') })
   };
 });
 vi.mock('$app/environment', () => ({ browser: true }));
 
 import { api } from '$lib/api/client';
-import Page from '../+page.svelte';
+import KgSearchPanel from '$lib/project-panels/KgSearchPanel.svelte';
 
-describe('KgSearch page', () => {
+describe('KgSearchPanel', () => {
   beforeEach(() => {
     (api.get as ReturnType<typeof vi.fn>).mockReset();
     (api.post as ReturnType<typeof vi.fn>).mockReset();
   });
   afterEach(() => vi.restoreAllMocks());
 
-  function mockProjects() {
-    (api.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
-      items: [{ project_id: 'demo', name: 'spine' }]
-    });
-  }
-
   it('runs a search and renders KG-node citation chips on each result', async () => {
-    mockProjects();
     (api.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       ok: true,
       query: 'executor',
@@ -66,7 +59,7 @@ describe('KgSearch page', () => {
           path: 'lib/executor.sh:1', score: 0.55, rationale: 'neighbour' }
       ]
     });
-    render(Page);
+    render(KgSearchPanel, { props: { projectId: 'demo' } });
     await waitFor(() => expect(screen.getByTestId('project-id')).toHaveValue('demo'));
     await fireEvent.input(screen.getByTestId('search-input'), { target: { value: 'executor' } });
     await fireEvent.click(screen.getByTestId('search-submit'));
@@ -76,13 +69,11 @@ describe('KgSearch page', () => {
     const rows = await screen.findAllByTestId('result-row');
     expect(rows.length).toBe(2);
     expect(rows[0]).toHaveAttribute('data-node-id', 'node-1');
-    // Per #12 — kg_node citation chips appear inline (>=2: one per row).
     const chips = await screen.findAllByText(/node-1|node-2/);
     expect(chips.length).toBeGreaterThanOrEqual(2);
   });
 
   it('loads node detail on result click', async () => {
-    mockProjects();
     (api.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       ok: true,
       query: 'x',
@@ -105,7 +96,7 @@ describe('KgSearch page', () => {
         { type: 'kg_node', ref: 'n-2' }
       ]
     });
-    render(Page);
+    render(KgSearchPanel, { props: { projectId: 'demo' } });
     await waitFor(() => expect(screen.getByTestId('project-id')).toHaveValue('demo'));
     await fireEvent.input(screen.getByTestId('search-input'), { target: { value: 'x' } });
     await fireEvent.click(screen.getByTestId('search-submit'));
@@ -119,7 +110,6 @@ describe('KgSearch page', () => {
   });
 
   it('dispatches the impact_radius action', async () => {
-    mockProjects();
     (api.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       ok: true, query: 'y', total: 1, query_latency_ms: 1, citations: [],
       results: [{ node_id: 'n-9', name: 'thing', node_type: 'Function', path: 'lib/x.py:1',
@@ -137,7 +127,7 @@ describe('KgSearch page', () => {
       importer_count: 0, total_impact: 1,
       citations: [{ type: 'kg_node', ref: 'n-99' }]
     });
-    render(Page);
+    render(KgSearchPanel, { props: { projectId: 'demo' } });
     await waitFor(() => expect(screen.getByTestId('project-id')).toHaveValue('demo'));
     await fireEvent.input(screen.getByTestId('search-input'), { target: { value: 'y' } });
     await fireEvent.click(screen.getByTestId('search-submit'));
