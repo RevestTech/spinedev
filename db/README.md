@@ -34,12 +34,17 @@ A versioned Postgres schema (Flyway-migrated) holding every piece of structured 
 
 ## How to run (laptop shape)
 
-Postgres comes up as a sibling container alongside the Hub via `hub/docker-compose.yml`. **You do not run `db/docker-compose.yml` separately in v3 laptop shape** — the Hub's compose owns the Postgres lifecycle. Flyway runs as a one-shot migrator on Hub `up`.
+Postgres and TRON Postgres both come up under **`hub/docker-compose.yml`** (Docker Compose project **`spine-hub`**). Use `bash tools/hub-up.sh` for the full Hub stack, or `make bootstrap` for databases + migrations only.
 
 ```bash
-cd ~/spine               # target dir from install.sh
-make hub-up              # brings up vault + keycloak + postgres + flyway-migrator + hub
-make db-psql             # opens psql against the Hub's Postgres
+bash tools/hub-up.sh              # vault + postgres + tron-postgres + flyway + hub
+make bootstrap                    # postgres + tron-postgres + flyway + alembic + smoke
+```
+
+The legacy **`db/docker-compose.yml`** stack (project name `db`, container `spine_postgres` on port 33001) is **deprecated** for laptop dev — do not run it alongside the Hub (duplicate Spine Postgres). The file-bus **watcher** service remains for archived fleet mode only.
+
+```bash
+make db-psql             # opens psql against spine-hub-postgres (port 33099)
 ```
 
 For BYOC / customer-cloud / on-prem, Postgres is provisioned by the deployment shape:
