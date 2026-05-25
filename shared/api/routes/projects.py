@@ -7,7 +7,9 @@ detail stay cheap and don't need an MCP round-trip.
 
 from __future__ import annotations
 
+import json as _json
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Any, Literal, Optional
 
@@ -48,6 +50,195 @@ def _esc(s: str) -> str:
     return s.replace("'", "''")
 
 
+async def _project_db_pool():
+    from shared.api.dependencies import get_db_pool_raw  # noqa: PLC0415
+
+    pool = get_db_pool_raw()
+    if pool is None:
+        raise _err(503, "db_unavailable", "DB pool not initialized (dev mode without vault?)")
+    return pool
+
+
+def _parse_metadata(raw: Any) -> dict[str, Any]:
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str):
+        try:
+            parsed = _json.loads(raw)
+            return parsed if isinstance(parsed, dict) else {}
+        except Exception:  # noqa: BLE001
+            return {}
+    return {}
+
+
+async def _fetch_project_row(project_id: str) -> dict[str, Any] | None:
+    """Load a project row by numeric PK or UUID string."""
+    pool = await _project_db_pool()
+    where = "id = $1" if project_id.isdigit() else "project_uuid::text = $1"
+    arg: Any = int(project_id) if project_id.isdigit() else project_id
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            f"SELECT id, project_uuid::text AS project_uuid, name, project_type, "
+            f"current_phase, status, owner_user, pipeline_version, metadata, "
+            f"created_at, updated_at FROM spine_lifecycle.project WHERE {where}",
+            arg,
+        )
+    if row is None:
+        return None
+    metadata = _parse_metadata(row["metadata"])
+    return {
+        "id": int(row["id"]),
+        "project_uuid": row["project_uuid"],
+        "name": row["name"],
+        "project_type": row["project_type"],
+        "current_phase": row["current_phase"],
+        "status": row["status"],
+        "owner": row["owner_user"],
+        "pipeline_version": row["pipeline_version"],
+        "metadata": metadata,
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+
+
+async def _patch_project_row(
+    project_uuid: str,
+    *,
+    name: Optional[str] = None,
+    status: Optional[str] = None,
+    metadata_patch: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    """Partial update — metadata keys are merged into the existing blob."""
+    pool = await _project_db_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            UPDATE spine_lifecycle.project
+            SET
+              name = COALESCE($2, name),
+              status = COALESCE($3, status),
+              metadata = CASE
+                WHEN $4::jsonb IS NOT NULL
+                THEN COALESCE(metadata, '{}'::jsonb) || $4::jsonb
+                ELSE metadata
+              END,
+              updated_at = now()
+            WHERE project_uuid::text = $1
+            RETURNING id, project_uuid::text AS project_uuid, name, project_type,
+                      current_phase, status, owner_user, pipeline_version,
+                      metadata, created_at, updated_at
+            """,
+            project_uuid,
+            name,
+            status,
+            _json.dumps(metadata_patch) if metadata_patch is not None else None,
+        )
+    if row is None:
+        raise _err(404, "project_not_found", f"project {project_uuid!r} not found")
+    md = _parse_metadata(row["metadata"])
+    return {
+        "id": int(row["id"]),
+        "project_uuid": row["project_uuid"],
+        "name": row["name"],
+        "project_type": row["project_type"],
+        "current_phase": row["current_phase"],
+        "status": row["status"],
+        "owner": row["owner_user"],
+        "pipeline_version": row["pipeline_version"],
+        "metadata": md,
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+
+
+async def _write_project_row(
+    project_uuid: str,
+    *,
+    name: Optional[str] = None,
+    status: Optional[str] = None,
+    metadata: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    """Persist project mutations; ``metadata`` replaces the stored JSONB blob."""
+    pool = await _project_db_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            UPDATE spine_lifecycle.project
+            SET
+              name = COALESCE($2, name),
+              status = COALESCE($3, status),
+              metadata = COALESCE($4::jsonb, metadata),
+              updated_at = now()
+            WHERE project_uuid::text = $1
+            RETURNING id, project_uuid::text AS project_uuid, name, project_type,
+                      current_phase, status, owner_user, pipeline_version,
+                      metadata, created_at, updated_at
+            """,
+            project_uuid,
+            name,
+            status,
+            _json.dumps(metadata) if metadata is not None else None,
+        )
+    if row is None:
+        raise _err(404, "project_not_found", f"project {project_uuid!r} not found")
+    md = _parse_metadata(row["metadata"])
+    return {
+        "id": int(row["id"]),
+        "project_uuid": row["project_uuid"],
+        "name": row["name"],
+        "project_type": row["project_type"],
+        "current_phase": row["current_phase"],
+        "status": row["status"],
+        "owner": row["owner_user"],
+        "pipeline_version": row["pipeline_version"],
+        "metadata": md,
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+
+
+def _audit_project_mutation(
+    *,
+    action: str,
+    actor: str,
+    project_pk: int,
+    project_uuid: str,
+    rationale: Optional[str] = None,
+    extra: Optional[dict[str, Any]] = None,
+) -> str:
+    from shared.audit.audit_record import AuditRecord, chain_to_previous  # noqa: PLC0415
+
+    rec = AuditRecord(
+        role="hub",
+        subsystem="hub",
+        action=action,
+        actor=actor,
+        subject_type="project",
+        subject_id=project_uuid,
+        project_id=project_pk,
+        rationale=rationale,
+        metadata={"surface": "projects", **(extra or {})},
+    )
+    rec = chain_to_previous(rec, prev_hash=None)
+    return str(rec.event_uuid)
+
+
+def _project_response(row: dict[str, Any]) -> dict[str, Any]:
+    updated = row.get("updated_at")
+    return {
+        "id": row["id"],
+        "project_id": row["project_uuid"],
+        "project_uuid": row["project_uuid"],
+        "name": row["name"],
+        "project_type": row["project_type"],
+        "current_phase": row["current_phase"],
+        "status": row["status"],
+        "owner": row.get("owner"),
+        "metadata": row.get("metadata") or {},
+        "updated_at": updated.isoformat() if updated is not None else None,
+    }
+
+
 _FORBID = ConfigDict(extra="forbid")
 
 
@@ -74,8 +265,17 @@ class ProjectUpdate(BaseModel):
     """Body for ``PATCH /api/v2/projects/{id}``."""
 
     model_config = _FORBID
+    name: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    description: Optional[str] = Field(default=None, max_length=2000)
     status: Optional[ProjectStatus] = None
     metadata: Optional[dict[str, Any]] = None
+
+
+class ProjectLifecycleNote(BaseModel):
+    """Optional audit note for archive / delete / restore."""
+
+    model_config = _FORBID
+    note: Optional[str] = Field(default=None, max_length=2000)
 
 
 class PhaseAdvanceBody(BaseModel):
@@ -244,19 +444,23 @@ async def list_projects(
     phase: Optional[str] = Query(default=None),
     status_filter: Optional[ProjectStatus] = Query(default=None, alias="status"),
     owner: Optional[str] = Query(default=None),
+    include_archived: bool = Query(default=False),
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
 ) -> dict[str, Any]:
     """List projects with optional filters + pagination."""
     where = ["status != 'terminated'"]
+    if not include_archived and status_filter != "completed":
+        where.append("status != 'completed'")
     if phase:
         where.append(f"current_phase = '{_esc(phase)}'")
     if status_filter:
-        where.append(f"status = '{status_filter}'")
+        where.append(f"status = '{_esc(status_filter)}'")
     if owner:
         where.append(f"owner_user = '{_esc(owner)}'")
     sql = (
-        "SELECT json_build_object('project_id', id::text, 'project_uuid', project_uuid::text, "
+        "SELECT json_build_object('project_id', project_uuid::text, 'id', id, "
+        "'project_uuid', project_uuid::text, "
         "'name', name, 'project_type', project_type, 'current_phase', current_phase, "
         "'status', status, 'owner', owner_user, 'pipeline_version', pipeline_version, "
         "'created_at', created_at, 'updated_at', updated_at)::text "
@@ -320,15 +524,104 @@ async def get_project(
     return {"project_id": project_id, "status_snapshot": snap, "total_cost_usd": cost}
 
 
-@router.get("/{project_id}/full")
-async def get_project_full(project_id: str) -> dict[str, Any]:
-    """Direct read of project row + metadata (incl. PRD when present).
+_MD_ARTIFACT_KEYS = frozenset({
+    "prd_md",
+    "roadmap_md",
+    "trd_md",
+    "sprint_plan_md",
+    "code_intro_md",
+    "code_review_md",
+    "qa_md",
+    "release_gate_md",
+})
 
-    Used by the workspace UI to render the project header + PRD + activity
-    feed without going through the MCP indirection. Returns 404 if the
-    project doesn't exist; 503 if the DB pool is unavailable.
-    """
+# Blobs omitted from GET /summary so first paint stays ~1KB.
+_SUMMARY_STRIP_KEYS = frozenset({
+    "intake_transcript",
+    "code_run_block",
+    "recovery_dispatch_in_flight",
+})
+
+_BUILD_ARTIFACT_SUMMARY_KEYS = frozenset({
+    "status",
+    "phase",
+    "role",
+    "artifact_uuid",
+    "directive_id",
+    "version",
+})
+
+
+def _parse_project_metadata(raw: Any) -> dict[str, Any]:
+    import json as _json
+
+    if isinstance(raw, dict):
+        return dict(raw)
+    if isinstance(raw, str):
+        try:
+            parsed = _json.loads(raw)
+            return dict(parsed) if isinstance(parsed, dict) else {}
+        except Exception:  # noqa: BLE001
+            return {}
+    return {}
+
+
+def _slim_metadata_for_summary(meta: dict[str, Any]) -> dict[str, Any]:
+    out = {
+        k: v
+        for k, v in meta.items()
+        if k not in _MD_ARTIFACT_KEYS and k not in _SUMMARY_STRIP_KEYS
+    }
+    if "code_files" in out:
+        code_files = out.pop("code_files")
+        if isinstance(code_files, list):
+            out["code_files_count"] = len(code_files)
+    build_artifact = out.get("build_artifact")
+    if isinstance(build_artifact, dict):
+        out["build_artifact"] = {
+            k: build_artifact[k]
+            for k in _BUILD_ARTIFACT_SUMMARY_KEYS
+            if k in build_artifact
+        }
+    return out
+
+
+def _project_row_payload(
+    row: Any,
+    *,
+    include_artifacts: bool,
+    include_code_list: bool,
+    for_summary: bool = False,
+) -> dict[str, Any]:
+    meta_out = _parse_project_metadata(row["metadata"])
+    if for_summary:
+        meta_out = _slim_metadata_for_summary(meta_out)
+    elif not include_artifacts:
+        meta_out = _slim_metadata_for_summary(meta_out)
+        meta_out = {k: v for k, v in meta_out.items() if k not in _MD_ARTIFACT_KEYS}
+    if not for_summary and not include_code_list and "code_files" in meta_out:
+        code_files = meta_out.pop("code_files")
+        if isinstance(code_files, list):
+            meta_out["code_files_count"] = len(code_files)
+    return {
+        "id": int(row["id"]),
+        "project_id": row["project_uuid"],
+        "name": row["name"],
+        "project_type": row["project_type"],
+        "current_phase": row["current_phase"],
+        "status": row["status"],
+        "owner": row["owner_user"],
+        "pipeline_version": row["pipeline_version"],
+        "metadata": meta_out,
+        "prd_md": meta_out.get("prd_md") if include_artifacts else None,
+        "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+        "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
+    }
+
+
+async def _fetch_project_row(project_id: str) -> Any:
     from shared.api.dependencies import get_db_pool_raw
+
     pool = get_db_pool_raw()
     if pool is None:
         raise _err(503, "db_unavailable", "DB pool not initialized (dev mode without vault?)")
@@ -344,27 +637,43 @@ async def get_project_full(project_id: str) -> dict[str, Any]:
         )
     if row is None:
         raise _err(404, "project_not_found", f"project {project_id!r} not found")
-    import json as _json
-    metadata = row["metadata"]
-    if isinstance(metadata, str):
-        try:
-            metadata = _json.loads(metadata)
-        except Exception:  # noqa: BLE001
-            metadata = {}
-    return {
-        "id": int(row["id"]),
-        "project_id": row["project_uuid"],
-        "name": row["name"],
-        "project_type": row["project_type"],
-        "current_phase": row["current_phase"],
-        "status": row["status"],
-        "owner": row["owner_user"],
-        "pipeline_version": row["pipeline_version"],
-        "metadata": metadata or {},
-        "prd_md": (metadata or {}).get("prd_md"),
-        "created_at": row["created_at"].isoformat() if row["created_at"] else None,
-        "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
-    }
+    if row["status"] == "terminated":
+        raise _err(404, "project_not_found", f"project {project_id!r} was deleted")
+    return row
+
+
+@router.get("/{project_id}/summary")
+async def get_project_summary(project_id: str) -> dict[str, Any]:
+    """Minimal project header for fast workspace first paint (~1KB)."""
+    row = await _fetch_project_row(project_id)
+    return _project_row_payload(
+        row,
+        include_artifacts=False,
+        include_code_list=False,
+        for_summary=True,
+    )
+
+
+@router.get("/{project_id}/full")
+async def get_project_full(
+    project_id: str,
+    include_artifacts: bool = True,
+) -> dict[str, Any]:
+    """Direct read of project row + metadata (incl. PRD when present).
+
+    Used by the workspace UI to render the project header + PRD + activity
+    feed without going through the MCP indirection. Returns 404 if the
+    project doesn't exist; 503 if the DB pool is unavailable.
+
+    Pass ``include_artifacts=false`` for a lightweight snapshot (phase,
+    flags, code file list) without multi‑KB markdown blobs in metadata.
+    """
+    row = await _fetch_project_row(project_id)
+    return _project_row_payload(
+        row,
+        include_artifacts=include_artifacts,
+        include_code_list=True,
+    )
 
 
 async def _resolve_workspace_uuid(project_id: str) -> str:
@@ -542,13 +851,140 @@ async def advance_phase_by_uuid(project_id: str, body: dict[str, Any]) -> dict[s
 
 
 @router.patch("/{project_id}")
-async def patch_project(project_id: str, body: ProjectUpdate,
-                        user: Annotated[User, Depends(current_user)]) -> dict[str, Any]:
-    """Update project ``status`` (paused/terminated) or ``metadata`` (stub)."""
-    if body.status is None and body.metadata is None:
-        raise _err(400, "invalid_input", "at least one of status, metadata required")
-    return {"project_id": project_id, "applied": body.model_dump(exclude_none=True),
-            "actor": actor_label(user), "note": "stub: wire to transition.sh"}
+async def patch_project(
+    project_id: str,
+    body: ProjectUpdate,
+    user: Annotated[User, Depends(current_user)],
+) -> dict[str, Any]:
+    """Update project name, description (metadata), status, or metadata patch."""
+    if (
+        body.name is None
+        and body.description is None
+        and body.status is None
+        and body.metadata is None
+    ):
+        raise _err(400, "invalid_input", "at least one of name, description, status, metadata required")
+
+    row = await _fetch_project_row(project_id)
+    if row is None:
+        raise _err(404, "project_not_found", f"project {project_id!r} not found")
+    if row["status"] == "terminated":
+        raise _err(409, "project_terminated", "Cannot update a deleted project")
+
+    meta_patch: dict[str, Any] = dict(body.metadata or {})
+    if body.description is not None:
+        meta_patch["description"] = body.description
+
+    actor = actor_label(user)
+    updated = await _patch_project_row(
+        row["project_uuid"],
+        name=body.name,
+        status=body.status,
+        metadata_patch=meta_patch or None,
+    )
+    audit_id = _audit_project_mutation(
+        action="project_updated",
+        actor=actor,
+        project_pk=updated["id"],
+        project_uuid=updated["project_uuid"],
+        extra={"fields": body.model_dump(exclude_none=True)},
+    )
+    return {"ok": True, "actor": actor, "audit_event_uuid": audit_id, **_project_response(updated)}
+
+
+@router.post("/{project_id}/archive")
+async def archive_project(
+    project_id: str,
+    user: Annotated[User, Depends(current_user)],
+    body: ProjectLifecycleNote | None = None,
+) -> dict[str, Any]:
+    """Archive a project (``status=completed``). Hidden from default lists; restorable."""
+    row = await _fetch_project_row(project_id)
+    if row is None:
+        raise _err(404, "project_not_found", f"project {project_id!r} not found")
+    if row["status"] == "terminated":
+        raise _err(409, "project_terminated", "Cannot archive a deleted project")
+    if row["status"] == "completed":
+        return {"ok": True, "already_archived": True, **_project_response(row)}
+
+    actor = actor_label(user)
+    now_iso = datetime.now(timezone.utc).isoformat()
+    md = dict(row["metadata"])
+    md["archived_at"] = now_iso
+    md["archived_by"] = actor
+    updated = await _write_project_row(row["project_uuid"], status="completed", metadata=md)
+    audit_id = _audit_project_mutation(
+        action="project_archived",
+        actor=actor,
+        project_pk=updated["id"],
+        project_uuid=updated["project_uuid"],
+        rationale=(body.note if body else None),
+    )
+    return {"ok": True, "actor": actor, "audit_event_uuid": audit_id, **_project_response(updated)}
+
+
+@router.post("/{project_id}/restore")
+async def restore_project(
+    project_id: str,
+    user: Annotated[User, Depends(current_user)],
+    body: ProjectLifecycleNote | None = None,
+) -> dict[str, Any]:
+    """Restore an archived (``completed``) or paused project to ``active``."""
+    row = await _fetch_project_row(project_id)
+    if row is None:
+        raise _err(404, "project_not_found", f"project {project_id!r} not found")
+    if row["status"] == "terminated":
+        raise _err(409, "project_terminated", "Cannot restore a deleted project")
+    if row["status"] == "active":
+        return {"ok": True, "already_active": True, **_project_response(row)}
+    if row["status"] not in ("completed", "paused"):
+        raise _err(409, "project_not_restorable", f"status {row['status']!r} cannot be restored")
+
+    actor = actor_label(user)
+    now_iso = datetime.now(timezone.utc).isoformat()
+    md = dict(row["metadata"])
+    md.pop("archived_at", None)
+    md.pop("archived_by", None)
+    md["restored_at"] = now_iso
+    md["restored_by"] = actor
+    updated = await _write_project_row(row["project_uuid"], status="active", metadata=md)
+    audit_id = _audit_project_mutation(
+        action="project_restored",
+        actor=actor,
+        project_pk=updated["id"],
+        project_uuid=updated["project_uuid"],
+        rationale=(body.note if body else None),
+    )
+    return {"ok": True, "actor": actor, "audit_event_uuid": audit_id, **_project_response(updated)}
+
+
+@router.delete("/{project_id}")
+async def delete_project(
+    project_id: str,
+    user: Annotated[User, Depends(current_user)],
+    note: Optional[str] = Query(default=None, max_length=2000),
+) -> dict[str, Any]:
+    """Soft-delete a project (``status=terminated``). Excluded from all Hub lists."""
+    row = await _fetch_project_row(project_id)
+    if row is None:
+        raise _err(404, "project_not_found", f"project {project_id!r} not found")
+    if row["status"] == "terminated":
+        return {"ok": True, "already_deleted": True, "project_id": row["project_uuid"]}
+
+    actor = actor_label(user)
+    now_iso = datetime.now(timezone.utc).isoformat()
+    md = dict(row["metadata"])
+    md["terminated_at"] = now_iso
+    md["terminated_by"] = actor
+    updated = await _write_project_row(row["project_uuid"], status="terminated", metadata=md)
+    audit_id = _audit_project_mutation(
+        action="project_deleted",
+        actor=actor,
+        project_pk=updated["id"],
+        project_uuid=updated["project_uuid"],
+        rationale=note,
+    )
+    return {"ok": True, "actor": actor, "audit_event_uuid": audit_id, "project_id": updated["project_uuid"]}
 
 
 @router.post("/{project_id}/phase-advance")
@@ -587,7 +1023,7 @@ async def get_project_terminal_log(
     from shared.runtime.role_activity import get_terminal_log  # noqa: PLC0415
 
     uid = await _resolve_workspace_uuid(project_id)
-    lines = get_terminal_log(uid, limit=limit)
+    lines = await get_terminal_log(uid, limit=limit)
     return {"project_id": uid, "lines": lines, "count": len(lines), "actor": actor_label(user)}
 
 
@@ -632,3 +1068,18 @@ async def dispatch_project_recovery(
 
     status = 202 if result.get("async") else 200
     return JSONResponse(status_code=status, content={"actor": actor, **result})
+
+
+@router.post("/{project_id}/recovery/cancel-inflight")
+async def cancel_project_recovery_inflight(
+    project_id: str,
+    user: Annotated[User, Depends(current_user)],
+) -> dict[str, Any]:
+    """Clear orphaned recovery_dispatch_in_flight metadata (UI unblock after Hub restart)."""
+    from shared.api.routes._project_recovery import recovery_cancel_inflight  # noqa: PLC0415
+
+    actor = actor_label(user)
+    result = await recovery_cancel_inflight(project_id, actor=actor)
+    if not result.get("ok"):
+        raise _err(404, "project_not_found", "Project not found")
+    return {"actor": actor, **result}

@@ -183,7 +183,7 @@ def _emit(event_type: str, *, project_uuid: str, role: str, **extra: Any) -> Non
     """Broadcast a role-activity event onto the decisions SSE stream
     so the workspace's live-feed sees real-time progress."""
     try:
-        from shared.api.routes.decisions import publish_event
+        from shared.api.routes.decisions import publish_event, publish_project_pulse
         import time as _time
         publish_event({
             "type": event_type,
@@ -192,6 +192,16 @@ def _emit(event_type: str, *, project_uuid: str, role: str, **extra: Any) -> Non
             "ts": _time.time(),
             **extra,
         })
+        if event_type in ("role_finished", "role_failed"):
+            publish_project_pulse(
+                project_uuid=project_uuid,
+                dispatch_in_flight=False,
+                refresh_artifacts=False,
+            )
+        if event_type in ("role_started", "role_finished", "role_failed"):
+            from shared.api.routes._project_recovery import schedule_recovery_pulse  # noqa: PLC0415
+
+            schedule_recovery_pulse(project_uuid)
     except Exception as exc:  # noqa: BLE001
         logger.debug("emit_failed", extra={"event": event_type, "error": str(exc)})
 
@@ -293,6 +303,26 @@ async def _orchestrate_hub_role(
     card_kind = approval_card_kind or result_kind or f"{spec.role}_approval"
     target_phase = next_phase or _ACK_CARD_META.get(kind, (None, None))[1] or phase_bucket(PHASE_PLAN_IN_PROGRESS)
 
+    if card_kind == "code_approval" and kind == "code_review_blocked":
+        from shared.api.routes._project_recovery import increment_code_fix_iteration  # noqa: PLC0415
+
+        await increment_code_fix_iteration(project_id)
+        _emit(
+            "role_finished",
+            project_uuid=project_id,
+            role=spec.role,
+            message="remediation complete — re-running security review",
+        )
+        reloaded = await _load_project_full(project_id)
+        if reloaded:
+            await _require_orchestrate_hub_role(
+                kind="code_approval",
+                project=reloaded,
+                actor=actor,
+                expected_role="verify",
+            )
+        return True
+
     if card_kind == "code_approval":
         files_written = (data.get("extra") or {}).get("files_written", 0)
         run_block = (data.get("extra") or {}).get("run_block", "")
@@ -325,27 +355,58 @@ async def _orchestrate_hub_role(
             severity = "info"
         _emit("role_finished", project_uuid=project_id, role=spec.role,
               artifact_chars=len(artifact_md))
-        _enqueue({
-            "decision_class": "approval",
-            "project_id": project_id,
-            "title": title,
-            "body": body,
-            "severity": severity,
-            "actions": ["ack", "reject"],
-            "metadata": {
-                "kind": card_kind,
-                "project_name": project_name,
-                "project_uuid": project_id,
-                "produced_by": spec.role,
-                "directive_id": result.directive_id,
-                "orchestrator_tool": result.tool,
-                "used_tron": bool(data.get("used_tron")),
-            },
-        })
         await _persist_metadata_patch(project_id, {
             "code_review_md": artifact_md,
             "code_review_blocked": card_kind == "code_review_blocked",
         })
+        auto_remediate = False
+        if card_kind == "code_review_blocked":
+            from shared.api.routes._project_recovery import (  # noqa: PLC0415
+                fix_loop_exhausted,
+                schedule_auto_engineer_remediate,
+            )
+
+            reloaded = await _load_project_full(project_id)
+            if reloaded and not fix_loop_exhausted(reloaded):
+                auto_remediate = True
+                schedule_auto_engineer_remediate(project_id, actor=actor)
+        if card_kind == "code_review_blocked" and auto_remediate:
+            _enqueue({
+                "decision_class": "briefing",
+                "project_id": project_id,
+                "title": title,
+                "body": (
+                    f"Verify found critical/high issues{tron_note}. "
+                    f"Engineer remediation was started automatically.\n\n---\n\n"
+                    + artifact_md
+                ),
+                "severity": severity,
+                "actions": ["ack"],
+                "metadata": {
+                    "kind": "security_review_blocked",
+                    "project_name": project_name,
+                    "project_uuid": project_id,
+                    "produced_by": spec.role,
+                },
+            })
+        else:
+            _enqueue({
+                "decision_class": "approval",
+                "project_id": project_id,
+                "title": title,
+                "body": body,
+                "severity": severity,
+                "actions": ["ack", "reject"],
+                "metadata": {
+                    "kind": card_kind,
+                    "project_name": project_name,
+                    "project_uuid": project_id,
+                    "produced_by": spec.role,
+                    "directive_id": result.directive_id,
+                    "orchestrator_tool": result.tool,
+                    "used_tron": bool(data.get("used_tron")),
+                },
+            })
         return True
     elif card_kind == "devops_approval":
         install_ok = (data.get("extra") or {}).get("install_ok", True)
@@ -1030,27 +1091,54 @@ async def _dispatch_code_review(*, project: dict[str, Any]) -> None:
     })
 
     if blocked:
-        # Auto-trigger engineer fix-loop with the review findings as feedback.
-        _enqueue({
-            "decision_class": "approval",
-            "project_id": project_id,
-            "title": f"Security review blocked — {project_name}",
-            "body": (
-                f"The security review identified critical or high-severity "
-                f"findings. Approve this card to dispatch the engineer role with "
-                f"these findings as remediation guidance.\n\n"
-                f"Reject only if you intend to proceed without remediation "
-                f"(not recommended).\n\n---\n\n" + review_md
-            ),
-            "severity": "critical",
-            "actions": ["ack", "reject"],
-            "metadata": {
-                "kind": "code_review_blocked",
-                "project_uuid": project_id,
-                "project_name": project_name,
-                "produced_by": "security_engineer",
-            },
-        })
+        from shared.api.routes._project_recovery import (  # noqa: PLC0415
+            fix_loop_exhausted,
+            schedule_auto_engineer_remediate,
+        )
+
+        reloaded = await _load_project_full(project_id)
+        auto_remediate = bool(reloaded and not fix_loop_exhausted(reloaded))
+        if auto_remediate:
+            schedule_auto_engineer_remediate(project_id, actor="hub")
+            _enqueue({
+                "decision_class": "briefing",
+                "project_id": project_id,
+                "title": f"Security review blocked — {project_name}",
+                "body": (
+                    f"The security review identified critical or high-severity "
+                    f"findings. Engineer remediation was started automatically.\n\n"
+                    f"---\n\n" + review_md
+                ),
+                "severity": "critical",
+                "actions": ["ack"],
+                "metadata": {
+                    "kind": "security_review_blocked",
+                    "project_uuid": project_id,
+                    "project_name": project_name,
+                    "produced_by": "security_engineer",
+                },
+            })
+        else:
+            _enqueue({
+                "decision_class": "approval",
+                "project_id": project_id,
+                "title": f"Security review blocked — {project_name}",
+                "body": (
+                    f"The security review identified critical or high-severity "
+                    f"findings. Approve this card to dispatch the engineer role with "
+                    f"these findings as remediation guidance.\n\n"
+                    f"Reject only if you intend to proceed without remediation "
+                    f"(not recommended).\n\n---\n\n" + review_md
+                ),
+                "severity": "critical",
+                "actions": ["ack", "reject"],
+                "metadata": {
+                    "kind": "code_review_blocked",
+                    "project_uuid": project_id,
+                    "project_name": project_name,
+                    "produced_by": "security_engineer",
+                },
+            })
     else:
         _enqueue({
             "decision_class": "approval",
@@ -1832,41 +1920,6 @@ async def on_decision_acked(card: Any, *, actor: str) -> None:
         return
 
     if kind == "code_review_blocked":
-        from shared.api.routes._project_recovery import (  # noqa: PLC0415
-            MAX_CODE_FIX_ITERATIONS,
-            code_fix_iteration_count,
-            fix_loop_exhausted,
-        )
-
-        if fix_loop_exhausted(project):
-            n = code_fix_iteration_count(project.get("metadata"))
-            _enqueue({
-                "decision_class": "briefing",
-                "project_id": project_id,
-                "title": f"Remediation limit reached — {project.get('name', project_id)}",
-                "body": (
-                    f"Security review remains blocked after **{n}** automated "
-                    f"remediation attempt(s) (maximum **{MAX_CODE_FIX_ITERATIONS}**).\n\n"
-                    "Further engineer runs are disabled.\n\n"
-                    "**Recommended next steps:** edit code in the Code tab, run "
-                    "**Run security review** from the Pipeline tab, or reject the "
-                    "blocked review to proceed without remediation (not recommended)."
-                ),
-                "severity": "critical",
-                "actions": ["ack"],
-                "metadata": {
-                    "kind": "fix_loop_exhausted",
-                    "project_uuid": project_id,
-                    "project_name": project.get("name"),
-                    "code_fix_iteration": n,
-                    "max_code_fix_iterations": MAX_CODE_FIX_ITERATIONS,
-                },
-            })
-            return
-
-        next_iter = code_fix_iteration_count(project.get("metadata")) + 1
-        await _persist_metadata_patch(project_id, {"code_fix_iteration": next_iter})
-
         review_md = (project.get("metadata") or {}).get("code_review_md", "")
         feedback = (
             "## Code review found CRITICAL/HIGH issues\n\n"
@@ -2144,20 +2197,20 @@ async def _dispatch_engineer_codegen_with_feedback(*, project: dict[str, Any]) -
     _emit("role_finished", project_uuid=project_id, role="engineer",
           files_written=written)
 
+    rejection_round = int(prior.get("code_rejection_round", 0)) + 1
     await _persist_metadata_patch(project_id, {
         "code_intro_md": intro_md,
         "code_files": [{"path": p, "bytes": len(c)} for p, c in files],
         "code_run_block": run_block,
         "code_workspace": str(workspace),
         "code_workspace_host": workspace_host_path(project_id, prior),
-        "code_fix_iteration": int(prior.get("code_fix_iteration", 0)) + 1,
+        "code_rejection_round": rejection_round,
     })
 
     tree_lines = [f"  - `{p}` ({len(c):,} bytes)" for p, c in files]
     tree_md = "\n".join(tree_lines) if tree_lines else "  _(no files parsed)_"
-    iter_num = int(prior.get("code_fix_iteration", 0)) + 1
     body = (
-        f"Engineer re-generated **{written}** files (fix iteration #{iter_num}). "
+        f"Engineer re-generated **{written}** files (revision #{rejection_round}). "
         f"Approve to advance; reject again to send back with another round of feedback.\n\n"
         f"---\n\n{intro_md}\n\n## Generated files\n\n{tree_md}\n\n"
         f"## Local run\n\n```bash\n{run_block or '# (no RUN block produced)'}\n```"
@@ -2165,7 +2218,7 @@ async def _dispatch_engineer_codegen_with_feedback(*, project: dict[str, Any]) -
     _enqueue({
         "decision_class": "approval",
         "project_id": project_id,
-        "title": f"Approve CODE output (fix #{iter_num}) — {project_name}",
+        "title": f"Approve CODE output (revision #{rejection_round}) — {project_name}",
         "body": body,
         "severity": "info",
         "actions": ["ack", "reject"],
@@ -2174,7 +2227,7 @@ async def _dispatch_engineer_codegen_with_feedback(*, project: dict[str, Any]) -
             "project_name": project_name,
             "project_uuid": project_id,
             "files_written": written,
-            "fix_iteration": iter_num,
+            "fix_iteration": rejection_round,
             "advances_phase_to": PHASE_VERIFY_IN_PROGRESS,
             "produced_by": "engineer",
         },

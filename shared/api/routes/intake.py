@@ -9,9 +9,10 @@ Wire shape:
     body: { message: str, transcript: list[{role, content}] }
     resp: { reply: str, transcript: [...updated...], done: bool, prd?: str }
 
-Server is stateless for v1 — the client owns the transcript and sends
-the full history each turn. The Hub does NOT store the transcript yet
-(Wave 4 lands an intake_transcript table). The audit ledger captures
+Server persists the transcript in ``project.metadata`` after each turn
+(``intake_transcript``, ``intake_done``) so a page refresh can restore
+the conversation. Wave 4 may add a dedicated ``intake_transcript`` table;
+until then metadata is the durable store. The audit ledger captures
 every LLM call.
 """
 
@@ -116,6 +117,58 @@ class IntakeChatResponse(BaseModel):
 _INTAKE_COMPLETE_SENTINEL = "[INTAKE_COMPLETE]"
 
 
+async def _resolve_project_pk(project_id: str) -> Optional[int]:
+    """Map UUID or numeric PK to ``spine_lifecycle.project.id``."""
+    from shared.api.dependencies import get_db_pool_raw
+
+    pool = get_db_pool_raw()
+    if pool is None:
+        return None
+    if project_id.isdigit():
+        return int(project_id)
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT id FROM spine_lifecycle.project WHERE project_uuid::text = $1",
+            project_id,
+        )
+    return int(row["id"]) if row else None
+
+
+async def _persist_intake_state(
+    project_id: str,
+    transcript: list[TranscriptTurn],
+    done: bool,
+) -> None:
+    """Merge intake transcript + completion flag into project metadata."""
+    import json as _json
+
+    project_pk = await _resolve_project_pk(project_id)
+    if project_pk is None:
+        return
+    patch = {
+        "intake_transcript": [t.model_dump() for t in transcript],
+        "intake_done": done,
+    }
+    try:
+        from shared.api.dependencies import get_db_pool_raw
+
+        pool = get_db_pool_raw()
+        if pool is None:
+            return
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE spine_lifecycle.project SET metadata = "
+                "COALESCE(metadata, '{}'::jsonb) || $1::jsonb WHERE id = $2",
+                _json.dumps(patch),
+                project_pk,
+            )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "intake_transcript_persist_failed",
+            extra={"project_id": project_id, "error": str(exc)},
+        )
+
+
 _PRD_SYNTHESIS_PROMPT = """
 You are the Spine **product** role. The intake conversation just
 completed. Synthesize a Product Requirements Document from the
@@ -204,17 +257,7 @@ async def _synthesize_prd_and_seed_approval(
         from shared.api.dependencies import get_db_pool_raw
         pool = get_db_pool_raw()
         if pool is not None:
-            project_pk: Optional[int] = None
-            if project_id.isdigit():
-                project_pk = int(project_id)
-            else:
-                async with pool.acquire() as conn:
-                    row = await conn.fetchrow(
-                        "SELECT id FROM spine_lifecycle.project WHERE project_uuid::text = $1",
-                        project_id,
-                    )
-                    if row:
-                        project_pk = int(row["id"])
+            project_pk = await _resolve_project_pk(project_id)
             if project_pk is not None:
                 prd_patch = {"prd_md": prd_md}
                 async with pool.acquire() as conn:
@@ -304,7 +347,8 @@ async def intake_chat(
     user: Annotated[User, Depends(current_user)],
 ) -> IntakeChatResponse:
     """One turn of the intake conversation. Calls the product role via
-    the configured LLM. The client maintains transcript state.
+    the configured LLM. Transcript is persisted to project metadata
+    after each turn so the SPA can restore on refresh.
     """
     actor = actor_label(user)
 
@@ -383,6 +427,8 @@ async def intake_chat(
         TranscriptTurn(role="user", content=body.message),
         TranscriptTurn(role="assistant", content=reply),
     ]
+
+    await _persist_intake_state(project_id, new_transcript, done)
 
     return IntakeChatResponse(
         reply=reply,

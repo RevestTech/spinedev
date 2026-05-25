@@ -79,6 +79,20 @@ def test_list_decisions_returns_seeded_card(client, oidc_user) -> None:
     assert any(item["decision_id"] == "d-list" for item in body["items"])
 
 
+def test_list_decisions_omits_body_by_default(client, oidc_user) -> None:
+    """List view strips bodies — detail fetch returns full text."""
+    _seed("d-body")
+    listed = client.get("/api/v2/decisions", headers={"Authorization": "Bearer t"})
+    assert listed.status_code == 200
+    row = next(i for i in listed.json()["items"] if i["decision_id"] == "d-body")
+    assert row["body"] == ""
+    assert row["metadata"].get("body_chars", 0) > 0
+
+    detail = client.get("/api/v2/decisions/d-body", headers={"Authorization": "Bearer t"})
+    assert detail.status_code == 200
+    assert "release manager" in detail.json()["body"]
+
+
 def test_get_decision_404_when_missing(client, oidc_user) -> None:
     """Unknown decision_id -> 404 with structured error envelope."""
     r = client.get("/api/v2/decisions/nope", headers={"Authorization": "Bearer t"})

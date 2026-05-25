@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from datetime import UTC, datetime
 from typing import Any, Literal
 
@@ -36,11 +37,14 @@ RecoveryAction = Literal[
     "retry_code_review",
     "retry_devops",
     "retry_qa",
+    "reset_fix_loop",
     "resume",
 ]
 
 _TERMINAL_PHASES = frozenset({"retro", "completed", "terminated"})
-_INFLIGHT_STALE_SECONDS = 20 * 60
+# Background dispatches that outlive this window are treated as orphaned (Hub
+# restart, worker crash, hung MCP call). Must stay below the SPA stale threshold.
+_INFLIGHT_STALE_SECONDS = 5 * 60
 MAX_CODE_FIX_ITERATIONS = 3
 
 
@@ -60,6 +64,16 @@ def fix_loop_exhausted(project: dict[str, Any]) -> bool:
     return code_fix_iteration_count(md) >= MAX_CODE_FIX_ITERATIONS
 
 
+async def increment_code_fix_iteration(project_uuid: str) -> int:
+    """Bump remediate counter once after engineer ``code_review_blocked`` completes."""
+    project = await _load_project_full(project_uuid)
+    if project is None:
+        return 0
+    next_iter = code_fix_iteration_count(project.get("metadata")) + 1
+    await _persist_metadata_patch(project_uuid, {"code_fix_iteration": next_iter})
+    return next_iter
+
+
 async def fix_loop_guard(
     project: dict[str, Any],
     *,
@@ -73,9 +87,9 @@ async def fix_loop_guard(
             "error": "fix_loop_exhausted",
             "message": (
                 f"Automated remediation already ran {n} time(s) and security review "
-                f"is still blocked (maximum {MAX_CODE_FIX_ITERATIONS} attempts). "
-                "Edit findings manually in the Code tab, reject the blocked review to skip "
-                "remediation, or run security review again after editing."
+                f"is still blocked (maximum {MAX_CODE_FIX_ITERATIONS} auto attempts). "
+                "Use **Run engineer remediation again** on the Pipeline tab to dispatch "
+                "another AI fix pass, or **Run security review** after remediation completes."
             ),
             "code_fix_iteration": n,
             "max_code_fix_iterations": MAX_CODE_FIX_ITERATIONS,
@@ -114,6 +128,33 @@ def _dispatch_in_flight_stale(inflight: Any) -> bool:
         return age > _INFLIGHT_STALE_SECONDS
     except Exception:  # noqa: BLE001
         return True
+
+
+async def _reap_stale_dispatch_inflight(
+    project: dict[str, Any],
+    *,
+    emit_pulse: bool = False,
+) -> bool:
+    """Clear orphaned ``recovery_dispatch_in_flight`` when past the stale window."""
+    md = project.get("metadata") or {}
+    inflight = md.get("recovery_dispatch_in_flight")
+    if not inflight or not _dispatch_in_flight_stale(inflight):
+        return False
+    project_uuid = project["project_uuid"]
+    await _persist_metadata_patch(project_uuid, {"recovery_dispatch_in_flight": None})
+    if emit_pulse:
+        try:
+            from shared.api.routes.decisions import publish_project_pulse  # noqa: PLC0415
+
+            publish_project_pulse(
+                project_uuid=project_uuid,
+                dispatch_in_flight=False,
+                refresh_artifacts=False,
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        await publish_recovery_pulse(project_uuid, dispatch_in_flight=None)
+    return True
 
 
 class RecoveryActionSpec(BaseModel):
@@ -336,20 +377,44 @@ def _action_specs(project: dict[str, Any]) -> list[RecoveryActionSpec]:
                 label="Run security review",
                 description="Run the security engineer review against the current workspace.",
             ))
-        if (md.get("code_review_blocked") or md.get("code_review_md")) and not fix_loop_exhausted(project):
+        if (md.get("code_review_blocked") or md.get("code_review_md")) and (
+            md.get("code_intro_md") or md.get("code_files")
+        ):
             n = code_fix_iteration_count(md)
+            exhausted = fix_loop_exhausted(project)
             iter_note = (
                 f" (attempt {n + 1} of {MAX_CODE_FIX_ITERATIONS})"
-                if md.get("code_review_blocked")
+                if md.get("code_review_blocked") and not exhausted
                 else ""
+            )
+            label = (
+                "Fix security findings (auto re-review)"
+                if exhausted
+                else "Apply security remediation"
+            )
+            desc = (
+                "Run targeted engineer remediation from the latest security findings, "
+                "then automatically re-run security review — no full regen."
+                if exhausted
+                else (
+                    "Send the engineer role the latest security findings"
+                    f"{iter_note}. Security review re-runs automatically after remediation."
+                )
             )
             specs.append(RecoveryActionSpec(
                 action="retry_engineer_remediate",
-                label="Apply security remediation",
+                label=label,
+                description=desc,
+            ))
+        if fix_loop_exhausted(project) or (
+            md.get("code_review_blocked") and code_fix_iteration_count(md) > 0
+        ):
+            specs.append(RecoveryActionSpec(
+                action="reset_fix_loop",
+                label="Reset fix loop",
                 description=(
-                    "Send the engineer role the latest security findings"
-                    f"{iter_note}. Prefer approving the blocked review in "
-                    "Decisions — that approval dispatches the same remediation step."
+                    "Clear the remediation attempt counter and security block flag so "
+                    "automated fix passes can run again from zero."
                 ),
             ))
         if md.get("code_review_md") and not md.get("code_review_blocked"):
@@ -394,7 +459,9 @@ def _pick_resume_action(project: dict[str, Any]) -> RecoveryAction | None:
     if on_disk == 0 and (meta_files or phase.startswith("build")):
         if md.get("code_review_blocked") and md.get("code_review_md"):
             if fix_loop_exhausted(project):
-                return "retry_code_review" if (md.get("code_intro_md") or md.get("code_files")) else None
+                if md.get("code_intro_md") or md.get("code_files"):
+                    return "retry_engineer_remediate"
+                return None
             return "retry_engineer_remediate"
         if md.get("sprint_plan_md"):
             return "retry_engineer"
@@ -402,7 +469,7 @@ def _pick_resume_action(project: dict[str, Any]) -> RecoveryAction | None:
     if md.get("code_review_blocked"):
         if fix_loop_exhausted(project):
             if md.get("code_intro_md") or md.get("code_files"):
-                return "retry_code_review"
+                return "retry_engineer_remediate"
             return None
         return "retry_engineer_remediate"
     if phase.startswith("build"):
@@ -511,6 +578,45 @@ def _workspace_files_on_disk(project: dict[str, Any]) -> int:
     return count_workspace_files(project["project_uuid"], project.get("metadata") or {})
 
 
+async def clear_orphaned_recovery_dispatches_on_startup() -> int:
+    """Hub restart kills in-flight asyncio tasks — drop stale metadata flags."""
+    from shared.api.dependencies import get_db_pool_raw
+
+    pool = get_db_pool_raw()
+    if pool is None:
+        return 0
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT project_uuid::text AS project_uuid "
+            "FROM spine_lifecycle.project "
+            "WHERE metadata ? 'recovery_dispatch_in_flight' "
+            "AND status NOT IN ('terminated', 'completed')",
+        )
+        tag = await conn.execute(
+            "UPDATE spine_lifecycle.project "
+            "SET metadata = metadata - 'recovery_dispatch_in_flight', "
+            "updated_at = now() "
+            "WHERE metadata ? 'recovery_dispatch_in_flight' "
+            "AND status NOT IN ('terminated', 'completed')",
+        )
+    for row in rows:
+        try:
+            from shared.api.routes.decisions import publish_project_pulse  # noqa: PLC0415
+
+            publish_project_pulse(
+                project_uuid=row["project_uuid"],
+                dispatch_in_flight=False,
+                refresh_artifacts=False,
+            )
+            await publish_recovery_pulse(row["project_uuid"], dispatch_in_flight=None)
+        except Exception:  # noqa: BLE001
+            pass
+    try:
+        return int(str(tag).split()[-1])
+    except (ValueError, IndexError):
+        return 0
+
+
 async def recovery_status(project_id: str) -> dict[str, Any]:
     project = await _load_project_full(project_id)
     if project is None:
@@ -520,10 +626,10 @@ async def recovery_status(project_id: str) -> dict[str, Any]:
     pending = pending_count_for_project(project, pending_index)
     phase = str(project.get("current_phase") or "")
     md = project.get("metadata") or {}
-    inflight = md.get("recovery_dispatch_in_flight")
-    if inflight and _dispatch_in_flight_stale(inflight):
-        await _persist_metadata_patch(project["project_uuid"], {"recovery_dispatch_in_flight": None})
+    if await _reap_stale_dispatch_inflight(project, emit_pulse=True):
         inflight = None
+    else:
+        inflight = md.get("recovery_dispatch_in_flight")
     actions = _action_specs(project)
     reasons = _stuck_reasons(project, pending)
     stuck = _is_stuck(project, pending)
@@ -543,7 +649,65 @@ async def recovery_status(project_id: str) -> dict[str, Any]:
         "code_fix_iteration": code_fix_iteration_count(md),
         "max_code_fix_iterations": MAX_CODE_FIX_ITERATIONS,
         "fix_loop_exhausted": fix_loop_exhausted(project),
+        "code_review_blocked": bool(md.get("code_review_blocked")),
+        "code_files_count": (
+            md.get("code_files_count")
+            if isinstance(md.get("code_files_count"), int)
+            else len(md.get("code_files") or [])
+            if isinstance(md.get("code_files"), list)
+            else 0
+        ),
     }
+
+
+_RECOVERY_PULSE_KEYS = (
+    "stuck",
+    "reasons",
+    "pending_decisions",
+    "recommended_action",
+    "last_role_failure",
+    "dispatch_in_flight",
+    "actions",
+    "code_fix_iteration",
+    "max_code_fix_iterations",
+    "fix_loop_exhausted",
+    "current_phase",
+    "workspace_files_on_disk",
+    "code_review_blocked",
+    "code_files_count",
+)
+
+
+async def publish_recovery_pulse(project_id: str, **extra: Any) -> None:
+    """Push recovery snapshot over the decisions SSE stream (SPA-first updates)."""
+    try:
+        status = await recovery_status(project_id)
+        if not status.get("ok"):
+            return
+        from shared.api.routes.decisions import publish_event  # noqa: PLC0415
+
+        publish_event({
+            "type": "recovery_pulse",
+            "project_uuid": project_id,
+            "ts": time.time(),
+            **{k: status[k] for k in _RECOVERY_PULSE_KEYS if k in status},
+            **extra,
+        })
+    except Exception as exc:  # noqa: BLE001
+        logger.debug(
+            "recovery_pulse_publish_failed",
+            extra={"project_id": project_id, "error": str(exc)},
+        )
+
+
+def schedule_recovery_pulse(project_id: str, **extra: Any) -> None:
+    """Fire-and-forget recovery pulse for sync callers (post-ack emit path)."""
+    try:
+        asyncio.get_running_loop().create_task(
+            publish_recovery_pulse(project_id, **extra),
+        )
+    except RuntimeError:
+        pass
 
 
 async def _run_recovery_orchestration(
@@ -555,25 +719,86 @@ async def _run_recovery_orchestration(
 ) -> None:
     """Background worker — engineer/verify roles can run many minutes."""
     project_uuid = project["project_uuid"]
+    dispatch_params = dict(params)
     try:
+        if dispatch_params.get("kind") == "code_review_blocked":
+            md = project.get("metadata") or {}
+            if not str(md.get("code_review_md") or "").strip():
+                scanned = await _orchestrate_hub_role(
+                    kind="code_approval",
+                    project=project,
+                    actor=actor,
+                )
+                if scanned:
+                    project = (await _load_project_full(project_uuid)) or project
+                    md = project.get("metadata") or {}
+                    if not md.get("code_review_blocked"):
+                        return
+                    review_md = md.get("code_review_md") or ""
+                    extra = dict(dispatch_params.get("extra") or {})
+                    extra["extra_context"] = (
+                        "## Code review findings (recovery scan)\n\n"
+                        + str(review_md)[:12000]
+                    )
+                    dispatch_params["extra"] = extra
+
         handled = await _orchestrate_hub_role(
-            kind=params["kind"],
+            kind=dispatch_params["kind"],
             project=project,
             actor=actor,
-            approval_card_kind=params.get("approval_card_kind"),
-            next_phase=params.get("next_phase"),
-            extra=params.get("extra"),
+            approval_card_kind=dispatch_params.get("approval_card_kind"),
+            next_phase=dispatch_params.get("next_phase"),
+            extra=dispatch_params.get("extra"),
         )
         if not handled:
             from shared.api.routes._post_ack import _enqueue_orchestrator_gap  # noqa: PLC0415
 
             await _enqueue_orchestrator_gap(
-                kind=params["kind"],
+                kind=dispatch_params["kind"],
                 project=project,
                 expected_role=expected_role,
             )
     finally:
         await _persist_metadata_patch(project_uuid, {"recovery_dispatch_in_flight": None})
+        try:
+            from shared.api.routes.decisions import publish_project_pulse  # noqa: PLC0415
+
+            publish_project_pulse(
+                project_uuid=project_uuid,
+                dispatch_in_flight=False,
+                refresh_artifacts=False,
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        await publish_recovery_pulse(project_uuid)
+
+
+async def recovery_cancel_inflight(project_id: str, *, actor: str) -> dict[str, Any]:
+    """Clear a stuck recovery dispatch flag (Hub restart / orphaned asyncio task)."""
+    project = await _load_project_full(project_id)
+    if project is None:
+        return {"ok": False, "error": "project_not_found"}
+    md = project.get("metadata") or {}
+    inflight = md.get("recovery_dispatch_in_flight")
+    if not inflight:
+        await publish_recovery_pulse(project["project_uuid"])
+        return {"ok": True, "cleared": False, "message": "No dispatch was marked in flight."}
+    await _persist_metadata_patch(project["project_uuid"], {"recovery_dispatch_in_flight": None})
+    from shared.api.routes.decisions import publish_project_pulse  # noqa: PLC0415
+    from shared.runtime.role_activity import role_log  # noqa: PLC0415
+
+    publish_project_pulse(
+        project_uuid=project["project_uuid"],
+        dispatch_in_flight=False,
+        refresh_artifacts=False,
+    )
+    role_log(
+        project["project_uuid"],
+        str(inflight.get("dispatch_kind") or "recovery"),
+        f"Recovery dispatch cleared by {actor} (was `{inflight.get('action', 'unknown')}`)",
+    )
+    await publish_recovery_pulse(project["project_uuid"], dispatch_in_flight=None)
+    return {"ok": True, "cleared": True}
 
 
 async def recovery_dispatch(
@@ -582,6 +807,7 @@ async def recovery_dispatch(
     *,
     actor: str,
     note: str | None = None,
+    auto_loop: bool = False,
 ) -> dict[str, Any]:
     project = await _load_project_full(project_id)
     if project is None:
@@ -595,6 +821,9 @@ async def recovery_dispatch(
         resolved = picked
 
     md = project.get("metadata") or {}
+    if await _reap_stale_dispatch_inflight(project, emit_pulse=True):
+        md = {**md, "recovery_dispatch_in_flight": None}
+        project = {**project, "metadata": md}
     inflight = md.get("recovery_dispatch_in_flight")
     if inflight and not _dispatch_in_flight_stale(inflight):
         return {
@@ -607,13 +836,46 @@ async def recovery_dispatch(
             ),
             "dispatch_in_flight": inflight,
         }
-    if inflight and _dispatch_in_flight_stale(inflight):
-        await _persist_metadata_patch(project["project_uuid"], {"recovery_dispatch_in_flight": None})
+
+    if resolved == "reset_fix_loop":
+        if not fix_loop_exhausted(project) and not (
+            md.get("code_review_blocked") and code_fix_iteration_count(md) > 0
+        ):
+            return {
+                "ok": False,
+                "error": "action_not_allowed",
+                "message": "Fix loop reset is only available when remediation is blocked or exhausted.",
+            }
+        project_uuid = project["project_uuid"]
+        await _persist_metadata_patch(project_uuid, {
+            "code_review_blocked": False,
+            "code_fix_iteration": 0,
+        })
+        from shared.runtime.role_activity import role_log  # noqa: PLC0415
+
+        role_log(
+            project_uuid,
+            "recovery",
+            f"Fix loop reset by {actor} (counter cleared, security block lifted)",
+        )
+        await publish_recovery_pulse(project_uuid)
+        return {
+            "ok": True,
+            "action": "reset_fix_loop",
+            "message": "Fix loop counter reset — automated remediation can run again.",
+        }
 
     if resolved == "retry_engineer_remediate":
-        guard = await fix_loop_guard(project, block_on_pending=True)
-        if guard is not None:
-            return guard
+        if auto_loop:
+            if fix_loop_exhausted(project):
+                guard = await fix_loop_guard(project, block_on_pending=False)
+                if guard is not None:
+                    return guard
+        else:
+            # Manual remediate: never blocked by fix_loop_exhausted; only pending cards.
+            guard = await fix_loop_guard(project, block_on_pending=True)
+            if guard is not None and guard.get("error") == "pending_decisions":
+                return guard
 
     allowed = {s.action for s in _action_specs(project)}
     if resolved not in allowed:
@@ -623,14 +885,6 @@ async def recovery_dispatch(
             "message": f"Action `{resolved}` is not valid for phase `{project.get('current_phase')}`.",
             "allowed": sorted(allowed),
         }
-
-    if resolved == "retry_engineer_remediate":
-        next_iter = code_fix_iteration_count(md) + 1
-        await _persist_metadata_patch(project["project_uuid"], {
-            "code_fix_iteration": next_iter,
-        })
-        md = {**md, "code_fix_iteration": next_iter}
-        project = {**project, "metadata": md}
 
     params = _dispatch_params(resolved, project, note)
     expected_role = params.pop("expected_role", None)
@@ -654,6 +908,16 @@ async def recovery_dispatch(
             "started_at": datetime.now(UTC).isoformat(),
         },
     })
+
+    from shared.api.routes.decisions import publish_project_pulse  # noqa: PLC0415
+
+    publish_project_pulse(
+        project_uuid=project_uuid,
+        current_phase=project.get("current_phase"),
+        dispatch_in_flight=True,
+        dispatch_kind=params["kind"],
+    )
+    schedule_recovery_pulse(project_uuid)
 
     from shared.runtime.role_activity import role_log  # noqa: PLC0415
 
@@ -679,6 +943,26 @@ async def recovery_dispatch(
     }
 
 
+def schedule_auto_engineer_remediate(project_id: str, *, actor: str = "hub") -> None:
+    """Auto-dispatch engineer remediate after security review FAIL (under max iterations).
+
+    Skips pending-decision guard so the loop is not blocked by the review card we
+    just enqueued — iteration is counted only when remediate completes.
+    """
+    async def _run() -> None:
+        await recovery_dispatch(
+            project_id,
+            "retry_engineer_remediate",
+            actor=actor,
+            auto_loop=True,
+        )
+
+    try:
+        asyncio.get_running_loop().create_task(_run())
+    except RuntimeError:
+        pass
+
+
 def retry_action_for_dispatch_kind(kind: str) -> RecoveryAction | None:
     """Map a failed orchestrator ack kind → recovery action for role_failure cards."""
     return {
@@ -701,10 +985,16 @@ __all__ = [
     "count_pending_for_project",
     "fix_loop_exhausted",
     "fix_loop_guard",
+    "increment_code_fix_iteration",
     "pending_count_for_project",
     "pending_counts_by_project",
     "recovery_dispatch",
+    "recovery_cancel_inflight",
     "recovery_status",
     "recovery_summary",
     "retry_action_for_dispatch_kind",
+    "clear_orphaned_recovery_dispatches_on_startup",
+    "publish_recovery_pulse",
+    "schedule_auto_engineer_remediate",
+    "schedule_recovery_pulse",
 ]

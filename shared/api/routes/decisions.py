@@ -108,6 +108,20 @@ class DecisionActionResponse(BaseModel):
     audit_event_uuid: str
 
 
+def _card_list_view(card: DecisionCard) -> DecisionCard:
+    """Strip artifact bodies from list/SSE payloads — fetch via GET /{id}."""
+    body = card.body or ""
+    meta = dict(card.metadata or {})
+    if body:
+        meta.setdefault("body_chars", len(body))
+    return card.model_copy(update={"body": "", "metadata": meta})
+
+
+def _card_broadcast(card: DecisionCard) -> dict[str, Any]:
+    """SSE-safe card dict (no multi-KB bodies on the live stream)."""
+    return _card_list_view(card).model_dump()
+
+
 # ---------------------------------------------------------------------------
 # Persistent store (V36 spine_lifecycle.decision_card) + SSE cache.
 # ---------------------------------------------------------------------------
@@ -341,7 +355,7 @@ class _DecisionStore:
         as a background task so the call site stays non-blocking.
         """
         self._cards[card.decision_id] = card
-        self._publish({"type": "card_created", "card": card.model_dump()})
+        self._publish({"type": "card_created", "card": _card_broadcast(card)})
         if self._db is not None:
             try:
                 loop = asyncio.get_running_loop()
@@ -353,7 +367,7 @@ class _DecisionStore:
     async def aput(self, card: DecisionCard) -> None:
         """Async variant — awaits persistence before returning."""
         self._cards[card.decision_id] = card
-        self._publish({"type": "card_created", "card": card.model_dump()})
+        self._publish({"type": "card_created", "card": _card_broadcast(card)})
         await self._persist_put(card)
 
     def get(self, decision_id: str) -> Optional[DecisionCard]:
@@ -392,7 +406,7 @@ class _DecisionStore:
             return None
         card = card.model_copy(update={"status": new_status})
         self._cards[decision_id] = card
-        self._publish({"type": "card_updated", "card": card.model_dump()})
+        self._publish({"type": "card_updated", "card": _card_broadcast(card)})
         return card
 
     async def atransition(
@@ -410,7 +424,7 @@ class _DecisionStore:
                     card = persisted
         else:
             self._cards[decision_id] = card
-            self._publish({"type": "card_updated", "card": card.model_dump()})
+            self._publish({"type": "card_updated", "card": _card_broadcast(card)})
         return card
 
     def subscribe(self) -> asyncio.Queue[dict[str, Any]]:
@@ -446,6 +460,16 @@ def publish_event(event: dict[str, Any]) -> None:
     without waiting for the next approval card.
     """
     _STORE._publish(event)  # noqa: SLF001 — same module ownership
+
+
+def publish_project_pulse(*, project_uuid: str, **fields: Any) -> None:
+    """Lightweight project state push for SSE-first SPA (no polling)."""
+    publish_event({
+        "type": "project_pulse",
+        "project_uuid": project_uuid,
+        "ts": time.time(),
+        **fields,
+    })
 
 
 def get_store() -> _DecisionStore:
@@ -497,6 +521,10 @@ async def list_decisions(
         default="project",
         description="project = approvals only (default); all = include hub inbox cards",
     ),
+    include_body: bool = Query(
+        default=False,
+        description="When false (default), omit card bodies; use GET /{id} for full text.",
+    ),
 ) -> DecisionList:
     """List decisions visible to the caller (Wave 3.5: DB + cache merge).
 
@@ -506,6 +534,8 @@ async def list_decisions(
     items = await _STORE.alist(status_filter=status_filter)
     if scope == "project":
         items = [c for c in items if is_project_decision_card(c)]
+    if not include_body:
+        items = [_card_list_view(c) for c in items]
     return DecisionList(items=items, total=len(items))
 
 
@@ -652,4 +682,6 @@ __all__ = [
     "aenqueue_decision",
     "get_store",
     "set_decisions_db",
+    "publish_event",
+    "publish_project_pulse",
 ]

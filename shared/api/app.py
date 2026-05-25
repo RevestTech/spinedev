@@ -294,6 +294,24 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception as exc:  # noqa: BLE001
         logger.warning("master_briefing_start_failed", extra={"error": str(exc)})
 
+    if ok:
+        try:
+            from shared.api.routes._project_recovery import (  # noqa: PLC0415
+                clear_orphaned_recovery_dispatches_on_startup,
+            )
+
+            cleared = await clear_orphaned_recovery_dispatches_on_startup()
+            if cleared:
+                logger.info(
+                    "recovery_dispatch_orphans_cleared",
+                    extra={"count": cleared},
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "recovery_dispatch_orphan_clear_failed",
+                extra={"error": str(exc)},
+            )
+
     try:
         yield
     finally:

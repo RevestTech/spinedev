@@ -30,6 +30,17 @@ def test_requires_project_or_correlation(client) -> None:
     assert r.json()["detail"]["error_code"] == "invalid_input"
 
 
+def test_uuid_project_id_resolves(client, mock_db_pool) -> None:
+    """UUID project_id from the Hub SPA resolves to numeric PK rows."""
+    uid = "0b7061be-c5c7-465c-a250-1298a0fb1acd"
+    r = client.get("/api/v2/audit", params={"project_id": uid, "limit": "5"})
+    assert r.status_code == 200
+    sql = mock_db_pool.queries[-1]
+    assert "spine_lifecycle.project" in sql
+    assert uid in sql
+    assert "subject_id" in sql
+
+
 def test_filter_query_includes_all_axes(client, mock_db_pool) -> None:
     """All optional filters appear in the generated WHERE clause."""
     r = client.get(

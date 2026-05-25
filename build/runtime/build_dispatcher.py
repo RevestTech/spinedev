@@ -248,13 +248,40 @@ class IngestResult:
 _REPO_ROOT_FROM_HERE = Path(__file__).resolve().parents[2]
 _DB_ENV_KEYS = ("POSTGRES_USER", "POSTGRES_PASSWORD", "POSTGRES_HOST_PORT",
                 "POSTGRES_DB", "POSTGRES_BIND_HOST")
-# Fallback constants mirror orchestrator/lib/_env_loader.sh exactly so a
-# bare-Python `build_dispatch` call lands on the same Postgres as the bash CLI.
-_DB_ENV_DEFAULTS = {
-    "POSTGRES_USER": "spine", "POSTGRES_PASSWORD": "spine",
-    "POSTGRES_HOST_PORT": "33001", "POSTGRES_DB": "spine",
+# Fallback constants mirror orchestrator/lib/_env_loader.sh + hub dev compose.
+_DB_ENV_HUB_DEFAULTS = {
+    "POSTGRES_USER": "spine",
+    "POSTGRES_PASSWORD": "smoke-test-db-pw",
+    "POSTGRES_HOST_PORT": "33099",
+    "POSTGRES_DB": "spine",
     "POSTGRES_BIND_HOST": "127.0.0.1",
 }
+_DB_ENV_LEGACY_DEFAULTS = {
+    "POSTGRES_USER": "spine",
+    "POSTGRES_PASSWORD": "spine",
+    "POSTGRES_HOST_PORT": "33001",
+    "POSTGRES_DB": "spine",
+    "POSTGRES_BIND_HOST": "127.0.0.1",
+}
+
+
+def _hub_postgres_running() -> bool:
+    """True when v3 hub/docker-compose.yml owns Postgres (spine-hub-postgres)."""
+    try:
+        proc = subprocess.run(
+            [
+                "docker", "ps",
+                "--filter", "name=^/spine-hub-postgres$",
+                "--format", "{{.Names}}",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return proc.returncode == 0 and proc.stdout.strip() == "spine-hub-postgres"
 
 
 def _load_db_env_file(path: Path) -> dict[str, str]:
@@ -297,11 +324,14 @@ def _db_url() -> str:
         ev = os.environ.get(key)
         if ev:
             parts[key] = ev
-    file_path = Path(os.environ.get("SPINE_ENV_FILE") or (_REPO_ROOT_FROM_HERE / "db/.env"))
-    from_file = _load_db_env_file(file_path)
-    for k, v in from_file.items():
-        parts.setdefault(k, v)
-    for k, v in _DB_ENV_DEFAULTS.items():
+    hub_mode = _hub_postgres_running()
+    if not hub_mode:
+        file_path = Path(os.environ.get("SPINE_ENV_FILE") or (_REPO_ROOT_FROM_HERE / "db/.env"))
+        from_file = _load_db_env_file(file_path)
+        for k, v in from_file.items():
+            parts.setdefault(k, v)
+    defaults = _DB_ENV_HUB_DEFAULTS if hub_mode else _DB_ENV_LEGACY_DEFAULTS
+    for k, v in defaults.items():
         parts.setdefault(k, v)
     composed = (
         f"postgresql://{parts['POSTGRES_USER']}:{parts['POSTGRES_PASSWORD']}"

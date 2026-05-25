@@ -45,6 +45,23 @@ def _esc(s: str) -> str:
     return s.replace("'", "''")
 
 
+def _project_id_clause(project_id: str) -> str:
+    """Match audit rows for a project id or UUID.
+
+    ``audit_event.project_id`` stores the numeric lifecycle PK, while Hub
+    surfaces (projects list, SPA links) use ``project_uuid``. Accept both,
+    and also match ``subject_id`` when ``subject_type='project'``.
+    """
+    pid = _esc(project_id)
+    if project_id.isdigit():
+        return f"project_id::text = '{pid}'"
+    return (
+        f"(project_id::text = (SELECT id::text FROM spine_lifecycle.project "
+        f"WHERE project_uuid::text = '{pid}' LIMIT 1) "
+        f"OR (subject_type = 'project' AND subject_id = '{pid}'))"
+    )
+
+
 def _query(
     *,
     project_id: str | None,
@@ -67,7 +84,7 @@ def _query(
     """
     where = ["1=1"]
     if project_id:
-        where.append(f"project_id::text = '{_esc(project_id)}'")
+        where.append(_project_id_clause(project_id))
     if correlation_id:
         where.append(f"correlation_id::text = '{_esc(correlation_id)}'")
     if subsystem:
@@ -146,7 +163,7 @@ async def list_audit(
         except (_json.JSONDecodeError, TypeError, ValueError):
             next_cursor = None
     return {
-        "ok": True, "items": items,
+        "ok": True, "items": items, "count": len(items),
         "project_id": project_id, "correlation_id": correlation_id,
         "subsystem": subsystem, "role": role, "action": action,
         "from_ts": from_ts.isoformat() if from_ts else None,
