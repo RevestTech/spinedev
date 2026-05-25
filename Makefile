@@ -23,14 +23,20 @@ doctor: ## Run `spine doctor` (extends with venv + tron pg + key/import checks)
 flyway-sync: ## Reconcile flyway_schema_history with the DB (F2 fix; idempotent)
 	@bash tools/spine-flyway-sync.sh
 
-nuke: ## DESTROY .venv + both pg volumes (asks first); pair with `make bootstrap`
-	@printf 'This will DELETE: .venv, spine_pgdata volume, spine_tron postgres volume.\n'
+nuke: ## DESTROY .venv + hub pg volumes (asks first); pair with `make bootstrap`
+	@printf 'This will DELETE: .venv, spine-hub postgres + tron postgres volumes.\n'
 	@printf "Type 'yes' to continue: "
 	@read -r confirm; \
 	if [ "$$confirm" = "yes" ]; then \
 	  rm -rf .venv && printf '  removed .venv\n'; \
-	  ( cd db     && docker compose down -v >/dev/null 2>&1 ) && printf '  removed spine pg volume\n' || printf '  (spine pg already down)\n'; \
-	  ( cd verify && docker compose down -v >/dev/null 2>&1 ) && printf '  removed tron  pg volume\n' || printf '  (tron pg already down)\n'; \
+	  env_file=$$(mktemp -t spine-nuke.XXXXXX.env); \
+	  . tools/_spine_hub_compose_env.sh; \
+	  _spine_hub_compose_write_env "$$env_file"; \
+	  docker compose -f hub/docker-compose.yml --env-file "$$env_file" down -v >/dev/null 2>&1 \
+	    && printf '  removed hub postgres + tron volumes\n' || printf '  (hub stack already down)\n'; \
+	  rm -f "$$env_file"; \
+	  ( cd db     && docker compose down -v >/dev/null 2>&1 ) || true; \
+	  ( cd verify && docker compose down -v >/dev/null 2>&1 ) || true; \
 	  printf 'nuke complete. Run `make bootstrap` to rebuild.\n'; \
 	else \
 	  printf 'aborted.\n'; \

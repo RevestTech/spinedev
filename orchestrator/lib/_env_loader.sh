@@ -21,7 +21,7 @@
 #      Any POSTGRES_PASSWORD entry in that file is IGNORED and explicitly
 #      unset to defeat accidental promotion of plaintext secrets.
 #   4. Hardcoded non-secret fallbacks for the dev stack (user=spine,
-#      host=127.0.0.1, port=33001, db=spine).
+#      host=127.0.0.1, port=33099, db=spine).
 #
 # The password is always sourced from the vault at `spine/postgres/password`.
 # If the vault is not yet configured, SPINE_DB_URL is NOT exported and a
@@ -62,7 +62,7 @@ if [[ -z "${SPINE_DB_URL:-}" ]]; then
   # Non-secret fallbacks for the dev stack.
   : "${POSTGRES_USER:=spine}"
   : "${POSTGRES_BIND_HOST:=127.0.0.1}"
-  : "${POSTGRES_HOST_PORT:=33001}"
+  : "${POSTGRES_HOST_PORT:=33099}"
   : "${POSTGRES_DB:=spine}"
 
   export POSTGRES_USER POSTGRES_BIND_HOST POSTGRES_HOST_PORT POSTGRES_DB

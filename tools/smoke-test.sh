@@ -54,14 +54,22 @@ _warn() { _emit WARN "$1" "${2:-}"; }; _skip() { _emit SKIP "$1" "${2:-}"; }
 _info() { _emit INFO "$1" "${2:-}"; }
 _phase_banner() { [[ "$FORMAT" == text ]] && printf '\n%s %s\n' "$(_color bold "── Phase $1:")" "$2"; return 0; }
 
-# Loads db/.env to build SPINE_DB_URL (the F8/F9 fix).
+# Builds SPINE_DB_URL — prefers spine-hub-postgres (v3 laptop), else db/.env (legacy).
 _load_db_env() {
-  POSTGRES_DB=spine; POSTGRES_USER=spine; POSTGRES_PASSWORD=spine
-  POSTGRES_HOST_PORT=33000
-  [[ -f "$DB_ENV_FILE" ]] && { set -a; . "$DB_ENV_FILE"; set +a; }
-  : "${POSTGRES_HOST_PORT:=33000}"
+  POSTGRES_DB=spine
+  POSTGRES_USER=spine
+  POSTGRES_PASSWORD=smoke-test-db-pw
+  POSTGRES_HOST_PORT=33099
+  if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx spine-hub-postgres; then
+    : # hub/docker-compose.yml dev defaults (tools/_spine_hub_compose_env.sh)
+  elif [[ -f "$DB_ENV_FILE" ]]; then
+    set -a; . "$DB_ENV_FILE"; set +a
+    : "${POSTGRES_HOST_PORT:=33001}"
+  else
+    : "${POSTGRES_HOST_PORT:=33099}"
+  fi
   SPINE_DB_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@127.0.0.1:${POSTGRES_HOST_PORT}/${POSTGRES_DB}"
-  export SPINE_DB_URL
+  export SPINE_DB_URL POSTGRES_PASSWORD PGPASSWORD="${POSTGRES_PASSWORD}"
 }
 _psql() { psql "$SPINE_DB_URL" -v ON_ERROR_STOP=1 -A -t -X -q "$@"; }
 _db_alive() { command -v psql >/dev/null 2>&1 && _psql -c 'SELECT 1;' >/dev/null 2>&1; }
@@ -71,9 +79,13 @@ phase1_env() {
   _phase_banner 1 "environment pre-check"
   if command -v docker >/dev/null 2>&1; then
     _pass env.docker "docker on PATH"
-    local s; s="$(docker ps --filter 'name=spine_postgres' --format '{{.Status}}' 2>/dev/null || true)"
-    [[ -n "$s" ]] && _pass env.postgres_container "spine_postgres: $s" \
-      || _fail env.postgres_container "spine_postgres not running — 'cd db && make up'"
+    local s pg_name=""
+    for pg_name in spine-hub-postgres spine_postgres; do
+      s="$(docker ps --filter "name=^/${pg_name}$" --format '{{.Status}}' 2>/dev/null || true)"
+      [[ -n "$s" ]] && break
+    done
+    [[ -n "$s" ]] && _pass env.postgres_container "${pg_name}: $s" \
+      || _fail env.postgres_container "spine postgres not running — 'bash tools/hub-up.sh' or 'make bootstrap'"
   else _fail env.docker "docker not on PATH"; fi
 
   if command -v python3 >/dev/null 2>&1; then
@@ -99,7 +111,7 @@ phase2_db() {
   _phase_banner 2 "DB schema verification"; _load_db_env
   if ! command -v psql >/dev/null 2>&1; then _skip db.connect "psql missing"; return 0; fi
   if ! _psql -c 'SELECT 1;' >/dev/null 2>&1; then
-    _fail db.connect "cannot connect to $SPINE_DB_URL (db/.env; F8/F9)"; return 0
+    _fail db.connect "cannot connect to $SPINE_DB_URL (hub-up or db/.env; F8/F9)"; return 0
   fi
   _pass db.connect "connected to $SPINE_DB_URL"
 

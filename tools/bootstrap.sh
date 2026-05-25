@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tools/bootstrap.sh — one-command cold-start for Spine v2.
+# tools/bootstrap.sh — one-command cold-start for Spine v2/v3 dev.
 #
 # Invoked from the top-level `make bootstrap`. Idempotent: a second run on
 # a healthy install is a fast no-op (skips venv create, skips already-
@@ -10,9 +10,8 @@
 #   1. preflight  — check docker / python3>=3.10 / psql / make on PATH
 #   2. venv       — python3 -m venv .venv if missing
 #   3. pip        — install requirements.txt into .venv (skip if all sat)
-#   4. spine pg   — bring up db/docker-compose.yml postgres, wait healthy
-#   5. tron pg    — bring up verify/docker-compose.yml postgres (override
-#                   gives container=spine_tron_postgres on 33010)
+#   4. spine pg   — hub/docker-compose.yml postgres (+ tron-postgres)
+#   5. tron pg    — same compose project (spine_tron_postgres on 33010)
 #   6. flyway     — sync history (F2 fix), then `flyway migrate`
 #   7. alembic    — TRON migrations via .venv/bin/python tools/_tron_alembic_upgrade.py
 #   8. smoke      — bash tools/smoke-test.sh  (acceptance gate)
@@ -30,10 +29,23 @@ VENV_DIR="$REPO_ROOT/.venv"
 VENV_PY="$VENV_DIR/bin/python3"
 VENV_PIP="$VENV_DIR/bin/pip"
 REQUIREMENTS="$REPO_ROOT/requirements.txt"
-DB_DIR="$REPO_ROOT/db"
-VERIFY_DIR="$REPO_ROOT/verify"
-SPINE_PG_CONTAINER="spine_postgres"
+HUB_COMPOSE="$REPO_ROOT/hub/docker-compose.yml"
+COMPOSE_ENV="$(mktemp -t spine-bootstrap.XXXXXX.env)"
+SPINE_PG_CONTAINER="spine-hub-postgres"
 TRON_PG_CONTAINER="spine_tron_postgres"
+
+cleanup_compose_env() { rm -f "${COMPOSE_ENV}"; }
+trap cleanup_compose_env EXIT
+
+_write_compose_env() {
+  # shellcheck source=tools/_spine_hub_compose_env.sh
+  source "$SCRIPT_DIR/_spine_hub_compose_env.sh"
+  _spine_hub_compose_write_env "${COMPOSE_ENV}"
+}
+
+_hub_compose() {
+  docker compose -f "${HUB_COMPOSE}" --env-file "${COMPOSE_ENV}" "$@"
+}
 
 SKIP_SMOKE="${SKIP_SMOKE:-0}"
 QUIET="${QUIET:-0}"
@@ -153,36 +165,26 @@ _wait_healthy() {
   return 1
 }
 
-# ─── 4. spine postgres ─────────────────────────────────────────────
-ensure_spine_pg() {
-  _step "spine postgres ($SPINE_PG_CONTAINER on 127.0.0.1:33001)"
-  local status; status="$(_container_health "$SPINE_PG_CONTAINER")"
-  if [[ "$status" == "healthy" ]]; then
-    _skip "$SPINE_PG_CONTAINER already healthy"
+# ─── 4–5. spine + tron postgres (single compose project: spine-hub) ─
+ensure_hub_databases() {
+  _write_compose_env
+  _step "spine + tron postgres (hub/docker-compose.yml)"
+  local spine_status tron_status
+  spine_status="$(_container_health "$SPINE_PG_CONTAINER")"
+  tron_status="$(_container_health "$TRON_PG_CONTAINER")"
+  if [[ "$spine_status" == "healthy" && "$tron_status" == "healthy" ]]; then
+    _skip "$SPINE_PG_CONTAINER + $TRON_PG_CONTAINER already healthy"
     return 0
   fi
-  ( cd "$DB_DIR" && docker compose up -d postgres >/dev/null )
+  _hub_compose up -d postgres tron-postgres >/dev/null
   if _wait_healthy "$SPINE_PG_CONTAINER" 90; then
-    _ok "$SPINE_PG_CONTAINER healthy"
+    _ok "$SPINE_PG_CONTAINER healthy (127.0.0.1:${SPINE_DB_HOST_PORT:-33099})"
   else
     _fail "$SPINE_PG_CONTAINER did not reach healthy in 90s (last status: $(_container_health "$SPINE_PG_CONTAINER"))"
     exit 4
   fi
-}
-
-# ─── 5. tron postgres ──────────────────────────────────────────────
-ensure_tron_pg() {
-  _step "tron postgres ($TRON_PG_CONTAINER on 127.0.0.1:33010)"
-  local status; status="$(_container_health "$TRON_PG_CONTAINER")"
-  if [[ "$status" == "healthy" ]]; then
-    _skip "$TRON_PG_CONTAINER already healthy"
-    return 0
-  fi
-  bash "$REPO_ROOT/tools/verify-overrides/install.sh" >/dev/null 2>&1 || true
-  ( cd "$VERIFY_DIR" && docker compose up -d postgres >/dev/null 2>&1 ) \
-    || { _fail "could not bring up TRON postgres (cd verify && docker compose up -d postgres)"; exit 4; }
   if _wait_healthy "$TRON_PG_CONTAINER" 90; then
-    _ok "$TRON_PG_CONTAINER healthy"
+    _ok "$TRON_PG_CONTAINER healthy (127.0.0.1:33010)"
   else
     _fail "$TRON_PG_CONTAINER did not reach healthy in 90s (last status: $(_container_health "$TRON_PG_CONTAINER"))"
     exit 4
@@ -195,25 +197,17 @@ ensure_tron_pg() {
 # (documented in docs/STATUS.md §5 F2) becomes a no-op.
 run_flyway() {
   _step "spine flyway migrations"
-  # Phase 1: insert history rows for migrations whose schemas already exist
-  # (the wave-9 F2 follow-up). On a brand-new DB this is a no-op because
-  # flyway_schema_history doesn't exist yet.
+  _write_compose_env
   if ! bash "$SCRIPT_DIR/spine-flyway-sync.sh"; then
     _fail "flyway history sync failed — see message above"
     exit 5
   fi
-  # Phase 2: `flyway repair` aligns any checksum drift between our inserted
-  # CRC32s and what flyway 10 itself would compute (we go to length to
-  # match the algorithm, but BOM / unusual whitespace can still trip it).
-  # Repair is idempotent and a no-op on a clean install.
-  ( cd "$DB_DIR" && docker compose run --rm flyway repair >/dev/null 2>&1 ) || true
-  # Phase 3: actual migrate. `outOfOrder=true` lets V2 (lower number than
-  # V13) apply cleanly if it somehow lands after V14-V21 in the future.
-  if ( cd "$DB_DIR" && docker compose run --rm flyway -outOfOrder=true migrate >/dev/null 2>&1 ); then
+  _hub_compose run --rm flyway repair >/dev/null 2>&1 || true
+  if _hub_compose run --rm flyway -outOfOrder=true migrate >/dev/null 2>&1; then
     _ok "flyway migrate clean"
   else
     _warn "flyway migrate non-zero; re-running with output:"
-    ( cd "$DB_DIR" && docker compose run --rm flyway -outOfOrder=true migrate ) || {
+    _hub_compose run --rm flyway -outOfOrder=true migrate || {
       _fail "flyway migrate failed — review output above"
       exit 5
     }
@@ -262,8 +256,7 @@ main() {
   preflight
   ensure_venv
   install_requirements
-  ensure_spine_pg
-  ensure_tron_pg
+  ensure_hub_databases
   run_flyway
   run_alembic
   run_smoke

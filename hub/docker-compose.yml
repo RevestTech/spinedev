@@ -173,6 +173,28 @@ services:
   # Wave 3 Squad B scope: we do NOT author migrations here. Wave 0 already
   # produced V22-V32 under db/flyway/sql/. This service just runs them.
   # ---------------------------------------------------------------------------
+  # TRON verify subsystem DB — separate from Spine schemas; laptop dev only.
+  # Full TRON stack (api/worker/nginx) stays in verify/docker-compose.yml.
+  tron-postgres:
+    image: postgres:15-alpine
+    container_name: spine_tron_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: tron
+      POSTGRES_USER: tron
+      POSTGRES_PASSWORD: ${TRON_DB_PASSWORD:-tron_LOCAL_DEV_ONLY_2026}
+    volumes:
+      - tron_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tron -d tron"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    ports:
+      - "127.0.0.1:33010:5432"
+    networks:
+      - spine
+
   flyway:
     image: flyway/flyway:10-alpine
     container_name: spine-hub-flyway
@@ -299,6 +321,8 @@ volumes:
   keycloak_db_data:
     driver: local
   spine_db_data:
+    driver: local
+  tron_db_data:
     driver: local
   hub_state:
     driver: local

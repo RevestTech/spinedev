@@ -49,14 +49,19 @@ fi
 : "${POSTGRES_DB:=spine}"
 : "${POSTGRES_USER:=spine}"
 : "${POSTGRES_PASSWORD:=spine_dev_only}"
-: "${POSTGRES_HOST_PORT:=33001}"
+: "${POSTGRES_HOST_PORT:=33099}"
+: "${SPINE_DB_PASSWORD:=${POSTGRES_PASSWORD:-smoke-test-db-pw}}"
 
-# All psql calls go through the container so we don't need the host to
-# have psql with the right libpq. Falls back to host psql if compose
-# isn't available (e.g. running this on a remote DB).
 _psql() {
-  if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx spine_postgres; then
-    docker exec -e PGPASSWORD="$POSTGRES_PASSWORD" spine_postgres \
+  local pg_container=""
+  if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx spine-hub-postgres; then
+    pg_container=spine-hub-postgres
+    POSTGRES_PASSWORD="${SPINE_DB_PASSWORD}"
+  elif docker ps --format '{{.Names}}' 2>/dev/null | grep -qx spine_postgres; then
+    pg_container=spine_postgres
+  fi
+  if [[ -n "$pg_container" ]]; then
+    docker exec -e PGPASSWORD="$POSTGRES_PASSWORD" "$pg_container" \
       psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -X -q -v ON_ERROR_STOP=1 "$@"
   else
     PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -p "$POSTGRES_HOST_PORT" \
