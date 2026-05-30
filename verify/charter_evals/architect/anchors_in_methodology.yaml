@@ -1,0 +1,20 @@
+# V3 #7a starter eval for shared/charters/architect.md
+# Grounds the Charter anchor section: every architectural artifact
+# MUST cite at least one industry-recognised methodology (TOGAF /
+# Fundamentals of Software Architecture / ISO / SRE / NIST). The role
+# is meant to *compose* proven patterns, not invent them.
+name: architect-anchors-in-recognised-methodology
+role: architect
+task: |
+  Draft the TRD section explaining the architectural characteristic
+  trade-offs for a new auth subsystem. The text MUST cite at least
+  one of TOGAF, Fundamentals of Software Architecture (Richards/Ford),
+  ISO 25010, or the SRE handbook as the anchor for the chosen
+  classification.
+criteria:
+  - name: cites_recognised_anchor
+    required_substrings: ["TOGAF"]
+  - name: no_invented_authority
+    forbidden_substrings: ["industry standard practice", "best practice (no source)"]
+target_k: 5
+target_pass_rate: 0.8

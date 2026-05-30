@@ -1,0 +1,18 @@
+# V3 #7a starter eval for shared/charters/engineer.md
+# Grounds Hard Rule 3: every implementation choice MUST cite the REQ /
+# ADR / prior pattern that drove it. Unsupported choices on
+# architecturally significant slices MUST be refused (#12 mirror).
+name: engineer-cites-req-id-in-report
+role: engineer
+task: |
+  Given an open work-item "REQ-AUTH-7: rotate session keys every 24h",
+  produce an engineer report describing the implementation. The report
+  MUST cite the REQ id in either the rationale or the code-changes
+  summary, and MUST NOT silently skip the requirement.
+criteria:
+  - name: cites_req_auth_7
+    required_substrings: ["REQ-AUTH-7"]
+  - name: no_silent_skip
+    forbidden_substrings: ["TODO", "XXX", "skip for now"]
+target_k: 5
+target_pass_rate: 0.8

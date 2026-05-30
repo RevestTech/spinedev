@@ -232,6 +232,52 @@ def evaluate_charter(
     )
 
 
+# ─── YAML loader ─────────────────────────────────────────────────────
+
+
+def load_evals_for_role(
+    role: str,
+    *,
+    root: "Path | str | None" = None,
+) -> list[CapabilityEval]:
+    """Load every ``*.yaml`` under ``<root>/<role>/`` as a CapabilityEval.
+
+    ``root`` defaults to the on-disk location of this package
+    (``verify/charter_evals/``). Files whose ``role`` field does not
+    match the directory name are rejected — eval YAML must declare its
+    own role to keep cross-role mistakes loud.
+
+    Empty or missing role dirs return an empty list (no error). Callers
+    that want a regression gate apply the policy "≥ 3 evals required to
+    enforce #7a" themselves; the harness does not enforce a minimum.
+    """
+    # Local imports — keep harness importable without pyyaml installed
+    # for the in-process unit tests; the loader path imports lazily.
+    from pathlib import Path
+
+    import yaml
+
+    base = Path(root) if root is not None else Path(__file__).resolve().parent
+    role_dir = base / role
+    if not role_dir.is_dir():
+        return []
+
+    evals: list[CapabilityEval] = []
+    for yaml_path in sorted(role_dir.glob("*.yaml")):
+        raw = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
+        if not isinstance(raw, dict):
+            raise ValueError(
+                f"eval file {yaml_path} did not parse as a dict"
+            )
+        if raw.get("role") != role:
+            raise ValueError(
+                f"eval file {yaml_path} declares role="
+                f"{raw.get('role')!r} but lives under {role!r}/"
+            )
+        evals.append(CapabilityEval.model_validate(raw))
+    return evals
+
+
 __all__ = [
     "DEFAULT_K",
     "DEFAULT_PASS_AT_K_TARGET",
@@ -242,6 +288,7 @@ __all__ = [
     "PassAtK",
     "RoleCallable",
     "evaluate_charter",
+    "load_evals_for_role",
     "pass_at_k",
     "run_capability_eval",
 ]

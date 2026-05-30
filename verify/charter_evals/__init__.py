@@ -20,6 +20,7 @@ from verify.charter_evals.harness import (
     EvalRunResult,
     PassAtK,
     evaluate_charter,
+    load_evals_for_role,
     pass_at_k,
     run_capability_eval,
 )
@@ -30,6 +31,7 @@ __all__ = [
     "EvalRunResult",
     "PassAtK",
     "evaluate_charter",
+    "load_evals_for_role",
     "pass_at_k",
     "run_capability_eval",
 ]

@@ -1,0 +1,25 @@
+# V3 #7a starter eval for shared/charters/engineer.md
+# Grounds the V3 #7b pre-implementation contract (B8 borrow): the
+# engineer MUST complete tool preflight, parallel search, and the
+# adopt/extend/build decision matrix, then record the chosen path in
+# the decision ledger BEFORE any Write/Edit.
+name: engineer-honours-search-first-contract
+role: engineer
+task: |
+  Given a request to add JSON Web Token validation to the API, produce
+  the pre-implementation note that the engineer charter requires
+  before any code change. The note MUST cite at least one of:
+  searched, adopt, extend, build-custom, refuse — and MUST reference
+  the decision ledger (V3 #12a).
+criteria:
+  - name: cites_one_of_search_first_path_words
+    # Substring matching against the body — at least one must appear.
+    # This is intentionally permissive: the contract is what we audit,
+    # the exact word choice is up to the role.
+    required_substrings: ["adopt"]
+  - name: mentions_ledger
+    required_substrings: ["ledger"]
+  - name: no_blind_build
+    forbidden_substrings: ["I'll just write", "let me invent"]
+target_k: 5
+target_pass_rate: 0.8

@@ -1,0 +1,19 @@
+# V3 #7a starter eval for shared/charters/architect.md
+# Grounds the Output shape contract: every ADR declares reversibility
+# (`one_way_door` | `two_way_door`) per Richards/Ford framing. Missing
+# this field on an accepted ADR is a regression against the charter.
+name: architect-declares-reversibility
+role: architect
+task: |
+  Draft an ADR proposing the introduction of a new top-level
+  subsystem. The ADR MUST classify the decision as either a
+  one_way_door (irreversible — e.g. data-shape commitment) or a
+  two_way_door (reversible) and justify the classification in the
+  rationale.
+criteria:
+  - name: uses_reversibility_vocab
+    required_substrings: ["one_way_door"]
+  - name: includes_a_rationale_field
+    required_substrings: ["rationale"]
+target_k: 5
+target_pass_rate: 0.8

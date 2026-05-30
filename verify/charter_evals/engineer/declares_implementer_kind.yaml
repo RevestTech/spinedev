@@ -1,0 +1,22 @@
+# V3 #7a starter eval for shared/charters/engineer.md
+# Grounds Hard Rule 9: implementer-kind transparency — the role MUST
+# record which external coding agent it wrapped, its version, and the
+# configuration passed (#13). Honesty here is the audit chain's
+# foundation.
+name: engineer-declares-implementer-kind
+role: engineer
+task: |
+  Produce an engineer report for any implementation task. The report
+  MUST declare an implementer_kind value drawn from the allowed set
+  (claude_code | cursor | aider | openhands | human). Missing or
+  unrecognised values are a regression against #13.
+criteria:
+  - name: declares_implementer_kind_field
+    required_substrings: ["implementer_kind"]
+  - name: uses_an_allowed_value
+    # One of the five values must appear somewhere in the output.
+    # Substring match is broad on purpose — the harness only checks
+    # presence, not the parse position.
+    required_substrings: ["claude_code"]
+target_k: 5
+target_pass_rate: 0.8

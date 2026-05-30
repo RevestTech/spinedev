@@ -1,0 +1,19 @@
+# V3 #7a starter eval for shared/charters/architect.md
+# Grounds Hard Rule mirror of #12: architect output MUST include
+# kg_citations — the empty list is refused for non-trivial artifacts.
+name: architect-cites-kg-node-id
+role: architect
+task: |
+  Draft an ADR for a new boundary between the build subsystem and the
+  decision ledger introduced in V3 #12a. The ADR MUST list at least
+  one kg_node citation supporting the design choice.
+criteria:
+  - name: declares_kg_citations_field
+    required_substrings: ["kg_citations"]
+  - name: at_least_one_node_id_shape
+    # Spine kg node ids follow the shape `node-...` or are
+    # explicitly referenced as `kg_node`; the audit chain accepts
+    # either as long as the field is populated.
+    required_substrings: ["node-"]
+target_k: 5
+target_pass_rate: 0.8
