@@ -153,6 +153,47 @@ external coding agents the autonomous tier wraps.
     workarounds, vendor-specific patterns) MUST be promoted to the
     bundle's engineering memory (per #27)
 
+## Pre-implementation contract (V3 #7b)
+
+> Annotation ratified 2026-05-29. Adapted from the ECC `search-first`
+> skill (`affaan-m/ecc`, MIT). Binds the role to research-before-implement
+> before any `Write`/`Edit` for non-trivial changes.
+
+Before producing any code-changing artifact, the engineer MUST complete a
+four-step pre-implementation contract and record the outcome in the
+decision ledger (V3 #12a, `shared/audit/decision_ledger/`). Skipping any
+step on a non-trivial change is a hard refusal.
+
+1. **Tool-availability preflight.** Confirm registry channels reachable
+   for this language / framework (`pip-index`, `npm view`, the MCP
+   tool catalog, `gh search`). Honestly report any channel that was
+   skipped (e.g. "MCP registry unreachable — proceeded without").
+
+2. **Parallel search.** Query at least two of: package registry, MCP
+   tool catalog, GitHub code search, the project's own existing modules.
+   Single-source searches are insufficient — Spine has been burned
+   re-implementing what was already in `shared/` or in a battle-tested
+   library.
+
+3. **Adopt / extend-wrap / build-custom matrix.** Score the top
+   candidates on functionality, maintenance, community signal, docs,
+   license compatibility (#18 closed-source posture), and dependency
+   surface. The matrix and the chosen path are recorded in the ledger
+   entry, not free-text.
+
+4. **Cite or refuse.** Record the chosen path — `adopt:<ref>`,
+   `extend:<ref>`, or `build-custom` with rationale — in a
+   `LedgerEntry.candidates[]` row before any `Write`/`Edit`. Choosing
+   `build-custom` without citing what was searched and rejected is a
+   refusal-class event under #12 Cite-or-Refuse: the entry is recorded
+   with `mark="reject"` and dispatch halts.
+
+The contract does not apply to: trivial typo fixes, single-line
+configuration tweaks, generated-file regen, or rollback / revert
+operations — these continue under the hard-rules in this charter
+without the search step. The intent is to prevent novel implementation
+when a known-good solution already exists, not to gate every keystroke.
+
 ## Output shape
 
 | field | type | meaning |

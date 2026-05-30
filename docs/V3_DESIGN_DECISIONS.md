@@ -19,6 +19,12 @@
 > doc (2026-05-17). **#34 = Workspace hygiene as architectural concern** was previously a flagged-but-unnumbered
 > Spine design concern (per `feedback_workspace_hygiene` memory) and has been formally locked as #34
 > in this doc (2026-05-17).
+>
+> **Annotations added 2026-05-29.** Four extension annotations (#7a, #7b, #12a, #30a) were ratified
+> following [`docs/ECC_BORROWS.md`](ECC_BORROWS.md) review. Annotations refine an existing locked
+> decision rather than introducing a new one; they bind contracts that the parent decision left
+> unspecified. Source: ECC ([`affaan-m/ecc`](https://github.com/affaan-m/ecc), MIT) skill catalog,
+> reviewed and adapted to Spine's architecture.
 
 ---
 
@@ -33,11 +39,14 @@
 | 5 | Comms — outbound | Master roles actively push (briefings + decision cards) |
 | 6 | Comms — channels | Per-user / per-decision-class / per-medium flexible |
 | 7 | Roles | Charters anchored in industry standards |
+| 7a | Charter regression | Pass@k eval gate when a charter is touched |
+| 7b | Charter pre-implement | Engineer + Architect bind to a `search-first` contract |
 | 8 | Authority | Two-tier (Master + project) hybrid authority + bounded override |
 | 9 | Secrets | Vault-only, no exceptions, OpenBao Day-0 default |
 | 10 | Federation | Fractal Hub — "a Hub is a Hub is a Hub" |
 | 11 | Operate | 6th corner — devops role + 8 control planes |
 | 12 | Verify contract | Cite-or-Refuse for verify-class roles |
+| 12a | Promotion gate | Recursive confidence does not promote work to live; freshness + replay gates required |
 | 13 | Engineer | Hybrid by tier, wrapper over Claude Code / Cursor / Aider / OpenHands |
 | 14 | Target market | ALL three segments (solo founder → mid-market → enterprise) |
 | 15 | Hosting | NOT SaaS. Self-hosted every tier |
@@ -56,6 +65,7 @@
 | 28 | Mobile | SCAFFOLD for v1.0 + mobile-responsive web Day 1 |
 | 29 | Voice | SCAFFOLD for v1.0 (Twilio stub) |
 | 30 | API + MCP | SCAFFOLD for v1.0 — heavier (OpenAPI 3.x + Keycloak auth + RBAC + rate limits) |
+| 30a | MCP envelope | Typed response envelope (`status`/`summary`/`next_actions`/`artifacts`); verify-class extends with `citations` |
 | 31 | DR | BUILD properly for v1.0 (not scaffold) |
 | 32 | DR architecture | 12 layers (see #32 detail) |
 | 33 | Migration tools | 4 concerns (onboarding / portability / work-type / Spine version) |
@@ -136,6 +146,40 @@ tech_writer / release_manager).
 
 ---
 
+## 7a. Charter regression — pass@k eval gate
+
+> Annotation added 2026-05-29. Adapted from ECC `eval-harness` / `agent-eval` skills.
+
+Charters are industry-anchored (#7) but currently lack a regression guarantee — a charter edit
+can silently degrade role behavior. Any PR touching `shared/charters/*.md` must run the affected
+role's capability eval suite and report **pass@k ≥ target** (default `pass@5 ≥ 0.8`). Eval
+definitions live in `verify/charter_evals/<role>/`. Results are written to the audit ledger
+(per #12a). Target thresholds are per-role and bundle-policy-overridable.
+
+Implication: Engineer/Architect/Auditor/QA charters need a starter eval suite before this gate
+becomes enforcing. Gate runs in `advise` mode until each charter has ≥ 3 capability evals.
+
+---
+
+## 7b. Charter pre-implementation — `search-first` contract
+
+> Annotation added 2026-05-29. Adapted from ECC `search-first` skill.
+
+Engineer + Architect charters bind to a pre-implementation contract:
+
+1. **Tool-availability preflight.** Confirm registry channels (`pip-index`, `npm view`, MCP
+   registry, `gh search`) are reachable; honestly report any skipped channel.
+2. **Parallel search.** Registry + MCP catalog + GitHub for adoptable solutions.
+3. **Adopt / extend-wrap / build-custom matrix.** Score on functionality, maintenance,
+   community, docs, license, dependency surface.
+4. **Cite or refuse.** Record the chosen path (or "no fit found, building custom because …")
+   in the decision ledger (per #12a) before any Write/Edit.
+
+Implication: prevents one-off reimplementation when a battle-tested library or MCP tool
+already covers the case. Refusal to cite a search result is itself an audit event.
+
+---
+
 ## 8. Two-tier role hierarchy + hybrid authority
 
 **Per Hub:** Master roles (Director-level) + project-level roles.
@@ -194,6 +238,37 @@ ID, file:line, prior audit row hash) or **refuse to act**. Refusal is itself an 
 
 Implication: T4 found verify wrappers and `shared/mcp/tools/verify.py`, `iso.py` don't enforce this.
 REFACTOR required. T1 found `shared/calibration/` already supports the confidence band needed.
+
+---
+
+## 12a. Promotion gate — recursive confidence ≠ live promotion
+
+> Annotation added 2026-05-29. Adapted from ECC `recursive-decision-ledger` skill.
+
+Cite-or-Refuse (#12) governs whether a role may act. **#12a governs whether the result of
+those acts may be promoted to live.** Repeated rollouts, ensemble votes, and recursive
+self-checks are useful for ranking candidates but do not, by themselves, authorize
+production deploys, capital-class migrations, or destructive operations.
+
+**Append-only decision ledger** (`shared/audit/decision_ledger/`, JSONL, hash-chained into
+the existing audit ledger) records every Conductor / Auditor / QA rollout with:
+
+- rollout id, timestamp, run_id
+- prior accepted winner + prior watchlist
+- fresh evidence ingested (KG node ids / file:line / prior audit hash)
+- search space size, trial count, effective trial count
+- top candidates with explicit marks (`accept` / `watch` / `reject` / `decay` / `replay`)
+- **coherence mark** against the prior ledger
+- **promotion gate result** — explicit `live_promotion: true | false` plus reason
+
+**Default promotion mode is paper / dry-run / preview / read-only.** `live_promotion: true`
+requires explicit freshness gate (data not stale beyond bundle policy) AND replay gate
+(prior winner reproducible on current state). Bundle policy declares the gates per work-item
+class (#19) and per tier (laptop / BYOC / enterprise / on-prem).
+
+Implication: ledger is a new directory under `shared/audit/`; existing audit ledger chains
+in unchanged. Conductor and Auditor charter contracts grow a `promotion_gate_required` flag
+sourced from the work-item type.
 
 ---
 
@@ -547,6 +622,34 @@ critical incidents"* first).
 **Why heavier than the other scaffolds:** API and MCP surfaces are foundational — they're what makes
 Spine **programmable + integration-friendly + ecosystem-extensible**. Scaffold the framework, ship
 the contract, build adapters/endpoints as needed.
+
+---
+
+## 30a. MCP response envelope
+
+> Annotation added 2026-05-29. Adapted from ECC `agent-harness-construction` skill (Observation Design).
+
+Every tool registered in `TOOL_REGISTRY` returns a typed envelope:
+
+```
+status:       Literal["success", "warning", "error", "refusal"]
+summary:      str                  # one-line, role-readable result
+next_actions: list[str]            # actionable follow-ups for the calling role
+artifacts:    list[Artifact]       # file paths, KG node ids, run ids
+metadata:     dict                 # tool-specific extension
+```
+
+Verify-class tools (`requires_citation=True` per #12) extend with `citations: list[Citation]`
+and emit `status="refusal"` with a populated `summary` if citations are missing or unverifiable.
+
+Enforcement: a Pydantic schema in `shared/mcp/envelope.py`; middleware in `shared/mcp/server.py`
+rejects non-conforming responses in dev and warns in prod for graceful migration. Smoke test
+in `shared/mcp/tests/test_server_smoke.py` walks every entry in `TOOL_REGISTRY` and asserts
+envelope conformance.
+
+Implication: existing tool responses across the 18 tool modules need normalization; landing
+this is the first task that materially improves cross-role observability and recovery quality
+(the two largest agent-completion constraints per the ECC model).
 
 ---
 

@@ -115,6 +115,47 @@ code diagram hierarchy when diagrams are warranted.
    operates in human-with-AI mode and the human reviewer is named in
    the ADR (per #13)
 
+## Pre-implementation contract (V3 #7b)
+
+> Annotation ratified 2026-05-29. Adapted from the ECC `search-first`
+> skill (`affaan-m/ecc`, MIT). Binds the role to research-before-design
+> before any new ADR or interface contract is drafted.
+
+Before producing an ADR, TRD, or interface spec, the architect MUST
+complete a four-step pre-implementation contract and record the outcome
+in the decision ledger (V3 #12a, `shared/audit/decision_ledger/`).
+Skipping any step on a non-trivial decision is a hard refusal.
+
+1. **Tool-availability preflight.** Confirm the relevant registry,
+   pattern catalog, and architecture-decision-record archive surfaces
+   are reachable for this domain (TOGAF Architecture Repository, the
+   org's prior ADR set, public reference architectures via
+   `gh search`). Honestly report any surface that was skipped.
+
+2. **Parallel search.** Query at least two of: TOGAF / ISO / SRE
+   reference catalogs, prior ADRs in the org repository, public
+   architecture pattern libraries, the project's own architectural
+   characteristics declaration. Single-source design is insufficient —
+   the architect's job is to compose proven patterns, not invent.
+
+3. **Adopt / extend-wrap / build-custom matrix.** Score the top
+   candidate patterns / reference architectures on fit, blast radius,
+   reversibility (one-way vs two-way door per Richards/Ford), license
+   posture (#18), and operator burden. The matrix and the chosen
+   pattern are recorded in the ledger entry, not free-text.
+
+4. **Cite or refuse.** Record the chosen path — `adopt:<ref>`,
+   `extend:<ref>`, or `novel` with rationale — in a
+   `LedgerEntry.candidates[]` row before any ADR / TRD draft is
+   sealed. Choosing `novel` without citing what was searched and
+   rejected is a refusal-class event under #12 Cite-or-Refuse: the
+   entry is recorded with `mark="reject"` and the directive halts.
+
+The contract does not apply to: minor ADR clarifications, typo
+corrections in existing TRDs, or rollback / supersede operations
+that explicitly cite the superseded ADR — these continue under the
+hard-rules without the search step.
+
 ## Output shape
 
 | field | type | meaning |

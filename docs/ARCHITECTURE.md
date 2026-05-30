@@ -62,6 +62,31 @@ lib/                 RETIRE entirely after migration to shared/runtime/ and shar
 
 Note: `shared/secrets/` (cross-cutting lib) is distinct from `vault/` (OpenBao container). `shared/identity/` (OIDC client lib) is distinct from `keycloak/` (Keycloak container). `shared/llm/` has no top-level companion because providers are external services.
 
+### Layer model
+
+> Adapted from the ECC `agentic-os` skill (`affaan-m/ecc`, MIT). See
+> `docs/ECC_BORROWS.md` B9. Makes the implicit Spine 4-layer model
+> explicit for newcomers and tooling.
+
+Spine's runtime is layered. Each layer has a single responsibility and a
+named persistence posture so a fresh contributor can place new work
+without re-reading the whole codebase:
+
+| Layer | Purpose | Lives in | Persistence |
+|---|---|---|---|
+| **Kernel** | Identity, routing, locked decisions | `CLAUDE.md`, `docs/V3_DESIGN_DECISIONS.md`, `docs/SPINE_MASTER.md` | Git-tracked |
+| **Charters** | Role identities + industry-anchored contracts (#7) | `shared/charters/` | Git-tracked |
+| **Commands** | User + MCP-facing surface | `shared/mcp/tools/`, `shared/api/routes/`, `orchestrator/bin/spine` | Git-tracked |
+| **Daemons** | Orchestration + scheduled tasks | `orchestrator/`, `tools/`, `recovery/`, `shared/runtime/*.sh` | Git-tracked |
+| **Workspace** | Per-run scratch + promoted artifacts (#34) | `.spine/work/`, `.spine/archive/` | Hygiene-swept |
+| **Audit** | Hash-chained ledger + decision ledger (#12, #12a) | `shared/audit/`, `shared/audit/decision_ledger/` | Append-only |
+| **Instincts** | Atomic learned behaviours pending lesson promotion (#27, B3) | `learning/instinct.py` JSONL under `~/.spine/instincts/` | Append-only, per-project |
+
+When in doubt about *where* something belongs, ask which row of this
+table it serves. Routing belongs in Kernel; "what a role may not do"
+belongs in Charters; the user-facing CLI shape belongs in Commands;
+a heartbeat goroutine belongs in Daemons.
+
 ---
 
 ## 3. Architectural picture
