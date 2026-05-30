@@ -119,7 +119,20 @@ _HUB_BUILD_DIRECTIVES = (
 _HUB_BUILD_ROLES = frozenset({
     "engineer", "devops", "devops_release", "security_engineer", "auditor",
 })
-_BRIEF_DIRECTIVES = frozenset({"SYNTHESIZE_BRIEF", "DISPATCH_BRIEF"})
+_BRIEF_DIRECTIVES = frozenset({
+    "SYNTHESIZE_BRIEF", "DISPATCH_BRIEF",
+    # V3 B4: opt-in bounded-retrieval entry point. Routes through
+    # build.runtime.build_dispatcher.dispatch_build_bounded, which
+    # persists a minimal seed brief under METADATA_BRIEF_MINIMAL_KEY
+    # instead of the fat brief. The fat-brief paths above are
+    # unchanged so existing callers do not regress.
+    "SYNTHESIZE_MINIMAL_BRIEF", "DISPATCH_MINIMAL_BRIEF",
+})
+
+_MINIMAL_BRIEF_DIRECTIVES = frozenset({
+    "SYNTHESIZE_MINIMAL_BRIEF", "DISPATCH_MINIMAL_BRIEF",
+})
+"""Directives that route to the B4 bounded-retrieval path."""
 
 
 def _uses_hub_build_runner(payload: BuildDispatchInput) -> bool:
@@ -173,17 +186,27 @@ def build_dispatch(payload: BuildDispatchInput) -> ToolResponse:
             extra=result.extra,
         ).model_dump(mode="json"))
 
-    # Legacy build-brief path (plan_approved → engineer handoff document).
+    # Legacy build-brief path (plan_approved → engineer handoff document)
+    # OR V3 B4 bounded-retrieval path when directive is in
+    # _MINIMAL_BRIEF_DIRECTIVES. Both flow through the same response
+    # shape so callers can swap directives without refactoring.
     try:
         from build.runtime.build_dispatcher import (  # noqa: PLC0415
-            BuildDispatchError, dispatch_build,
+            BuildDispatchError,
+            dispatch_build,
+            dispatch_build_bounded,
         )
     except Exception as exc:  # noqa: BLE001
         return _error("build_runtime_unavailable",
                       f"build.runtime.build_dispatcher import failed: {exc}")
 
+    use_bounded = payload.directive.upper() in _MINIMAL_BRIEF_DIRECTIVES
+
     try:
-        result = dispatch_build(payload.project_id, actor=actor)
+        if use_bounded:
+            result = dispatch_build_bounded(payload.project_id, actor=actor)
+        else:
+            result = dispatch_build(payload.project_id, actor=actor)
     except BuildDispatchError as exc:
         return _error(exc.reason, str(exc))
     except RuntimeError as exc:
@@ -192,13 +215,35 @@ def build_dispatch(payload: BuildDispatchInput) -> ToolResponse:
         return _error("build_dispatch_failed",
                       f"{exc.__class__.__name__}: {exc}", retryable=False)
 
-    return ToolResponse(status="ok", data=BuildDispatchResponse(
-        project_id=payload.project_id,
-        brief_id=result.brief_id,
-        engineering_goals_count=result.engineering_goals_count,
-        warnings=result.warnings,
-        audit_event_count=result.audit_event_count,
-    ).model_dump(mode="json"))
+    return ToolResponse(
+        status="ok",
+        # V3 #30a observation envelope: bounded path surfaces summary
+        # and next_actions so callers (orchestrator / role daemons) can
+        # branch on the dispatch mode without re-parsing data.
+        summary=(
+            f"minimal brief {result.brief_id} dispatched with "
+            f"{result.engineering_goals_count} top engineering goal(s)"
+            if use_bounded
+            else f"build brief {result.brief_id} dispatched"
+        ),
+        next_actions=(
+            [
+                "build_completed when implementer reports back",
+                # Roles signalling needs back must use the bounded-
+                # retrieval need: prefix (see V3 B4).
+                "engineer.read_minimal_brief",
+            ]
+            if use_bounded
+            else ["build_completed when implementer reports back"]
+        ),
+        data=BuildDispatchResponse(
+            project_id=payload.project_id,
+            brief_id=result.brief_id,
+            engineering_goals_count=result.engineering_goals_count,
+            warnings=result.warnings,
+            audit_event_count=result.audit_event_count,
+        ).model_dump(mode="json"),
+    )
 
 
 # ── build_completed ────────────────────────────────────────────────────
