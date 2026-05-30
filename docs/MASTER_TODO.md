@@ -52,7 +52,9 @@ Booger.
 | **P2** | **B7** `SPINE_HOOK_PROFILE` runtime gating | **DONE** |
 | **P2** | **B8** `search-first` step in Engineer + Architect charters | **DONE** |
 | **P3** | **B9** ARCHITECTURE layer model | **DONE** |
-| **Next** | (1) commit the batch (2) wire B4 into `build_dispatcher` (3) write starter capability evals so #7a becomes enforcing | Open |
+| **F1** | Commit the batch (10 Conventional Commits on main) | **DONE** |
+| **F2** | Wire B4 into `build/runtime/build_dispatcher.py` — opt-in `dispatch_build_bounded()` | **DONE** |
+| **F3** | Starter capability evals under `verify/charter_evals/{engineer,architect}/` + YAML loader | **DONE** |
 | **P2** | B6 / B7 / B8 (parallelisable) | Pending |
 | **P3** | B9 ARCHITECTURE layer table | Pending |
 | **P3** | Booger unblock — only if it exposes a Spine capability gap | Backlog (downgraded per user 2026-05-29) |

@@ -126,13 +126,14 @@ then re-smoke before commit.
 
 ## In progress
 
-**Nothing in progress. All 9 borrows + 4 V3 ratifications done.**
+**Nothing in progress. All 9 borrows + 4 V3 ratifications + 3 follow-ups landed and committed.**
 
-Next moves (your call):
-1. Commit the batch — suggested split: 1 doc PR (ECC_BORROWS + V3 annotations + ARCHITECTURE layer table + charter contracts) + 7 code PRs (B1, B2, B3, B4, B5, B6, B7).
-2. Wire B4 into `build/runtime/build_dispatcher.py` — currently the module exists in `shared/runtime/` but the dispatcher still uses the fat-brief path. Opt-in only; backward compatible.
-3. Land starter capability evals in `verify/charter_evals/engineer/` and `verify/charter_evals/architect/` so #7a gate becomes enforcing.
-4. Move on to next ECC pass or a new direction.
+Follow-up status (all done):
+1. **Committed the batch as 10 Conventional Commits on `main`** (8 in the borrows batch + 2 follow-ups; see `git log --oneline -10`).
+2. **B4 wired into `build/runtime/build_dispatcher.py`** as opt-in `dispatch_build_bounded()`. Existing `dispatch_build()` path unchanged. 11 new dispatch tests.
+3. **Starter capability evals landed** under `verify/charter_evals/engineer/` (3) and `verify/charter_evals/architect/` (3) + a YAML loader. #7a regression gate now has something to enforce.
+
+**Test totals after follow-ups:** 189 tests pass (was 149 at end of borrow batch).
 
 ---
 
@@ -239,4 +240,4 @@ in git history of this file before 2026-05-29.
 
 ---
 
-*Last updated: 2026-05-29 (late) — all 9 ECC borrows + 4 V3 ratifications landed in one session. 149 tests pass.*
+*Last updated: 2026-05-29 (late) — all 9 ECC borrows + 4 V3 ratifications + 3 follow-ups (commit batch, B4 dispatcher wiring, starter evals) committed in one session. 189 tests pass; 10 new commits on main.*
