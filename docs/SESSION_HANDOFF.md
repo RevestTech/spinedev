@@ -126,16 +126,21 @@ then re-smoke before commit.
 
 ## In progress
 
-**Nothing in progress. 10 borrows + 4 V3 ratifications + 8 follow-ups all landed, committed, and pushed to `origin/main`.**
+**Nothing in progress.** This session ran a **15-agent parallel batch** per `docs/PARALLEL_WORK_PLAN.md` after completing the borrow + follow-up waves. **326 tests pass; 6 new commits on origin/main from the batch (21 total this session).**
 
-Second-wave follow-ups (all done):
-1. **Push** — all commits live on `origin/main`.
-2. **End-to-end charter evals** — new CLI `python -m verify.charter_evals.run <role>` with stub + fixture role callables; engineer green, architect intentionally red on anchor eval. 11 new tests.
-3. **B4 wired into role daemon path** — `build_dispatch` MCP tool routes `SYNTHESIZE_MINIMAL_BRIEF`/`DISPATCH_MINIMAL_BRIEF` to `dispatch_build_bounded()`. Response surfaces V3 #30a `summary` + `next_actions`. 3 new tests.
-4. **py.skills smoke regression** — verified PASS (stale 2026-05-25 flag cleared).
-5. **B10 — 12-layer agent architecture audit** — new `verify/agent_audit/` subsystem; 6 native checks (L01/L03/L06/L09/L11/L12); live audit on repo: overall=clean, 0 regressed. 22 new tests.
+15-agent batch outcomes:
+- **A1–A6 (six B10 layer checks):** L02 session_history, L04 distillation, L05 active_recall, L07 tool_execution, L08 tool_interpretation, L10 transport — all native checks landed under `verify/agent_audit/checks/`. 81 new tests across the six modules. `DEFAULT_CHECKS` wired; live audit on repo: overall=warning, **zero regressions**, six layers `instrumentation_pending` (waiting on signal-injection from runtime).
+- **B1 introspection (Agent B1):** `verify/agent_audit/introspection.py` — `IntrospectionTrace` + `build_introspection_trace()` for tracing one dispatch end-to-end. 12 tests.
+- **B2 Anthropic role callable (Agent B2):** `verify/charter_evals/anthropic_callable.py` — lazy SDK import, typed errors, API key by argument per V3 #9. 8 tests.
+- **C1/C2/C3 capability evals (3 agents):** qa + planner + auditor each got 3 starter evals. Loader recognises all 5 roles now (was engineer + architect only).
+- **D1 pgvector design (Agent D1):** `docs/PGVECTOR_KG_DESIGN.md` — V40 Flyway migration sketch, capability table, HNSW/IVFFlat fallback rubric.
+- **D2 operating-loop gap analysis (Agent D2):** `docs/OPERATING_LOOP_GAP.md` — 7-item P0 wiring slate dependency-ordered (auditor runner, decision-ledger writes, record_instinct hook, watcher rules, operate_runner, product_runner, hygiene gate).
+- **D3 Hub-up + smoke (Agent D3):** smoke is **99 PASS / 0 FAIL / 1 WARN / 0 SKIP / 3 INFO — exact CLAUDE.md contract**. Hub-up worked first try. `spine doctor` exits 1 due to vault env-loader needing the Day-0 wizard.
+- **E1 waste audit (Agent E1):** `docs/WASTE_AUDIT_2026-05-29.md` — 14 findings + Top 5 wins. Two monolith files flagged (`_post_ack.py` 2237 LOC, `kg.py` 1832 LOC); `shared/cost/*` and `shared/eval/*` have zero test coverage across 12 modules; 10 MCP tool modules still on pre-B2 envelope.
 
-**Test totals after second wave:** **225 tests pass** (was 189 → 203 → 225).
+**Key independent findings:**
+- L10 transport check (Agent A6) flagged that **SPA components don't render** `summary` / `next_actions` / `artifacts` yet — that's the real B2 transport gap and it was found by the audit, not by the user. Pairs with E1 finding #11.
+- D2 found that **auditor still returns `not_implemented_in_runner`** in `build/runtime/hub_role_runner.py` and the **decision ledger has zero writers** in production code. These are the two highest-leverage operating-loop fixes.
 
 ---
 
