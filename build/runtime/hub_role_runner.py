@@ -557,15 +557,63 @@ def run_build_hub_role(
         return asyncio.run(_run_devops_install(project))
 
     if role in ("security_engineer", "auditor") or "CODE_REVIEW" in upper:
-        return HubBuildRoleResult(
-            ok=False,
+        # V3 #12 Cite-or-Refuse contract — routes through the new
+        # auditor runtime (D2 gap-analysis slate #1, 2026-05-30).
+        # Evidence pointers come from extra_context if the caller has
+        # already pulled audit_hash / kg_node references.
+        try:
+            from verify.runtime.auditor_runner import run_auditor  # noqa: PLC0415
+        except Exception as exc:  # noqa: BLE001
+            return HubBuildRoleResult(
+                ok=False,
+                role=role,
+                directive_id=f"dir_{uuid4().hex[:12]}",
+                result_kind="code_review",
+                error_class="auditor_runtime_unavailable",
+                error_message=f"verify.runtime.auditor_runner import failed: {exc}",
+                project_uuid=project["project_uuid"],
+                project_name=project["name"],
+            )
+        directive_id = f"dir_{uuid4().hex[:12]}"
+        artifact_subject = (
+            project.get("metadata", {}).get("last_commit_sha", "")
+            or project.get("metadata", {}).get("build_brief", {}).get("brief_id", "")
+            or directive
+        )
+        envelope = run_auditor(
+            project=project,
             role=role,
-            directive_id=f"dir_{uuid4().hex[:12]}",
-            result_kind="code_review",
-            error_class="not_implemented_in_runner",
-            error_message="code review still dispatched via Hub post_ack bridge fallback",
+            artifact_subject=str(artifact_subject),
+            evidence_pointers=(),  # extra_context-based wiring lands in slate #2
+        )
+        ok = envelope.status == "ok"
+        result_kind = "code_review"
+        artifact_md = ""
+        if isinstance(envelope.data, dict):
+            artifact_md = str(envelope.data.get("findings_markdown") or "")
+        return HubBuildRoleResult(
+            ok=ok,
+            role=role,
+            directive_id=directive_id,
+            result_kind=result_kind,
+            artifact_key="audit_md",
+            artifact_md=artifact_md,
+            error_class=None if ok else (
+                envelope.error.code if envelope.error else "auditor_refused"
+            ),
+            error_message=(
+                envelope.summary
+                if not ok
+                else envelope.summary
+            ),
             project_uuid=project["project_uuid"],
             project_name=project["name"],
+            extra={
+                "envelope_status": envelope.status,
+                "citation_count": len(envelope.citation),
+                "summary": envelope.summary,
+                "next_actions": list(envelope.next_actions),
+            },
         )
 
     return HubBuildRoleResult(
