@@ -18,6 +18,10 @@ returns a typed report. No fixes are applied — that is the role's
 job per the relevant charter contract.
 """
 
+from verify.agent_audit.introspection import (
+    IntrospectionTrace,
+    build_introspection_trace,
+)
 from verify.agent_audit.twelve_layer import (
     AgentAuditReport,
     LayerCheck,
@@ -30,10 +34,12 @@ from verify.agent_audit.twelve_layer import (
 
 __all__ = [
     "AgentAuditReport",
+    "IntrospectionTrace",
     "LayerCheck",
     "LayerFinding",
     "LayerId",
     "LayerSeverity",
     "LayerStatus",
+    "build_introspection_trace",
     "scan_agent_stack",
 ]
