@@ -855,6 +855,268 @@ def ingest_build_artifact(
     )
 
 
+# ── B4: bounded retrieval opt-in entry points (V3 #30a, ECC borrow) ────
+#
+# `dispatch_build()` above ships a fat brief (full PRD-derived
+# engineering goals, scope, stakeholders, open questions, etc.).
+# That's the "send everything" failure mode V3 B4 set out to bound.
+#
+# `dispatch_build_bounded()` is the opt-in alternative: ship a thin
+# seed brief, let the role declare what extra context it needs via
+# `next_actions` prefixed with "need:" (B2 envelope), and resolve
+# those needs against project metadata + KG within max_cycles. The
+# existing fat-brief path is unchanged so no existing dispatch caller
+# regresses.
+
+METADATA_BRIEF_MINIMAL_KEY = "build_brief_minimal"
+"""Metadata key where ``dispatch_build_bounded`` persists the seed.
+
+Distinct from ``METADATA_BRIEF_KEY`` so the two paths can coexist —
+some bundles will adopt bounded retrieval; others will keep the fat
+brief. Smart Spine's #27 lesson capture will inform when the bounded
+path is the right default.
+"""
+
+MINIMAL_BRIEF_VERSION = "build-brief-minimal-v1"
+"""Schema tag for ``synthesize_minimal_build_brief`` outputs."""
+
+DEFAULT_MINIMAL_BRIEF_TOP_GOALS = 3
+"""Number of MUST-tier engineering goals included in the minimal seed.
+
+Tuned for the observation that roles usually need the top few goals
+plus the ability to ask for more — shipping more than this in cycle 0
+is exactly what B4 set out to avoid.
+"""
+
+
+def synthesize_minimal_build_brief(
+    *,
+    project: dict[str, Any],
+    prd: PRDv1,
+    actor: str,
+    top_goals: int = DEFAULT_MINIMAL_BRIEF_TOP_GOALS,
+    prior_winner: Optional[str] = None,
+    use_db_routing: bool = True,
+) -> dict[str, Any]:
+    """Build a thin seed brief for ``dispatch_build_bounded``.
+
+    Carries only what the role *certainly* needs:
+
+      * project id + name
+      * work-item type + pipeline + role-set (per #19 routing)
+      * top-N engineering goals (default 3)
+      * prior accepted winner identifier, if any
+
+    Everything else (full stakeholder context, open questions, scope
+    detail, full goal list) is left out and surfaced on demand through
+    the ``need:`` channel.
+    """
+    prd_dump = prd.model_dump(mode="json")
+    prd_hash = _sha256(_canonical_json(prd_dump))
+    egs_all = _engineering_goals_from_prd(prd)
+    top_n = max(0, int(top_goals))
+
+    work_item_type = _work_item_type_from_project(project)
+    pipeline_id, type_role_set = route_for_work_item_type(
+        work_item_type, use_db=use_db_routing,
+    )
+    intake_role_set = _squad_from_metadata(project["metadata"])
+    role_set = (
+        intake_role_set
+        if intake_role_set != list(_DEFAULT_SQUAD)
+        else type_role_set
+    )
+
+    brief_id = (
+        f"brief_min_{project['project_uuid'][:8]}_"
+        f"{int(datetime.now(timezone.utc).timestamp())}"
+    )
+    return {
+        "version": MINIMAL_BRIEF_VERSION,
+        "brief_id": brief_id,
+        "project_id": project["project_uuid"],
+        "project_name": project["name"],
+        "pipeline_version": project["pipeline_version"],
+        "work_item_type": work_item_type,
+        "pipeline_id": pipeline_id,
+        "role_set": role_set,
+        "implementer_kind": _implementer_kind_from_metadata(project["metadata"]),
+        "autonomy_tier": _autonomy_tier_from_metadata(project["metadata"]),
+        "derived_from": {
+            "prd_version": prd.version,
+            "prd_hash": prd_hash,
+            "engineering_goals_total": len(egs_all),
+            "engineering_goals_included": min(top_n, len(egs_all)),
+        },
+        "top_engineering_goals": egs_all[:top_n],
+        "prior_winner": prior_winner,
+        "need_channel_hint": (
+            "Use B2 envelope next_actions entries prefixed with "
+            "'need:<type>:<ref>[|reason]' to request more context. "
+            "Types: kg_node | file_path | audit_hash | "
+            "project_metadata | ledger_entry."
+        ),
+        "metadata": {
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_by": actor or "orchestrator",
+            "status": "ready_for_implementer",
+            "brief_mode": "bounded_retrieval",
+        },
+    }
+
+
+def resolve_build_brief_needs(
+    needs: list[Any],
+    *,
+    project: dict[str, Any],
+) -> list[Any]:
+    """Default resolver for build-side ``Need`` items.
+
+    Resolves ``project_metadata`` and ``audit_hash`` cheaply from the
+    already-loaded project dict; returns failure rows for KG / file /
+    ledger needs (those require side-channels — KG client, repo read,
+    decision_ledger handle — that the caller supplies via a richer
+    custom resolver).
+
+    Lives in ``build_dispatcher`` (rather than ``shared/runtime``)
+    because the lookup semantics are build-specific: the "metadata"
+    surface is the project row dict shape.
+    """
+    # Lazy import keeps the dispatcher importable without the shared
+    # runtime package on a stripped install.
+    from shared.runtime.bounded_retrieval import Need, ResolvedNeed
+    from shared.mcp.schemas import Artifact
+
+    resolved: list[Any] = []
+    metadata = project.get("metadata") or {}
+
+    for need in needs:
+        if not isinstance(need, Need):
+            continue
+        if need.type == "project_metadata":
+            # Dot-path into project["metadata"]. Trailing components
+            # missing yields a graceful failure row.
+            value: Any = metadata
+            for part in need.ref.split("."):
+                if isinstance(value, dict) and part in value:
+                    value = value[part]
+                else:
+                    value = None
+                    break
+            if value is None:
+                resolved.append(ResolvedNeed(
+                    need=need, content=None, success=False,
+                    error=f"metadata path not found: {need.ref!r}",
+                ))
+            else:
+                resolved.append(ResolvedNeed(
+                    need=need,
+                    content=_canonical_json(value)
+                    if not isinstance(value, str)
+                    else value,
+                    artifact=Artifact(
+                        type="file_path",  # closest match in V3 #30a types
+                        ref=f"project.metadata.{need.ref}",
+                        label="project metadata",
+                    ),
+                    success=True,
+                ))
+        else:
+            # KG / file / audit / ledger needs require a richer resolver.
+            resolved.append(ResolvedNeed(
+                need=need,
+                content=None,
+                success=False,
+                error=(
+                    f"need type {need.type!r} requires a side-channel "
+                    "resolver; default build-side resolver only handles "
+                    "project_metadata"
+                ),
+            ))
+    return resolved
+
+
+def dispatch_build_bounded(
+    project_id: int | str,
+    *,
+    actor: str = "orchestrator",
+    top_goals: int = DEFAULT_MINIMAL_BRIEF_TOP_GOALS,
+    prior_winner: Optional[str] = None,
+) -> DispatchResult:
+    """Opt-in B4 bounded-retrieval dispatch entry point.
+
+    Produces a *minimal* brief instead of the fat brief from
+    :func:`dispatch_build`. The minimal brief lives at
+    ``project.metadata.build_brief_minimal`` and carries
+    ``derived_from.engineering_goals_total`` so the role can decide
+    whether to request more goals via the ``need:`` channel.
+
+    Refuses with the same ``no_validated_prd`` BuildDispatchError as
+    :func:`dispatch_build` when the PRD is missing or invalid.
+
+    The bounded loop itself runs in the role-runtime layer (Claude
+    Code / Cursor / charter daemon) — this function persists the seed
+    and records audit; the role picks the brief up async and uses
+    :mod:`shared.runtime.bounded_retrieval` to iterate.
+    """
+    proj = _load_project(project_id)
+    pid = proj["id"]
+    prd = _validate_prd(proj["metadata"].get(METADATA_PRD_KEY))
+
+    audit_count = 0
+    audit_count += int(_write_audit(
+        action=AUDIT_DISPATCHED, project_id=pid, actor=actor,
+        metadata={
+            "project_uuid": proj["project_uuid"],
+            "pipeline_version": proj["pipeline_version"],
+            "brief_mode": "bounded_retrieval",
+        },
+        subject_id=f"build:{pid}",
+        rationale=(
+            "orchestrator dispatching minimal seed brief via B4 "
+            "bounded-retrieval path"
+        ),
+    ))
+
+    brief = synthesize_minimal_build_brief(
+        project=proj, prd=prd, actor=actor,
+        top_goals=top_goals, prior_winner=prior_winner,
+    )
+
+    warnings: list[str] = []
+    total = brief["derived_from"]["engineering_goals_total"]
+    included = brief["derived_from"]["engineering_goals_included"]
+    if included < total:
+        warnings.append(
+            f"minimal_brief: {included}/{total} engineering goals "
+            "included in seed; role may request the rest via "
+            "next_actions need:project_metadata:prd_draft.engineering_goals"
+        )
+
+    _merge_metadata(pid, {METADATA_BRIEF_MINIMAL_KEY: brief})
+
+    audit_count += int(_write_audit(
+        action=AUDIT_BRIEF_PERSISTED, project_id=pid, actor=actor,
+        metadata={
+            "brief_id": brief["brief_id"],
+            "brief_mode": "bounded_retrieval",
+            "engineering_goals_included": included,
+            "engineering_goals_total": total,
+            "prd_hash": brief["derived_from"]["prd_hash"],
+            "warnings": warnings,
+        },
+        subject_id=brief["brief_id"],
+    ))
+
+    return DispatchResult(
+        project_id=pid,
+        brief_id=brief["brief_id"],
+        engineering_goals_count=included,
+        warnings=warnings,
+        audit_event_count=audit_count,
+    )
+
+
 __all__ = [
     "AUDIT_ARTIFACT_PERSISTED",
     "AUDIT_BRIEF_PERSISTED",
@@ -863,6 +1125,8 @@ __all__ = [
     "BUILD_BRIEF_VERSION",
     "DEFAULT_AUTONOMY_TIER",
     "DEFAULT_IMPLEMENTER_KIND",
+    "DEFAULT_MINIMAL_BRIEF_TOP_GOALS",
+    "MINIMAL_BRIEF_VERSION",
     "AutonomyTier",
     "BuildBrief",
     "BuildCompletionError",
@@ -872,12 +1136,16 @@ __all__ = [
     "IngestResult",
     "METADATA_ARTIFACT_KEY",
     "METADATA_BRIEF_KEY",
+    "METADATA_BRIEF_MINIMAL_KEY",
     "METADATA_HISTORY_KEY",
     "METADATA_PRD_KEY",
     "METADATA_ROADMAP_KEY",
     "METADATA_TRD_KEY",
     "dispatch_build",
+    "dispatch_build_bounded",
     "ingest_build_artifact",
+    "resolve_build_brief_needs",
     "route_for_work_item_type",
     "synthesize_build_brief",
+    "synthesize_minimal_build_brief",
 ]
