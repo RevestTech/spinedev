@@ -50,6 +50,30 @@ _WATCH_RULES: list[tuple[str, str, str]] = [
         "metadata ? 'devops_install_ok' AND NOT (metadata ? 'qa_md')",
         "devops_approval",
     ),
+    # D2 slate #4 — verify_approved → acceptance → released → operate.
+    # Without these the loop dead-ends at QA. Each rule fires when the
+    # phase's required artifact is in metadata and the next-phase's
+    # marker is not. router.sh maps the dispatch_kind to the appropriate
+    # role runtime; the actual phase transition is the orchestrator's
+    # call (gate_check etc. live in orchestrator/lib).
+    (
+        "verify_approved",
+        "metadata ? 'qa_md' AND NOT (metadata ? 'audit_md')",
+        "auditor_approval",
+    ),
+    (
+        "acceptance",
+        "metadata ? 'audit_md' AND NOT (metadata ? 'release_gate_md')",
+        "release_approval",
+    ),
+    (
+        "released",
+        (
+            "metadata ? 'deploy_result' "
+            "AND NOT (metadata ? 'operate_started_at')"
+        ),
+        "operate_kickoff",
+    ),
 ]
 
 
