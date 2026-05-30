@@ -413,6 +413,46 @@ PY
 
 # ─── portfolio + doctor + help ────────────────────────────────────────
 cmd_status() {
+  # Markdown handoff mode — V3 B5 (ECC borrow). Renders a portable
+  # SESSION_HANDOFF-style snapshot. Supports `--write PATH` and
+  # `--exit-code` (0=green / 1=warnings / 2=failures).
+  local md_flag=0
+  # `${REST_ARGS[@]}` is unset under bash 3.2 + `set -u` when the array is
+  # empty; guard with the param-set expansion to match the rest of this CLI.
+  for a in ${REST_ARGS[@]+"${REST_ARGS[@]}"}; do
+    [[ "$a" == "--markdown" ]] && md_flag=1
+  done
+  if [[ $md_flag -eq 1 ]]; then
+    local write_path exit_code_flag ledger_root
+    write_path="$(_flag_val --write)"
+    ledger_root="$(_flag_val --ledger-root)"
+    exit_code_flag=0
+    # Strip the --markdown flag now that downstream flags are read.
+    local i=0; local -a keep=()
+    while [[ $i -lt ${#REST_ARGS[@]} ]]; do
+      if   [[ "${REST_ARGS[$i]}" == "--markdown" ]]; then i=$((i+1)); continue
+      elif [[ "${REST_ARGS[$i]}" == "--exit-code" ]]; then
+        exit_code_flag=1; i=$((i+1)); continue
+      fi
+      keep+=("${REST_ARGS[$i]}"); i=$((i+1))
+    done
+    REST_ARGS=(${keep[@]+"${keep[@]}"})
+
+    if [[ -z "$_SPINE_PY" ]]; then
+      _die 4 "python3 not available; cannot render markdown handoff"
+    fi
+    local -a py_args=(-m orchestrator.cli.status_markdown)
+    [[ -n "$write_path" ]] && py_args+=(--write "$write_path")
+    [[ -n "$ledger_root" ]] && py_args+=(--ledger-root "$ledger_root")
+    [[ $exit_code_flag -eq 1 ]] && py_args+=(--exit-code)
+
+    SPINE_HOME="$SPINE_HOME" SPINE_DB_URL="${SPINE_DB_URL:-}" \
+      SPINE_DECISION_LEDGER_ROOT="${SPINE_DECISION_LEDGER_ROOT:-}" \
+      "$_SPINE_PY" "${py_args[@]}"
+    return $?
+  fi
+
+  # Default: terse phase-count table (backcompat).
   { printf 'phase|count\n'; _psql -c "SELECT current_phase, COUNT(*) FROM spine_lifecycle.project
       GROUP BY current_phase ORDER BY current_phase;" 2>/dev/null; } \
     | column -t -s'|' || _die 4 "db unreachable at $SPINE_DB_URL"
@@ -645,8 +685,15 @@ Build handoff (STORY-7.2.2 / 7.2.3):
   spine build report <project_id> --artifact <path> [--actor A]
 
 Portfolio / ops:  spine status | spine doctor | spine help [<topic>]
+  spine status [--markdown [--write PATH] [--exit-code] [--ledger-root R]]
+              # Default: phase-count table.
+              # --markdown:   render SESSION_HANDOFF-style snapshot (V3 B5).
+              # --write PATH: also persist the rendered markdown to PATH.
+              # --exit-code:  exit 0 green / 1 warnings / 2 failures.
+
 Global flags:     --quiet/-q  --verbose/-v  --dry-run  --format json|table|brief  --help/-h
 Env:              SPINE_DB_URL  SPINE_MCP_HTTP_URL  SPINE_DEFAULT_BUNDLE  SPINE_DEFAULT_OWNER
+                  SPINE_DECISION_LEDGER_ROOT  (default: ~/.spine/decision_ledger)
 Exit codes:       0 ok  1 generic  2 invalid-input  3 gate-blocked  4 mcp/db-unreachable  64 unknown-cmd
 See orchestrator/bin/README.md for details.
 EOF
