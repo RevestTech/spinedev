@@ -12,11 +12,8 @@
 -->
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
-  import {
-    connect,
-    disconnect,
-    projectEventsOf,
-  } from '$lib/stores/projectEvents';
+  import { writable, type Readable } from 'svelte/store';
+  import { subscribe, type ProjectEvent, type ProjectStream } from '$lib/stores/projectEvents';
 
   export let projectId: string;
   export let onInvoke:
@@ -36,17 +33,20 @@
     'ci_cd',
   ] as const;
 
+  let stream: ProjectStream | null = null;
+  let events: Readable<ProjectEvent[]> = writable<ProjectEvent[]>([]);
+
   onMount(() => {
     if (projectId) {
-      connect(projectId);
+      stream = subscribe(projectId);
+      events = stream.eventsOf('operate_plane_status');
     }
   });
 
   onDestroy(() => {
-    disconnect();
+    stream?.disconnect();
+    stream = null;
   });
-
-  const events = projectEventsOf('operate_plane_status');
 
   interface Cell {
     plane: string;

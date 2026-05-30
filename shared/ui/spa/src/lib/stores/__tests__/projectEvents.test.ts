@@ -68,7 +68,7 @@ describe('projectEvents store', () => {
   it('starts idle', () => {
     const state = snapshot();
     expect(state.status).toBe('idle');
-    expect(state.projectId).toBe(null);
+    expect(state.projectId).toBe('');
     expect(state.events).toEqual([]);
   });
 

@@ -8,27 +8,29 @@
 -->
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
-  import {
-    connect,
-    disconnect,
-    projectEventsOf,
-  } from '$lib/stores/projectEvents';
+  import { writable, type Readable } from 'svelte/store';
+  import { subscribe, type ProjectEvent, type ProjectStream } from '$lib/stores/projectEvents';
 
   export let projectId: string;
 
+  let stream: ProjectStream | null = null;
+  let verdicts: Readable<ProjectEvent[]> = writable<ProjectEvent[]>([]);
+  let refusals: Readable<ProjectEvent[]> = writable<ProjectEvent[]>([]);
+  let ledger: Readable<ProjectEvent[]> = writable<ProjectEvent[]>([]);
+
   onMount(() => {
     if (projectId) {
-      connect(projectId);
+      stream = subscribe(projectId);
+      verdicts = stream.eventsOf('auditor_verdict');
+      refusals = stream.eventsOf('auditor_refusal');
+      ledger = stream.eventsOf('ledger_append');
     }
   });
 
   onDestroy(() => {
-    disconnect();
+    stream?.disconnect();
+    stream = null;
   });
-
-  const verdicts = projectEventsOf('auditor_verdict');
-  const refusals = projectEventsOf('auditor_refusal');
-  const ledger = projectEventsOf('ledger_append');
 
   $: combined = [...$verdicts, ...$refusals].sort(
     (a, b) =>

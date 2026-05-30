@@ -12,12 +12,8 @@
 -->
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
-  import {
-    connect,
-    disconnect,
-    projectEventsOf,
-  } from '$lib/stores/projectEvents';
-  import type { ProjectEvent } from '$lib/stores/projectEvents';
+  import { writable, type Readable } from 'svelte/store';
+  import { subscribe, type ProjectEvent, type ProjectStream } from '$lib/stores/projectEvents';
 
   export let projectId: string;
 
@@ -32,17 +28,20 @@
   let tierFilter: Tier = 'all';
   let csvBlob: string | null = null;
 
+  let stream: ProjectStream | null = null;
+  let ledger: Readable<ProjectEvent[]> = writable<ProjectEvent[]>([]);
+
   onMount(() => {
     if (projectId) {
-      connect(projectId);
+      stream = subscribe(projectId);
+      ledger = stream.eventsOf('ledger_append');
     }
   });
 
   onDestroy(() => {
-    disconnect();
+    stream?.disconnect();
+    stream = null;
   });
-
-  const ledger = projectEventsOf('ledger_append');
 
   $: filtered = $ledger.filter((e) => {
     if (tierFilter === 'all') return true;

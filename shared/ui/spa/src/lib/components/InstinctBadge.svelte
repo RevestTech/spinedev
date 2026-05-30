@@ -15,11 +15,8 @@
 -->
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
-  import {
-    connect,
-    disconnect,
-    projectEventsOf,
-  } from '$lib/stores/projectEvents';
+  import { writable, type Readable } from 'svelte/store';
+  import { subscribe, type ProjectEvent, type ProjectStream } from '$lib/stores/projectEvents';
 
   export let projectId: string;
   /** Distinct-actor threshold before the promote button appears. */
@@ -39,17 +36,20 @@
     actors: Set<string>;
   }
 
+  let stream: ProjectStream | null = null;
+  let events: Readable<ProjectEvent[]> = writable<ProjectEvent[]>([]);
+
   onMount(() => {
     if (projectId) {
-      connect(projectId);
+      stream = subscribe(projectId);
+      events = stream.eventsOf('instinct_recorded');
     }
   });
 
   onDestroy(() => {
-    disconnect();
+    stream?.disconnect();
+    stream = null;
   });
-
-  const events = projectEventsOf('instinct_recorded');
 
   $: aggregates = (() => {
     const byFp = new Map<string, Aggregate>();

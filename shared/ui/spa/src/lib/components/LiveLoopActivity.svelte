@@ -17,12 +17,12 @@
 -->
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
+  import { writable, type Readable } from 'svelte/store';
   import {
-    connect,
-    disconnect,
-    projectEventList,
+    subscribe,
     type ProjectEvent,
     type ProjectEventType,
+    type ProjectStream,
   } from '$lib/stores/projectEvents';
 
   export let projectId: string;
@@ -30,18 +30,22 @@
   export let maxRows = 100;
 
   let expanded = new Set<string>();
+  let stream: ProjectStream | null = null;
+  let events: Readable<ProjectEvent[]> = writable<ProjectEvent[]>([]);
 
   onMount(() => {
     if (projectId) {
-      connect(projectId);
+      stream = subscribe(projectId);
+      events = stream.events;
     }
   });
 
   onDestroy(() => {
-    disconnect();
+    stream?.disconnect();
+    stream = null;
   });
 
-  $: rows = $projectEventList.slice(0, maxRows);
+  $: rows = $events.slice(0, maxRows);
 
   function toggle(eventId: string) {
     if (expanded.has(eventId)) {

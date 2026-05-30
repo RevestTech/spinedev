@@ -11,30 +11,28 @@
 -->
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
-  import {
-    connect,
-    disconnect,
-    projectEventsOf,
-  } from '$lib/stores/projectEvents';
+  import { writable, type Readable } from 'svelte/store';
+  import { subscribe, type ProjectEvent, type ProjectStream } from '$lib/stores/projectEvents';
 
   /** "engineer", "architect", "qa", "planner", "auditor". */
   export let role: string;
   /** Triggered when the operator hits "Run evals". */
   export let onRunEvals: ((role: string) => void) | null = null;
 
-  $: scopedProjectId = `charter:${role}`;
+  let stream: ProjectStream | null = null;
+  let events: Readable<ProjectEvent[]> = writable<ProjectEvent[]>([]);
 
   onMount(() => {
     if (role) {
-      connect(scopedProjectId);
+      stream = subscribe(`charter:${role}`);
+      events = stream.eventsOf('charter_eval_run');
     }
   });
 
   onDestroy(() => {
-    disconnect();
+    stream?.disconnect();
+    stream = null;
   });
-
-  const events = projectEventsOf('charter_eval_run');
 
   $: latest = $events[0] ?? null;
   $: perEval = (latest?.payload?.per_eval as
