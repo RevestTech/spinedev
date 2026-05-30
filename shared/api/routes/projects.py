@@ -74,9 +74,13 @@ def _parse_metadata(raw: Any) -> dict[str, Any]:
 async def _direct_fetch_project_row(project_id: str) -> dict[str, Any] | None:
     """Raw row fetcher that does NOT filter on ``status='terminated'``.
 
-    Used by delete / archive / restore so those mutations stay idempotent
-    on already-mutated rows. Returns the same shape the original
-    ``_fetch_project_row`` returns (None when no row exists).
+    Returns a dict carrying the **asyncpg column names** (including
+    ``owner_user``) so downstream consumers like ``_project_row_payload``
+    can read it unchanged. Used by:
+
+      * delete / archive / restore — idempotent on already-mutated rows.
+      * GET /summary and /full — so a deleted project still renders a
+        "this was deleted" state in the SPA instead of freezing on 404.
     """
     pool = await _project_db_pool()
     where = "id = $1" if project_id.isdigit() else "project_uuid::text = $1"
@@ -97,7 +101,7 @@ async def _direct_fetch_project_row(project_id: str) -> dict[str, Any] | None:
         "project_type": row["project_type"],
         "current_phase": row["current_phase"],
         "status": row["status"],
-        "owner": row["owner_user"],
+        "owner_user": row["owner_user"],
         "pipeline_version": row["pipeline_version"],
         "metadata": row["metadata"],
         "created_at": row["created_at"],
@@ -699,8 +703,15 @@ async def _fetch_project_row(project_id: str) -> Any:
 
 @router.get("/{project_id}/summary")
 async def get_project_summary(project_id: str) -> dict[str, Any]:
-    """Minimal project header for fast workspace first paint (~1KB)."""
-    row = await _fetch_project_row(project_id)
+    """Minimal project header for fast workspace first paint (~1KB).
+
+    Reads terminated rows too — the SPA needs to render a
+    "deleted project" state instead of freezing on a 404 (user-reported
+    page-hang 2026-05-30).
+    """
+    row = await _direct_fetch_project_row(project_id)
+    if row is None:
+        raise _err(404, "project_not_found", f"project {project_id!r} not found")
     return _project_row_payload(
         row,
         include_artifacts=False,
@@ -722,8 +733,14 @@ async def get_project_full(
 
     Pass ``include_artifacts=false`` for a lightweight snapshot (phase,
     flags, code file list) without multi‑KB markdown blobs in metadata.
+
+    Reads terminated rows too — the SPA needs to render a "deleted"
+    state instead of freezing on a 404 (user-reported page-hang
+    2026-05-30).
     """
-    row = await _fetch_project_row(project_id)
+    row = await _direct_fetch_project_row(project_id)
+    if row is None:
+        raise _err(404, "project_not_found", f"project {project_id!r} not found")
     return _project_row_payload(
         row,
         include_artifacts=include_artifacts,
