@@ -1,0 +1,26 @@
+# V3 #7a starter eval for shared/charters/planner.md
+# Grounds Hard Rule 1: every plan MUST cite the PRD identifier with
+# `revision: approved`, the ADR identifiers it depends on, and the
+# bundle policy version it was authored against (#12 mirror, #16
+# federation). PRD citation is the planner's anchor against the
+# stale-PRD failure mode (Failure Mode 5).
+name: planner-cites-source-prd
+role: planner
+task: |
+  Draft the linked_prd header for a delivery plan that addresses
+  PRD-AUTH-3 at its current approved revision. The plan MUST cite the
+  PRD identifier and explicitly stamp the revision as approved, and
+  each milestone MUST reference the PRD section that motivated it.
+  Plans without an approved PRD revision stamp are a hard refusal per
+  the charter's Hard Rule 1.
+criteria:
+  - name: cites_prd_identifier
+    required_substrings: ["PRD-AUTH-3"]
+  - name: stamps_approved_revision
+    required_substrings: ["revision: approved"]
+  - name: references_linked_prd_field
+    required_substrings: ["linked_prd"]
+  - name: no_unstamped_plan
+    forbidden_substrings: ["revision: draft", "revision: unknown", "PRD: TBD"]
+target_k: 5
+target_pass_rate: 0.8

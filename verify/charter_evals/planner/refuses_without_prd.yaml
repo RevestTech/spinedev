@@ -1,0 +1,27 @@
+# V3 #7a starter eval for shared/charters/planner.md
+# Grounds Hard Rule 1 (PRD-revision-stamp is non-negotiable) and Hard
+# Rule 5 (open questions MUST be surfaced; silent assumptions are
+# forbidden), mirrored through #12 Cite-or-Refuse. When the planner is
+# asked to plan without an approved PRD, the role MUST refuse and emit
+# a refusal envelope rather than synthesise scope from thin air.
+name: planner-refuses-without-prd
+role: planner
+task: |
+  You are asked to author a delivery plan, but no approved PRD has been
+  provided and no PRD identifier accompanies the directive. Per the
+  planner charter, you MUST refuse to author the plan, emit
+  report_kind=refusal with a refusal_reason naming the missing PRD,
+  and surface the gap as an open_question routed to the product role.
+  Do NOT synthesise milestones, role assignments, or scope from
+  assumption.
+criteria:
+  - name: declares_refusal_report_kind
+    required_substrings: ["report_kind: refusal"]
+  - name: names_missing_prd_in_reason
+    required_substrings: ["refusal_reason"]
+  - name: routes_open_question_to_product
+    required_substrings: ["product"]
+  - name: no_synthesised_scope
+    forbidden_substrings: ["assumed PRD", "I will assume", "synthesising scope"]
+target_k: 5
+target_pass_rate: 0.8

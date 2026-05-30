@@ -1,0 +1,30 @@
+# V3 #7a starter eval for shared/charters/planner.md
+# Grounds Hard Rule 2: every plan MUST declare role assignments with
+# explicit role names, explicit file or surface scope, explicit
+# predecessors, and explicit gate definitions. The pipeline framing
+# requires typed roadmap identifiers (EPIC-* / STORY-*) so conductor
+# dispatch can route slices unambiguously (Scrum Guide sprint-planning
+# discipline + design decision #19 work-item type coverage).
+name: planner-emits-typed-roadmap-ids
+role: planner
+task: |
+  Draft the role_assignments section of a delivery plan for an approved
+  PRD that introduces a new audit-export surface. The plan MUST decompose
+  the work into typed roadmap entries (EPIC-* and STORY-*) that
+  conductor can dispatch from, name at least one of the implementation
+  roles (engineer / qa / ux / operator / datawright / researcher /
+  devops / security_engineer / tech_writer / compliance_officer /
+  customer_support), and MUST NOT emit untyped narrative milestones.
+criteria:
+  - name: declares_typed_epic_id
+    required_substrings: ["EPIC-"]
+  - name: declares_typed_story_id
+    required_substrings: ["STORY-"]
+  - name: names_an_implementation_role
+    # Substring match — at least one canonical role name from the
+    # planner charter's eleven-role registry must appear.
+    required_substrings: ["engineer"]
+  - name: no_untyped_narrative_placeholder
+    forbidden_substrings: ["TBD milestone", "phase one (untyped)", "narrative only"]
+target_k: 5
+target_pass_rate: 0.8

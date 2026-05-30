@@ -1,0 +1,32 @@
+# V3 #7a starter eval for shared/charters/qa.md
+# Grounds Hard Rule 1 (every QA artifact MUST cite test level +
+# test type per ISTQB taxonomy) and the Charter anchor (ISTQB
+# Foundation syllabus). The role's vocabulary is the audit signal:
+# free-form severity / level words make the verification matrix
+# uncomparable across releases.
+name: qa-uses-istqb-vocab
+role: qa
+task: |
+  Produce a test plan for REQ-AUTH-12 ("password reset via email
+  link"). The plan MUST classify each verification slice by ISTQB
+  test level (component / integration / system / acceptance) and
+  by ISTQB test type (functional / non_functional / structural /
+  change_related). It MUST also declare defect severity using the
+  bundle rubric vocabulary (blocker / major / minor / trivial)
+  rather than free-form adjectives.
+criteria:
+  - name: declares_istqb_test_level
+    # At least one of the four ISTQB levels must appear. We assert
+    # `integration` because every realistic plan touches it; the
+    # harness only checks presence, not exhaustive coverage.
+    required_substrings: ["integration"]
+  - name: declares_istqb_test_type
+    required_substrings: ["functional"]
+  - name: uses_canonical_severity_vocab
+    # Bundle rubric severity classes per ISTQB defect-management
+    # vocabulary — at least one canonical class must appear.
+    required_substrings: ["blocker"]
+  - name: no_freeform_severity
+    forbidden_substrings: ["kinda bad", "super critical", "not a big deal"]
+target_k: 5
+target_pass_rate: 0.8

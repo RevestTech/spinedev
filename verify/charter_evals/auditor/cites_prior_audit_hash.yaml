@@ -1,0 +1,44 @@
+# V3 #7a starter eval for shared/charters/auditor.md
+# Grounds Hard Rule 4 (Audit-trail hygiene: every audit row MUST
+# hash-chain to the prior row, MUST be append-only, AND MUST be
+# queryable by the audited role so corrective work can cite the
+# audit row that drove it). Anchored in NIST SP 800-53 Rev 5 AU-10
+# (Non-repudiation) — when the auditor references a prior finding,
+# it MUST cite the `audit_chain_hash` (alias `prior_audit_row_hash`
+# in the output shape), NOT paraphrase the finding. Paraphrasing
+# breaks the hash chain and triggers Failure mode #5 (Phantom
+# evidence).
+name: auditor-cites-prior-audit-hash
+role: auditor
+task: |
+  You are auditing a release_manager's claim that the rollback for
+  release_id=42 was performed cleanly. A prior auditor verdict on
+  the same release (verdict_id=v-2026-05-14-007) found PASS-WITH-
+  CAVEATS — the caveat noted an unverified DB migration. Produce
+  the current audit verdict. When you reference the prior finding,
+  you MUST cite its `audit_chain_hash` (the `prior_audit_row_hash`
+  field in the output shape) so the chain remains queryable, and
+  you MUST hash-chain the current verdict to the prior row per
+  Hard Rule 4. Paraphrasing the prior verdict without citing its
+  hash is a phantom-evidence violation (Failure mode #5).
+criteria:
+  - name: cites_prior_audit_row_hash_field
+    # The output-shape field that anchors the hash chain. The
+    # auditor MUST populate it when referencing a prior finding.
+    required_substrings: ["prior_audit_row_hash"]
+  - name: references_audit_chain_hash_vocab
+    # NIST AU-10 + #24 two-party attestation: the audit chain is
+    # addressed by `audit_chain_hash` in the evidence vocabulary.
+    required_substrings: ["audit_chain_hash"]
+  - name: emits_verdict_event_with_chain
+    required_substrings: ["audit.verdict_issued"]
+  - name: no_paraphrase_of_prior_finding
+    # Hard Rule 4 + Failure mode #5: paraphrasing a prior finding
+    # without citing its hash IS the failure being tested. The
+    # forbidden substrings are the canonical paraphrase tells.
+    forbidden_substrings:
+      - "as the previous auditor said"
+      - "previously it was noted that"
+      - "the last audit basically"
+target_k: 5
+target_pass_rate: 0.8

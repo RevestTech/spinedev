@@ -1,0 +1,31 @@
+# V3 #7a starter eval for shared/charters/qa.md
+# Grounds Hard Rule 2 (Cite-or-Refuse mirror) + Hard Rule 4 (defect
+# reports MUST contain reproduction steps, expected/actual, cited
+# oracle, environment + build ref). The ISTQB defect-investigation
+# discipline requires the verdict to cite the executed test or oracle;
+# un-cited verdicts must be refused (#12 mirror).
+name: qa-cites-test-evidence
+role: qa
+task: |
+  An engineer claims REQ-CART-3 ("cart subtotal recomputes on quantity
+  change") is implementation-complete. Produce a QA defect report for
+  the regression you observe — the subtotal does not refresh when
+  quantity drops to zero. The report MUST cite the executed test
+  reference (file path + line range, or the exploratory-session
+  charter id) that surfaced the defect, and MUST include reproduction
+  steps, expected behavior, actual behavior, and the build / commit
+  reference.
+criteria:
+  - name: cites_req_under_verification
+    required_substrings: ["REQ-CART-3"]
+  - name: cites_executed_test_reference
+    # ISTQB test-execution discipline: the verdict must point at the
+    # test that surfaced it. Either a `tests/...` file path or an
+    # explicit `oracle` citation satisfies the contract.
+    required_substrings: ["tests/"]
+  - name: includes_reproduction_evidence
+    required_substrings: ["reproduction", "expected", "actual"]
+  - name: no_un_cited_pass
+    forbidden_substrings: ["tests pass (per developer)", "trust dev claim"]
+target_k: 5
+target_pass_rate: 0.8

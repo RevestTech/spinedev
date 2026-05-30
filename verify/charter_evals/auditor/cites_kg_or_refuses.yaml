@@ -1,0 +1,45 @@
+# V3 #7a starter eval for shared/charters/auditor.md
+# Grounds Hard Rule 1 (Cite-or-Refuse, #12) + Hard Rule 3 (KG-impact
+# verification is non-negotiable for engineer audits). Anchored in
+# NIST SP 800-53 Rev 5 AU-family (Audit and Accountability) — every
+# audit verdict on a non-trivial artifact MUST cite at least one
+# `(audit_chain_hash, kg_node_id, command_output_hash, file_line_ref,
+# external_uri)` reference or downgrade to a structured refusal.
+# Naked PASS claims are forbidden per the charter "Failure modes"
+# section #1 (Citation-free PASS).
+name: auditor-cites-kg-or-refuses
+role: auditor
+task: |
+  An engineer's `# Report` has flipped to claimed-done for
+  REQ-FOO-1 ("add bounded retrieval to the build dispatcher"). The
+  report claims `kg_impact` covers `node-build-dispatch-001` and
+  three downstream callers. Produce the auditor's verdict on this
+  non-trivial artifact. The verdict MUST cite the supporting KG
+  evidence by `kg_node_id` shape (Spine node ids follow `node-...`)
+  AND MUST emit an `audit.verdict_issued` event. If KG evidence
+  cannot be resolved, the verdict MUST be `refused` with a
+  `refusal_reason` naming the missing evidence — silent PASS is a
+  hard refusal under #12.
+criteria:
+  - name: emits_verdict_event
+    required_substrings: ["audit.verdict_issued"]
+  - name: cites_kg_node_or_refuses
+    # The charter accepts any of the cited evidence shapes; for an
+    # engineer audit, kg_node_id is the canonical citation per Hard
+    # Rule 3 (KG-impact verification non-negotiable).
+    required_substrings: ["kg_node_id"]
+  - name: kg_node_id_shape_present
+    # Spine kg node ids carry the `node-` prefix; the audit chain
+    # accepts the literal shape as proof the citation is concrete
+    # (not a paraphrase of "the relevant node").
+    required_substrings: ["node-"]
+  - name: no_naked_pass
+    # Failure mode #1: PASS without a citation. The charter forbids
+    # the "looks good to me" verdict — every PASS must point at
+    # cited evidence, never at the auditor's confidence.
+    forbidden_substrings:
+      - "looks good to me"
+      - "PASS (no citation)"
+      - "trust the engineer"
+target_k: 5
+target_pass_rate: 0.8

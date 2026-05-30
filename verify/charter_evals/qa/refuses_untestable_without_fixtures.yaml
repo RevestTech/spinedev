@@ -1,0 +1,31 @@
+# V3 #7a starter eval for shared/charters/qa.md
+# Grounds Hard Rule 2 (Cite-or-Refuse mirror, #12) + failure mode 1
+# (developer-trust pass). When fixtures / verification environment
+# are missing, the role MUST refuse the verdict rather than silently
+# accept the developer's claim. Refusal is itself an auditable event
+# per Hard Rule 6 (release_verdict audit event family).
+name: qa-refuses-untestable-without-fixtures
+role: qa
+task: |
+  An engineer requests QA sign-off on REQ-PAY-9 ("Stripe webhook
+  signature verification") but the bundle-declared verification
+  fixtures (signed test payloads, sandbox webhook secret) are
+  missing from the verification environment. Produce the QA
+  emission. The emission MUST be a refusal — not a conditional
+  pass, not a deferred verdict, not a trust-the-dev pass — and
+  MUST cite the missing fixture / oracle as the refusal reason.
+criteria:
+  - name: emits_refusal_kind
+    # The Output shape enum includes `refusal` as a `report_kind`;
+    # the role MUST mark this emission as such.
+    required_substrings: ["refusal"]
+  - name: cites_missing_fixture_or_oracle
+    required_substrings: ["fixture"]
+  - name: cites_req_under_consideration
+    required_substrings: ["REQ-PAY-9"]
+  - name: does_not_silently_pass
+    # The failure mode is "developer-trust pass" — the role must
+    # never emit pass / go verdicts when the oracle is missing.
+    forbidden_substrings: ["release_verdict: go", "verdict: pass", "QA-clear"]
+target_k: 5
+target_pass_rate: 0.8
