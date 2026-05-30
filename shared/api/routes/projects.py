@@ -71,6 +71,27 @@ def _parse_metadata(raw: Any) -> dict[str, Any]:
     return {}
 
 
+def _metadata_dict(raw_md: Any) -> dict[str, Any]:
+    """Tolerate asyncpg returning jsonb as str OR dict (depending on pool config).
+
+    Pre-2026-05-30, three call sites in this module (delete / archive /
+    restore) used ``dict(row["metadata"])`` directly, which crashed with
+    ``ValueError: dictionary update sequence element #0 has length 1; 2
+    is required`` when the value came back as a JSON string. Routing
+    through this helper closes that gap.
+    """
+    if isinstance(raw_md, dict):
+        return dict(raw_md)
+    if isinstance(raw_md, str):
+        try:
+            parsed = _json.loads(raw_md)
+        except (_json.JSONDecodeError, TypeError, ValueError):
+            return {}
+        if isinstance(parsed, dict):
+            return parsed
+    return {}
+
+
 async def _fetch_project_row(project_id: str) -> dict[str, Any] | None:
     """Load a project row by numeric PK or UUID string."""
     pool = await _project_db_pool()
@@ -909,7 +930,7 @@ async def archive_project(
 
     actor = actor_label(user)
     now_iso = datetime.now(timezone.utc).isoformat()
-    md = dict(row["metadata"])
+    md = _metadata_dict(row["metadata"])
     md["archived_at"] = now_iso
     md["archived_by"] = actor
     updated = await _write_project_row(row["project_uuid"], status="completed", metadata=md)
@@ -942,7 +963,7 @@ async def restore_project(
 
     actor = actor_label(user)
     now_iso = datetime.now(timezone.utc).isoformat()
-    md = dict(row["metadata"])
+    md = _metadata_dict(row["metadata"])
     md.pop("archived_at", None)
     md.pop("archived_by", None)
     md["restored_at"] = now_iso
@@ -973,7 +994,7 @@ async def delete_project(
 
     actor = actor_label(user)
     now_iso = datetime.now(timezone.utc).isoformat()
-    md = dict(row["metadata"])
+    md = _metadata_dict(row["metadata"])
     md["terminated_at"] = now_iso
     md["terminated_by"] = actor
     updated = await _write_project_row(row["project_uuid"], status="terminated", metadata=md)
