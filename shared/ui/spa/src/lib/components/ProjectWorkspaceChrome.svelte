@@ -10,10 +10,9 @@
     primaryStuckReason,
   } from '$lib/projectRecoveryUtils';
   import { wsRecovery, wsRunState, wsRecoveryBusy } from '$lib/stores/projectWorkspace';
-  import type { DecisionCard } from '$lib/api/types';
+  import { projectScopedDecisions } from '$lib/stores/projectDecisionsStore';
 
   export let projectPhase: string;
-  export let projectDecisions: DecisionCard[] = [];
   export let codeReviewBlocked = false;
   export let onSelectDecisions: () => void = () => {};
   export let onSelectPipelineAndDispatch: (action: string) => void = () => {};
@@ -39,12 +38,13 @@
   $: recovery = $wsRecovery;
   $: run = $wsRunState;
   $: recoveryBusy = $wsRecoveryBusy;
+  $: decisionCount = $projectScopedDecisions.length;
 
   $: isPipelineStuck = Boolean(
     recovery?.stuck ||
       (codeReviewBlocked &&
         !run.activeRole &&
-        projectDecisions.length === 0 &&
+        decisionCount === 0 &&
         !dispatchInFlightActive(recovery))
   );
 
@@ -62,8 +62,8 @@
     recoveryBusy || run.activeRole !== null || dispatchInFlightActive(recovery);
 
   $: attentionLabel = (() => {
-    if (projectDecisions.length > 0) {
-      return PIPELINE_COPY.attention.decisionsReview(projectDecisions.length);
+    if (decisionCount > 0) {
+      return PIPELINE_COPY.attention.decisionsReview(decisionCount);
     }
     if (isPipelineStuck) return PIPELINE_COPY.attention.paused;
     return null;
@@ -74,7 +74,7 @@
   $: pipelineStatusMode = (() => {
     if (run.activeRole) return 'working';
     if (dispatchInFlightActive(recovery)) return 'running';
-    if (projectDecisions.length > 0) return 'decisions';
+    if (decisionCount > 0) return 'decisions';
     if (recovery?.last_role_failure?.error) return 'failed';
     if (isPipelineStuck) return 'blocked';
     return 'idle';
@@ -86,8 +86,8 @@
     if (dispatchInFlightActive(recovery) && inflight) {
       return PIPELINE_COPY.status.starting(dispatchKindLabel(inflight.dispatch_kind));
     }
-    if (projectDecisions.length > 0) {
-      return PIPELINE_COPY.status.decisions(projectDecisions.length);
+    if (decisionCount > 0) {
+      return PIPELINE_COPY.status.decisions(decisionCount);
     }
     if (isPipelineStuck && effectiveStuckReasons.length > 0) {
       return `${PIPELINE_COPY.status.pausedPrefix} — ${humanStuckReason(primaryStuckReason(effectiveStuckReasons))}`;
@@ -104,7 +104,7 @@
     if (run.activeRole && roleInfo) {
       return `${run.activeRoleMessage ?? roleInfo.what} · typical ${roleInfo.typical}`;
     }
-    if (projectDecisions.length > 0) return PIPELINE_COPY.subtext.decisions;
+    if (decisionCount > 0) return PIPELINE_COPY.subtext.decisions;
     if (isPipelineStuck && selectedRecoverySpec) {
       return PIPELINE_COPY.subtext.suggestedAction(selectedRecoverySpec.label);
     }
@@ -142,12 +142,12 @@
     <span
       class="inline-flex items-center gap-2 rounded-full border border-amber-500/50 bg-amber-500/15 px-4 py-1.5 text-sm font-semibold text-amber-100"
     >
-      {#if recovery?.stuck && projectDecisions.length === 0}
+      {#if recovery?.stuck && decisionCount === 0}
         <span class="inline-block h-1.5 w-1.5 rounded-full bg-amber-400" aria-hidden="true"></span>
       {/if}
       {attentionLabel}
     </span>
-    {#if isPipelineStuck && selectedRecoverySpec && projectDecisions.length === 0}
+    {#if isPipelineStuck && selectedRecoverySpec && decisionCount === 0}
       <button
         type="button"
         class="btn-primary text-sm sm:text-base"
@@ -182,9 +182,9 @@
       {/if}
     </div>
     <div class="flex shrink-0 flex-wrap items-center gap-2">
-      {#if projectDecisions.length > 0}
+      {#if decisionCount > 0}
         <button type="button" class="btn-primary text-base" on:click={onSelectDecisions}>
-          {PIPELINE_COPY.decisions.reviewButton(projectDecisions.length)}
+          {PIPELINE_COPY.decisions.reviewButton(decisionCount)}
         </button>
       {:else if isPipelineStuck && selectedRecoverySpec && !recoveryDispatchBlocked}
         <button

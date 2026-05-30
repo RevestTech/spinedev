@@ -12,10 +12,10 @@
   import ErrorBanner from '$lib/components/ErrorBanner.svelte';
   import LoadingSpinner from '$lib/components/LoadingSpinner.svelte';
   import { user } from '$lib/stores/user';
-  import { decisions, pendingCount } from '$lib/stores/decisions';
+  import { decisions, pendingCount, decisionActivity } from '$lib/stores/decisions';
   import { hubInbox, hubInboxCount } from '$lib/stores/hubInbox';
   import { navHref } from '$lib/navActive';
-  import { api, subscribeSse, isAbortError } from '$lib/api/client';
+  import { api } from '$lib/api/client';
   import { ApiError } from '$lib/api/types';
   import {
     SDLC_PHASES,
@@ -88,7 +88,7 @@
   let projectsLoading = true;
   let stuckByProject: Record<string, StuckSummary> = {};
   let activeByProject: Record<string, { role: string; startedAt: number }> = {};
-  let sseSub: { close: () => void } | null = null;
+  let activityUnsub: (() => void) | null = null;
   let nowTick = Date.now();
   let nowInterval: number | null = null;
 
@@ -166,40 +166,26 @@
     }
   }
 
-  function subscribeFeed() {
-    if (sseSub) return;
-    sseSub = subscribeSse<any>(
-      '/api/v2/decisions/subscribe',
-      {
-        onEvent: ({ data }) => {
-          const ev = data as any;
-          if (!ev?.type) return;
-          const pid = sseProjectKey(ev);
-          if (!pid) return;
-          if (ev.type === 'role_started') {
-            activeByProject = {
-              ...activeByProject,
-              [pid]: { role: ev.role, startedAt: (ev.ts ?? Date.now() / 1000) * 1000 }
-            };
-          } else if (ev.type === 'role_finished' || ev.type === 'role_failed') {
-            const next = { ...activeByProject };
-            delete next[pid];
-            activeByProject = next;
-            void decisions.load('pending');
-            void loadStuckSummary();
-          } else if (ev.type === 'card_created' || ev.type === 'card_updated') {
-            void decisions.load('pending');
-            void loadStuckSummary();
-          }
-        },
-        onError: (err) => {
-          if (isAbortError(err)) return;
-          sseSub = null;
-          setTimeout(() => subscribeFeed(), 3000);
-        }
-      },
-      { body: {} }
-    );
+  function subscribeActivityFeed() {
+    if (activityUnsub) return;
+    activityUnsub = decisionActivity.subscribe((ev) => {
+      if (!ev?.type) return;
+      const pid = sseProjectKey(ev);
+      if (!pid) return;
+      if (ev.type === 'role_started') {
+        activeByProject = {
+          ...activeByProject,
+          [pid]: { role: ev.role ?? 'role', startedAt: (ev.ts ?? Date.now() / 1000) * 1000 },
+        };
+      } else if (ev.type === 'role_finished' || ev.type === 'role_failed') {
+        const next = { ...activeByProject };
+        delete next[pid];
+        activeByProject = next;
+        void loadStuckSummary();
+      } else if (ev.type === 'card_created' || ev.type === 'card_updated') {
+        void loadStuckSummary();
+      }
+    });
   }
 
   async function createProject() {
@@ -246,7 +232,7 @@
     void loadStuckSummary();
     void decisions.load('pending');
     void hubInbox.load('pending');
-    subscribeFeed();
+    subscribeActivityFeed();
     nowInterval = window.setInterval(() => {
       nowTick = Date.now();
     }, 1000) as unknown as number;
@@ -254,8 +240,8 @@
 
   onDestroy(() => {
     if (nowInterval !== null) window.clearInterval(nowInterval);
-    sseSub?.close();
-    sseSub = null;
+    activityUnsub?.();
+    activityUnsub = null;
   });
 </script>
 

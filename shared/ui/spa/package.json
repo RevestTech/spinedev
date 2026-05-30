@@ -13,13 +13,13 @@
     "test:watch": "vitest",
     "codegen:types": "bash scripts/codegen-types.sh"
   },
-  "dependencies": {},
   "devDependencies": {
+    "@playwright/test": "^1.60.0",
     "@sveltejs/adapter-static": "3.0.5",
     "@sveltejs/kit": "2.5.27",
     "@sveltejs/vite-plugin-svelte": "3.1.2",
-    "@testing-library/svelte": "5.2.4",
     "@testing-library/jest-dom": "6.5.0",
+    "@testing-library/svelte": "5.2.4",
     "@types/node": "20.16.10",
     "autoprefixer": "10.4.20",
     "jsdom": "25.0.1",

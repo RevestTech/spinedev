@@ -18,16 +18,17 @@
   import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
   import ProjectEditDialog from '$lib/components/ProjectEditDialog.svelte';
   import ProjectWorkspaceChrome from '$lib/components/ProjectWorkspaceChrome.svelte';
+  import ProjectWorkspaceRuntime from '$lib/components/ProjectWorkspaceRuntime.svelte';
+  import ProjectWorkspaceTabs from '$lib/components/ProjectWorkspaceTabs.svelte';
+  import type { WorkspaceTab } from '$lib/projectWorkspaceTypes';
   import ProjectPipelinePanel from '$lib/components/ProjectPipelinePanel.svelte';
   import ProjectDecisionsPanel from '$lib/components/ProjectDecisionsPanel.svelte';
   import { api } from '$lib/api/client';
+  import { get } from 'svelte/store';
   import { decisions } from '$lib/stores/decisions';
+  import { projectDecisionKeys, projectScopedDecisions } from '$lib/stores/projectDecisionsStore';
   import { toasts } from '$lib/stores/toasts';
-  import {
-    PIPELINE_COPY,
-    formatProjectSubtitle,
-  } from '$lib/projectPipelineCopy';
-  import type { DecisionCard } from '$lib/api/types';
+  import { formatProjectSubtitle } from '$lib/projectPipelineCopy';
   import {
     archiveProject,
     deleteProject,
@@ -44,11 +45,12 @@
     wsBind,
     wsUnbind,
     wsResetTransient,
-    wsSetSseLive,
     wsSetMetadataPatchHandler,
     wsSetArtifactsRefreshHandler,
     scheduleLoadRecovery,
     wsLoadTerminal,
+    wsLoadRecoveryNow,
+    wsWaitForRecoverySnapshot,
     wsDispatchRecovery,
   } from '$lib/stores/projectWorkspace';
 
@@ -67,8 +69,12 @@
   }
   let project: ProjectFull | null = null;
   let projectLoading = false;
+  /** Pipeline/runtime mounts only after bind + recovery snapshot (prevents main-thread freeze). */
+  let workspaceReady = false;
   let projectError: string | null = null;
   let workspaceLoadPromise: Promise<void> | null = null;
+  /** Suppress duplicate initial load when SvelteKit afterNavigate follows onMount. */
+  let skipNextInitialNavigate = false;
 
 
   function phaseIndex(phase: string | undefined): number {
@@ -96,14 +102,9 @@
   let pollHandle: number | null = null; // legacy — cleared on 404 if ever set
   let projectArtifactsLoaded = false;
   let lastLoadedProjectId: string | null = null;
-  let sseLiveConnected = false;
-  $: sseLiveConnected = $decisions.liveConnected;
-  $: wsSetSseLive(sseLiveConnected);
-  $: wsActiveRole = $wsRunState.activeRole;
-  $: wsRecoverySnap = $wsRecovery;
 
-  type WorkspaceTab = 'intake' | 'decisions' | 'pipeline' | 'artifacts' | 'code';
-  let workspaceTab: WorkspaceTab = 'pipeline';
+  type WorkspaceTabId = WorkspaceTab;
+  let workspaceTab: WorkspaceTabId = 'pipeline';
   let workspaceTabPinned = false;
   /** One-shot auto tab pick on project open — avoids yanking tabs on every poll refresh. */
   let initialWorkspaceTabSet = false;
@@ -205,35 +206,46 @@
     };
   })();
 
-  function decisionMatchesProject(card: DecisionCard, proj: ProjectFull): boolean {
-    const pid = card.project_id;
-    if (!pid) return false;
-    return (
-      pid === proj.project_id ||
-      pid === String(proj.id) ||
-      card.metadata?.project_uuid === proj.project_id
-    );
+  async function waitForDecisionsLoaded(): Promise<void> {
+    if (!get(decisions).loading) return;
+    await new Promise<void>((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        unsub();
+        clearTimeout(timer);
+        resolve();
+      };
+      const unsub = decisions.subscribe((s) => {
+        if (!s.loading) finish();
+      });
+      const timer = window.setTimeout(finish, 8000);
+    });
   }
 
-  let projectDecisions: DecisionCard[] = [];
-  $: projectDecisions = project && Array.isArray($decisions.items)
-    ? $decisions.items.filter((c) => decisionMatchesProject(c, project!))
-    : [];
-
-  $: if (project && !$decisions.loading && !initialWorkspaceTabSet && !workspaceTabPinned) {
-    void tick().then(() => {
-      if (project && !initialWorkspaceTabSet && !workspaceTabPinned) {
-        syncInitialWorkspaceTab();
-      }
-    });
+  function pipelineStuckSnapshot(): boolean {
+    const recovery = get(wsRecovery);
+    const activeRole = get(wsRunState);
+    const cards = get(projectScopedDecisions);
+    const blocked = Boolean(
+      project?.metadata?.code_review_blocked ?? recovery?.code_review_blocked
+    );
+    return Boolean(
+      recovery?.stuck ||
+        (blocked &&
+          !activeRole.activeRole &&
+          cards.length === 0 &&
+          !dispatchInFlightActive(recovery))
+    );
   }
 
   function syncInitialWorkspaceTab() {
     if (!project || initialWorkspaceTabSet || workspaceTabPinned) return;
-    const decisions = projectDecisions ?? [];
+    const pending = get(projectScopedDecisions);
     if (project.current_phase === 'intake') workspaceTab = 'intake';
-    else if (decisions.length > 0) workspaceTab = 'decisions';
-    else if (isPipelineStuck && !wsActiveRole) workspaceTab = 'pipeline';
+    else if (pending.length > 0) workspaceTab = 'decisions';
+    else if (pipelineStuckSnapshot()) workspaceTab = 'pipeline';
     initialWorkspaceTabSet = true;
     validateWorkspaceTab();
     if (workspaceTab === 'pipeline' && projectId) {
@@ -241,14 +253,24 @@
     }
   }
 
+  function allowedWorkspaceTabs(): WorkspaceTabId[] {
+    const tabs: WorkspaceTabId[] = [];
+    if (project?.current_phase === 'intake') tabs.push('intake');
+    tabs.push('decisions', 'pipeline');
+    if (showArtifactsTab()) tabs.push('artifacts');
+    const fileCount = codeFiles.length > 0 ? codeFiles.length : codeFilesCount(project);
+    if (fileCount > 0) tabs.push('code');
+    return tabs;
+  }
+
   function validateWorkspaceTab() {
     if (!project) return;
-    const tabs = buildWorkspaceTabs();
-    if (!tabs.some((t) => t.id === workspaceTab)) {
+    const tabs = allowedWorkspaceTabs();
+    if (!tabs.includes(workspaceTab)) {
       workspaceTab =
-        tabs.find((t) => t.id === 'decisions')?.id ??
-        tabs.find((t) => t.id === 'pipeline')?.id ??
-        tabs[0]?.id ??
+        tabs.find((t) => t === 'decisions') ??
+        tabs.find((t) => t === 'pipeline') ??
+        tabs[0] ??
         'pipeline';
     }
   }
@@ -266,36 +288,7 @@
     return Array.isArray(md.code_files) ? md.code_files.length : 0;
   }
 
-  function buildWorkspaceTabs(): { id: WorkspaceTab; label: string; count?: number; attention?: boolean }[] {
-    const decisions = projectDecisions ?? [];
-    const artifactList = artifacts ?? [];
-    const tabs: { id: WorkspaceTab; label: string; count?: number; attention?: boolean }[] = [];
-    if (project?.current_phase === 'intake') tabs.push({ id: 'intake', label: 'Intake' });
-    tabs.push({
-      id: 'decisions',
-      label: 'Decisions',
-      count: decisions.length || undefined,
-    });
-    tabs.push({
-      id: 'pipeline',
-      label: 'Pipeline',
-      attention: Boolean(isPipelineStuck && !wsActiveRole && decisions.length === 0),
-    });
-    if (showArtifactsTab()) {
-      tabs.push({
-        id: 'artifacts',
-        label: 'Artifacts',
-        count: artifactList.length || undefined,
-      });
-    }
-    const fileCount = codeFiles.length > 0 ? codeFiles.length : codeFilesCount(project);
-    if (fileCount > 0) {
-      tabs.push({ id: 'code', label: 'Code', count: fileCount });
-    }
-    return tabs;
-  }
-
-  function selectWorkspaceTab(tab: WorkspaceTab) {
+  function selectWorkspaceTab(tab: WorkspaceTabId) {
     if (workspaceTab === 'code' && tab !== 'code') stopDeployPoll();
     workspaceTabPinned = true;
     workspaceTab = tab;
@@ -311,13 +304,15 @@
     }
   }
 
-  function patchProjectMetadata(patch: Record<string, unknown>, phase?: string) {
+  function syncProjectDecisionKeys() {
+    projectDecisionKeys.set(projectMatchKeys());
+  }
+
+  function patchProjectMetadata(_patch: Record<string, unknown>, phase?: string) {
     if (!project) return;
-    project = {
-      ...project,
-      current_phase: phase ?? project.current_phase,
-      metadata: { ...(project.metadata ?? {}), ...patch },
-    };
+    if (phase && phase !== project.current_phase) {
+      project = { ...project, current_phase: phase };
+    }
   }
 
   function projectMatchKeys(): string[] {
@@ -428,12 +423,16 @@
     await projectFullLoadPromise;
   }
 
-  async function loadProject(includeArtifacts = false): Promise<boolean> {
+  async function loadProject(
+    includeArtifacts = false,
+    opts: { reveal?: boolean } = {}
+  ): Promise<boolean> {
     if (!projectId) return false;
+    const reveal = opts.reveal !== false;
     try {
       const summary = await api.get<ProjectFull>(`/api/v2/projects/${projectId}/summary`);
       projectError = null;
-      projectLoading = false;
+      if (reveal) projectLoading = false;
       project = summary;
       await yieldMainThread();
       if (includeArtifacts) {
@@ -466,6 +465,9 @@
       projectError = 'Missing project id in route';
       return;
     }
+    if (opts.initial && id === lastLoadedProjectId && workspaceReady && !opts.refreshProject) {
+      return;
+    }
     if (workspaceLoadPromise) {
       if (opts.initial) return workspaceLoadPromise;
       if (!opts.initial) return;
@@ -489,6 +491,7 @@
     if (opts.initial || isNewProject) {
       projectLoading = true;
       if (isNewProject) {
+        workspaceReady = false;
         lastLoadedProjectId = id;
         project = null;
         wsUnbind();
@@ -509,14 +512,35 @@
     });
     try {
       if (shouldRefreshProject) {
-        const ok = await loadProject(includeArtifacts);
+        const ok = await loadProject(includeArtifacts, { reveal: false });
         if (!ok) return;
-        if (project) restoreIntakeFromMetadata(project);
+        if (project) {
+          syncProjectDecisionKeys();
+          restoreIntakeFromMetadata(project);
+        }
+        await waitForDecisionsLoaded();
         await yieldMainThread();
+      }
+      if (opts.initial || isNewProject) {
+        await Promise.race([
+          (async () => {
+            await wsLoadRecoveryNow(id);
+            await wsWaitForRecoverySnapshot(id, 4000);
+          })(),
+          new Promise<void>((resolve) => setTimeout(resolve, 12_000)),
+        ]);
+        await yieldMainThread();
+      }
+      if (!(opts.initial || isNewProject)) {
+        scheduleLoadRecovery(id, true);
+      }
+      if (shouldRefreshProject && project) {
         syncInitialWorkspaceTab();
       }
-      if (project) wsBind(id, projectMatchKeys());
-      scheduleLoadRecovery(id, true);
+      await tick();
+      await yieldMainThread();
+      workspaceReady = true;
+      projectLoading = false;
       if (
         project?.current_phase === 'intake' &&
         transcript.length === 0 &&
@@ -532,7 +556,8 @@
 
   function scheduleProjectRefresh(wantArtifacts = false) {
     if (!projectId) return;
-    if (sseLiveConnected && dispatchInFlightActive(wsRecoverySnap) && workspaceTab !== 'artifacts') {
+    const live = get(decisions).liveConnected;
+    if (live && dispatchInFlightActive(get(wsRecovery)) && workspaceTab !== 'artifacts') {
       return;
     }
     if (wantArtifacts && workspaceTab === 'artifacts') {
@@ -542,7 +567,7 @@
         void loadProjectFull(true);
       }, 500);
     }
-    if (!sseLiveConnected) scheduleLoadRecovery(projectId);
+    if (!live) scheduleLoadRecovery(projectId);
   }
 
   async function sendIntake() {
@@ -591,11 +616,6 @@
     await sendIntake();
   }
 
-  let fallbackPollHandle: number | null = null;
-  let dispatchPollHandle: number | null = null;
-  const FALLBACK_POLL_MS = 45_000;
-  const DISPATCH_POLL_MS = 10_000;
-
   function startDeployPollIfNeeded() {
     if (deployPollHandle !== null) return;
     if (codeFilesCount(project) <= 0 && codeFiles.length <= 0) return;
@@ -603,69 +623,34 @@
     deployPollHandle = window.setInterval(loadDeployment, 8000) as unknown as number;
   }
 
-  function startFallbackPoll() {
-    if (fallbackPollHandle !== null) return;
-    fallbackPollHandle = window.setInterval(() => {
-      if (projectId) scheduleLoadRecovery(projectId);
-    }, FALLBACK_POLL_MS) as unknown as number;
-  }
-
-  function stopFallbackPoll() {
-    if (fallbackPollHandle !== null) {
-      window.clearInterval(fallbackPollHandle);
-      fallbackPollHandle = null;
-    }
-  }
-
-  function startDispatchPoll() {
-    if (dispatchPollHandle !== null) return;
-    dispatchPollHandle = window.setInterval(() => {
-      if (projectId) scheduleLoadRecovery(projectId, true);
-    }, DISPATCH_POLL_MS) as unknown as number;
-  }
-
-  function stopDispatchPoll() {
-    if (dispatchPollHandle !== null) {
-      window.clearInterval(dispatchPollHandle);
-      dispatchPollHandle = null;
-    }
-  }
-
   onMount(async () => {
     await tick();
+    skipNextInitialNavigate = true;
     await loadWorkspace($page.params.project_id, { initial: true });
   });
 
-  $: if ($decisions.liveConnected) {
-    stopFallbackPoll();
-  } else {
-    startFallbackPoll();
-  }
-
-  $: if (dispatchInFlightActive(wsRecoverySnap) && !sseLiveConnected) {
-    startDispatchPoll();
-  } else {
-    stopDispatchPoll();
-  }
-
   afterNavigate(async ({ to, from }) => {
     const nextId = to?.params?.project_id;
+    if (!nextId) return;
+    if (skipNextInitialNavigate) {
+      skipNextInitialNavigate = false;
+      return;
+    }
     const prevId = from?.params?.project_id;
-    if (nextId && nextId !== prevId) {
+    if (nextId !== prevId) {
       await loadWorkspace(nextId, { initial: true });
     }
   });
 
   onDestroy(() => {
     if (pollHandle !== null) window.clearInterval(pollHandle);
-    stopFallbackPoll();
-    stopDispatchPoll();
     stopDeployPoll();
     stopFastPoll();
     if (workspaceRefreshTimer !== null) clearTimeout(workspaceRefreshTimer);
     wsUnbind();
     wsSetMetadataPatchHandler(null);
     wsSetArtifactsRefreshHandler(null);
+    projectDecisionKeys.set([]);
   });
 
   // Artifact markdown is heavy (~100KB+). Only materialize when the Artifacts tab is open.
@@ -717,14 +702,6 @@
 
   $: selectedArtifact = artifacts.find((a) => a.key === selectedArtifactKey) ?? null;
 
-  $: isPipelineStuck = Boolean(
-    wsRecoverySnap?.stuck ||
-      (project?.metadata?.code_review_blocked &&
-        !wsActiveRole &&
-        projectDecisions.length === 0 &&
-        !dispatchInFlightActive(wsRecoverySnap))
-  );
-
   function artifactShortLabel(label: string): string {
     return label.split(' (')[0];
   }
@@ -735,8 +712,6 @@
     }
     return '';
   }
-
-  $: workspaceTabs = buildWorkspaceTabs();
 
   interface FileEntry { path: string; bytes: number }
   let codeFiles: FileEntry[] = [];
@@ -923,35 +898,31 @@
   <div class="flex items-center justify-center py-10"><LoadingSpinner label="Loading project" /></div>
 {:else if projectError && !project}
   <div class="mb-4"><ErrorBanner kind="error" message={projectError} onDismiss={() => (projectError = null)} /></div>
+{:else if project && !workspaceReady}
+  <div class="flex flex-col items-center justify-center gap-3 py-16" data-testid="workspace-boot">
+    <LoadingSpinner label="Preparing pipeline" />
+    <p class="text-sm text-surface-400">Loading recovery actions and activity stream…</p>
+  </div>
 {:else if project}
+  <ProjectWorkspaceRuntime projectId={project.project_id} matchKeys={projectMatchKeys()} />
   <div class="project-workspace">
   <ProjectWorkspaceChrome
     projectPhase={project.current_phase}
-    {projectDecisions}
     codeReviewBlocked={Boolean(project.metadata?.code_review_blocked)}
     onSelectDecisions={() => selectWorkspaceTab('decisions')}
     onSelectPipelineAndDispatch={dispatchFromChrome}
   />
 
   <section class="workspace-shell panel-card mb-6" data-testid="project-pipeline">
-    <nav class="workspace-tab-bar flex flex-wrap items-center gap-1 border-b border-surface-700/60 pb-0" role="tablist" aria-label="Project workspace">
-      {#each workspaceTabs as tab (tab.id)}
-        <button
-          type="button"
-          role="tab"
-          aria-selected={workspaceTab === tab.id}
-          class="workspace-tab-btn relative px-4 py-3 text-base font-medium transition-colors {workspaceTab === tab.id ? 'text-accent' : 'text-surface-400 hover:text-surface-200'}"
-          on:click={() => selectWorkspaceTab(tab.id)}
-        >
-          {tab.label}
-          {#if tab.count}
-            <span class="ml-2 rounded-full bg-accent/20 px-2 py-0.5 text-xs font-semibold text-accent sm:text-sm">{tab.count}</span>
-          {:else if tab.attention}
-            <span class="ml-2 rounded-full border border-amber-500/50 bg-amber-500/15 px-2 py-0.5 text-xs font-semibold text-amber-200 sm:text-sm">{PIPELINE_COPY.pipelineTab.badgeActionRequired}</span>
-          {/if}
-        </button>
-      {/each}
-    </nav>
+    <ProjectWorkspaceTabs
+      {workspaceTab}
+      onSelectTab={selectWorkspaceTab}
+      projectPhase={project.current_phase}
+      showArtifacts={showArtifactsTab()}
+      artifactCount={artifacts.length}
+      codeFileCount={codeFiles.length > 0 ? codeFiles.length : codeFilesCount(project)}
+      codeReviewBlocked={Boolean(project.metadata?.code_review_blocked)}
+    />
 
     <div class="workspace-tab-panel min-h-0 flex-1 pt-4" role="tabpanel">
       {#if workspaceTab === 'intake'}
@@ -981,8 +952,7 @@
 
       {:else if workspaceTab === 'decisions'}
         <ProjectDecisionsPanel
-          {projectDecisions}
-          {isPipelineStuck}
+          codeReviewBlocked={Boolean(project.metadata?.code_review_blocked)}
           onSelectPipelineTab={() => selectWorkspaceTab('pipeline')}
           onAfterAction={refreshProjectLite}
         />
@@ -990,8 +960,6 @@
       {:else if workspaceTab === 'pipeline'}
         <ProjectPipelinePanel
           projectId={project.project_id}
-          codeReviewBlocked={Boolean(project.metadata?.code_review_blocked)}
-          codeFixIteration={project.metadata?.code_fix_iteration ?? 0}
           onSelectPipelineTab={() => selectWorkspaceTab('pipeline')}
         />
 
@@ -1115,9 +1083,6 @@
     height: calc(100dvh - 12rem);
     min-height: 22rem;
     overflow: hidden;
-  }
-  .workspace-tab-btn[aria-selected='true'] {
-    box-shadow: inset 0 -2px 0 0 rgb(139 92 246);
   }
   .workspace-tab-panel {
     display: flex;

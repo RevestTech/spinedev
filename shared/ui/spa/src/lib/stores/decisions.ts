@@ -12,6 +12,7 @@ import {
   apiErrorMessage,
   type SseSubscription
 } from '$lib/api/client';
+import { scheduleFrameCommit } from '$lib/uiFrameScheduler';
 import { isHubInboxCard } from '$lib/decisionScope';
 import { hubInbox } from '$lib/stores/hubInbox';
 import type {
@@ -69,10 +70,46 @@ const initial: DecisionStoreState = {
 
 const state = writable<DecisionStoreState>(initial);
 const activity = writable<DecisionActivityEvent | null>(null);
+/** Batched role_log lines — avoids one activity.set per stdout line during engineer runs. */
+const roleLogBatch = writable<DecisionActivityEvent[]>([]);
 const bodyCache = writable<Record<string, string>>({});
 let sseHandle: SseSubscription | null = null;
 /** Bumped on disconnect so stale reconnect timers no-op. */
 let connectGeneration = 0;
+
+const ROLE_LOG_BATCH_MS = 250;
+const ROLE_LOG_BATCH_MAX = 20;
+const ROLE_LOG_BUFFER_CAP = 400;
+let pendingRoleLogs: DecisionActivityEvent[] = [];
+let roleLogFlushTimer: ReturnType<typeof setTimeout> | null = null;
+
+function flushRoleLogBatch(): void {
+  roleLogFlushTimer = null;
+  if (pendingRoleLogs.length === 0) return;
+  const batch = pendingRoleLogs.splice(0, ROLE_LOG_BATCH_MAX);
+  roleLogBatch.set(batch);
+  if (pendingRoleLogs.length > 0) {
+    roleLogFlushTimer = setTimeout(flushRoleLogBatch, ROLE_LOG_BATCH_MS);
+  }
+}
+
+function enqueueRoleLog(evt: DecisionActivityEvent): void {
+  pendingRoleLogs.push(evt);
+  if (pendingRoleLogs.length > ROLE_LOG_BUFFER_CAP) {
+    pendingRoleLogs.splice(0, pendingRoleLogs.length - ROLE_LOG_BUFFER_CAP);
+  }
+  if (roleLogFlushTimer === null) {
+    roleLogFlushTimer = setTimeout(flushRoleLogBatch, ROLE_LOG_BATCH_MS);
+  }
+}
+
+function emitActivity(evt: DecisionActivityEvent): void {
+  if (evt.type === 'role_log') {
+    enqueueRoleLog(evt);
+    return;
+  }
+  activity.set(evt);
+}
 
 function scheduleReconnect(generation: number): void {
   window.setTimeout(() => {
@@ -128,18 +165,22 @@ export const decisions = {
         onEvent: ({ data }) => {
           const evt = data as DecisionSseEvent;
           if (!evt?.type) return;
-          activity.set(evt as DecisionActivityEvent);
+          emitActivity(evt as DecisionActivityEvent);
           if (!evt.card) return;
           const card = evt.card;
           if (isHubInboxCard(card)) {
-            if (card.status === 'pending') hubInbox.upsert(card);
-            else hubInbox.remove(card.decision_id);
+            scheduleFrameCommit(() => {
+              if (card.status === 'pending') hubInbox.upsert(card);
+              else hubInbox.remove(card.decision_id);
+            });
             return;
           }
-          state.update((s) => {
-            const next = s.items.filter((c) => c.decision_id !== card.decision_id);
-            if (card.status === 'pending') next.unshift(card);
-            return { ...s, items: next };
+          scheduleFrameCommit(() => {
+            state.update((s) => {
+              const next = s.items.filter((c) => c.decision_id !== card.decision_id);
+              if (card.status === 'pending') next.unshift(card);
+              return { ...s, items: next };
+            });
           });
         }
       },
@@ -151,6 +192,12 @@ export const decisions = {
     connectGeneration += 1;
     sseHandle?.close();
     sseHandle = null;
+    pendingRoleLogs = [];
+    if (roleLogFlushTimer !== null) {
+      clearTimeout(roleLogFlushTimer);
+      roleLogFlushTimer = null;
+    }
+    roleLogBatch.set([]);
     state.update((s) => ({ ...s, liveConnected: false }));
   },
   async ack(id: string): Promise<DecisionActionResponse> {
@@ -209,6 +256,11 @@ export const pendingCount = derived(state, ($s) => $s.items.length);
 /** Live role / terminal events from the shared layout SSE connection. */
 export const decisionActivity = {
   subscribe: activity.subscribe
+};
+
+/** Batched stdout/stderr lines (see emitActivity role_log path). */
+export const decisionRoleLogBatch = {
+  subscribe: roleLogBatch.subscribe
 };
 
 export function snapshot(): DecisionStoreState {

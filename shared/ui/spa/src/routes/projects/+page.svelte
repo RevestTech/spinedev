@@ -12,9 +12,9 @@
   import LoadingSpinner from '$lib/components/LoadingSpinner.svelte';
   import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
   import ProjectEditDialog from '$lib/components/ProjectEditDialog.svelte';
-  import { api, subscribeSse, isAbortError } from '$lib/api/client';
+  import { api } from '$lib/api/client';
   import { ApiError } from '$lib/api/types';
-  import { decisions } from '$lib/stores/decisions';
+  import { decisions, decisionActivity } from '$lib/stores/decisions';
   import { toasts } from '$lib/stores/toasts';
   import type { DecisionCard } from '$lib/api/types';
   import { PIPELINE_COPY } from '$lib/projectPipelineCopy';
@@ -72,7 +72,7 @@
   // Live per-project role tracking via SSE.
   let activeByProject: Record<string, { role: string; startedAt: number }> = {};
   let stuckByProject: Record<string, StuckSummary> = {};
-  let sseSub: { close: () => void } | null = null;
+  let activityUnsub: (() => void) | null = null;
   let nowTick = Date.now();
   let nowInterval: number | null = null;
 
@@ -126,37 +126,26 @@
     projectNeedsAttention(p, $decisions.items)
   ).length;
 
-  function subscribeFeed() {
-    if (sseSub) return;
-    sseSub = subscribeSse<any>(
-      '/api/v2/decisions/subscribe',
-      {
-        onEvent: ({ data }) => {
-          const ev = data as any;
-          if (!ev?.type) return;
-          const pid = sseProjectKey(ev);
-          if (!pid) return;
-          if (ev.type === 'role_started') {
-            activeByProject = { ...activeByProject, [pid]: { role: ev.role, startedAt: (ev.ts ?? Date.now() / 1000) * 1000 } };
-          } else if (ev.type === 'role_finished' || ev.type === 'role_failed') {
-            const next = { ...activeByProject };
-            delete next[pid];
-            activeByProject = next;
-            void decisions.load('pending');
-            void loadStuckSummary();
-          } else if (ev.type === 'card_created' || ev.type === 'card_updated') {
-            void decisions.load('pending');
-            void loadStuckSummary();
-          }
-        },
-        onError: (err) => {
-          if (isAbortError(err)) return;
-          sseSub = null;
-          setTimeout(() => subscribeFeed(), 3000);
-        }
-      },
-      { body: {} }
-    );
+  function subscribeActivityFeed() {
+    if (activityUnsub) return;
+    activityUnsub = decisionActivity.subscribe((ev) => {
+      if (!ev?.type) return;
+      const pid = sseProjectKey(ev);
+      if (!pid) return;
+      if (ev.type === 'role_started') {
+        activeByProject = {
+          ...activeByProject,
+          [pid]: { role: ev.role ?? 'role', startedAt: (ev.ts ?? Date.now() / 1000) * 1000 },
+        };
+      } else if (ev.type === 'role_finished' || ev.type === 'role_failed') {
+        const next = { ...activeByProject };
+        delete next[pid];
+        activeByProject = next;
+        void loadStuckSummary();
+      } else if (ev.type === 'card_created' || ev.type === 'card_updated') {
+        void loadStuckSummary();
+      }
+    });
   }
 
   async function loadStuckSummary() {
@@ -340,7 +329,7 @@
     void load();
     void decisions.load('pending');
     void loadStuckSummary();
-    subscribeFeed();
+    subscribeActivityFeed();
     pollHandle = window.setInterval(() => {
       load();
       loadStuckSummary();
@@ -351,8 +340,8 @@
   onDestroy(() => {
     if (pollHandle !== null) window.clearInterval(pollHandle);
     if (nowInterval !== null) window.clearInterval(nowInterval);
-    sseSub?.close();
-    sseSub = null;
+    activityUnsub?.();
+    activityUnsub = null;
   });
 </script>
 

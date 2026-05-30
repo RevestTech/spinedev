@@ -2,13 +2,24 @@
   import LoadingSpinner from '$lib/components/LoadingSpinner.svelte';
   import { PIPELINE_COPY } from '$lib/projectPipelineCopy';
   import { decisions } from '$lib/stores/decisions';
+  import { projectScopedDecisions } from '$lib/stores/projectDecisionsStore';
+  import { wsRecovery, wsRunState } from '$lib/stores/projectWorkspace';
+  import { dispatchInFlightActive } from '$lib/projectRecoveryUtils';
   import { toasts } from '$lib/stores/toasts';
   import type { DecisionCard } from '$lib/api/types';
 
-  export let projectDecisions: DecisionCard[] = [];
-  export let isPipelineStuck = false;
+  export let codeReviewBlocked = false;
   export let onSelectPipelineTab: () => void = () => {};
   export let onAfterAction: () => void | Promise<void> = () => {};
+
+  $: projectDecisions = $projectScopedDecisions;
+  $: isPipelineStuck = Boolean(
+    $wsRecovery?.stuck ||
+      (codeReviewBlocked &&
+        !$wsRunState.activeRole &&
+        projectDecisions.length === 0 &&
+        !dispatchInFlightActive($wsRecovery))
+  );
 
   const DECISION_BODY_PREVIEW = 4000;
 

@@ -17,6 +17,8 @@ export interface RecoveryStatus {
   code_fix_iteration?: number;
   max_code_fix_iterations?: number;
   fix_loop_exhausted?: boolean;
+  code_review_blocked?: boolean;
+  current_phase?: string;
 }
 
 const DISPATCH_STALE_MS = 5 * 60 * 1000;

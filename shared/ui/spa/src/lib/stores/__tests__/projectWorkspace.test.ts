@@ -5,9 +5,14 @@ import {
   wsUnbind,
   wsFeed,
   wsRunState,
+  wsRecovery,
+  wsTerminal,
   __testQueueActivityEvent,
+  __testSetWorkspaceActivityReady,
+  __testApplyRecoveryResponse,
 } from '../projectWorkspace';
 import type { DecisionActivityEvent } from '../decisions';
+import { __testSetSyncFrameCommits, __testFlushFrameCommits } from '../../uiFrameScheduler';
 
 vi.mock('$lib/yieldMainThread', () => ({
   yieldMainThread: () => Promise.resolve(),
@@ -26,11 +31,14 @@ function roleStartedEvent(i: number): DecisionActivityEvent {
 describe('projectWorkspace SSE batching', () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    __testSetSyncFrameCommits(true);
     wsBind('proj-1');
+    __testSetWorkspaceActivityReady(true);
   });
 
   afterEach(() => {
     wsUnbind();
+    __testSetSyncFrameCommits(false);
     vi.useRealTimers();
   });
 
@@ -47,23 +55,57 @@ describe('projectWorkspace SSE batching', () => {
       __testQueueActivityEvent(roleStartedEvent(i));
     }
 
-    await vi.advanceTimersByTimeAsync(150);
-    expect(get(wsFeed).length).toBe(8);
+    await vi.advanceTimersByTimeAsync(200);
+    __testFlushFrameCommits();
+    expect(get(wsFeed).length).toBe(12);
 
-    await vi.advanceTimersByTimeAsync(150);
+    await vi.advanceTimersByTimeAsync(200);
+    __testFlushFrameCommits();
     expect(get(wsFeed).length).toBe(12);
   });
 
-  it('ignores events for other projects', async () => {
+  it('ignores events for other projects before queueing', async () => {
+    for (let i = 0; i < 30; i++) {
+      __testQueueActivityEvent({
+        type: 'role_started',
+        project_uuid: 'other-project',
+        role: 'engineer',
+        message: `skip ${i}`,
+        ts: i,
+      });
+    }
+
+    await vi.advanceTimersByTimeAsync(500);
+    expect(get(wsFeed).length).toBe(0);
+  });
+
+  it('applies recovery GET after wsBind sets boundProjectId', () => {
+    __testApplyRecoveryResponse('proj-1', {
+      stuck: true,
+      reasons: ['code_review_blocked'],
+      pending_decisions: 0,
+      recommended_action: 'reset_fix_loop',
+      last_role_failure: null,
+      dispatch_in_flight: null,
+      actions: [{ action: 'reset_fix_loop', label: 'Reset', description: 'Reset loop' }],
+      fix_loop_exhausted: true,
+      code_review_blocked: true,
+    });
+    expect(get(wsRecovery)?.stuck).toBe(true);
+    expect(get(wsRecovery)?.actions?.length).toBe(1);
+  });
+
+  it('applies recovery_pulse for bound project', async () => {
     __testQueueActivityEvent({
-      type: 'role_started',
-      project_uuid: 'other-project',
-      role: 'engineer',
-      message: 'skip me',
-      ts: 1,
+      type: 'recovery_pulse',
+      project_uuid: 'proj-1',
+      stuck: true,
+      actions: [{ action: 'resume', label: 'Resume', description: 'Go' }],
     });
 
-    await vi.advanceTimersByTimeAsync(150);
-    expect(get(wsFeed).length).toBe(0);
+    await vi.advanceTimersByTimeAsync(350);
+    __testFlushFrameCommits();
+    expect(get(wsRecovery)?.stuck).toBe(true);
+    expect(get(wsRecovery)?.actions?.length).toBe(1);
   });
 });
