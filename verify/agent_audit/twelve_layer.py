@@ -398,59 +398,40 @@ def _pending_check(layer: LayerId, why: str) -> Callable[[Path, dict], LayerFind
     return _check
 
 
+# Native per-layer checks from `verify.agent_audit.checks` — one file
+# per layer. Imported here so DEFAULT_CHECKS stays the single source of
+# truth for the audit's layer order.
+from verify.agent_audit.checks.session_history import (  # noqa: E402
+    check_session_history_layer,
+)
+from verify.agent_audit.checks.distillation import (  # noqa: E402
+    check_distillation_layer,
+)
+from verify.agent_audit.checks.active_recall import (  # noqa: E402
+    check_active_recall_layer,
+)
+from verify.agent_audit.checks.tool_execution import (  # noqa: E402
+    check_tool_execution_layer,
+)
+from verify.agent_audit.checks.tool_interpretation import (  # noqa: E402
+    check_tool_interpretation_layer,
+)
+from verify.agent_audit.checks.transport import (  # noqa: E402
+    check_transport_layer,
+)
+
+
 DEFAULT_CHECKS: tuple[LayerCheck, ...] = (
     LayerCheck("L01_system_prompt", check_system_prompt_layer),
-    LayerCheck(
-        "L02_session_history",
-        _pending_check(
-            "L02_session_history",
-            "no instrumentation — would inspect .spine/work/<run_id>/ "
-            "directives for stale-context bleed across cycles",
-        ),
-    ),
+    LayerCheck("L02_session_history", check_session_history_layer),
     LayerCheck("L03_long_term_memory", check_long_term_memory_layer),
-    LayerCheck(
-        "L04_distillation",
-        _pending_check(
-            "L04_distillation",
-            "no instrumentation — audit-ledger compression / summary "
-            "ratios not yet captured",
-        ),
-    ),
-    LayerCheck(
-        "L05_active_recall",
-        _pending_check(
-            "L05_active_recall",
-            "no instrumentation — KG retrieval hit-rate and result-set "
-            "size not yet captured by shared.runtime.kg_role_context",
-        ),
-    ),
+    LayerCheck("L04_distillation", check_distillation_layer),
+    LayerCheck("L05_active_recall", check_active_recall_layer),
     LayerCheck("L06_tool_selection", check_tool_selection_layer),
-    LayerCheck(
-        "L07_tool_execution",
-        _pending_check(
-            "L07_tool_execution",
-            "no instrumentation — tool call status mix (ok / error / "
-            "refusal) not yet aggregated",
-        ),
-    ),
-    LayerCheck(
-        "L08_tool_interpretation",
-        _pending_check(
-            "L08_tool_interpretation",
-            "no instrumentation — next_actions parsing success rate "
-            "not yet captured",
-        ),
-    ),
+    LayerCheck("L07_tool_execution", check_tool_execution_layer),
+    LayerCheck("L08_tool_interpretation", check_tool_interpretation_layer),
     LayerCheck("L09_answer_shaping", check_answer_shaping_layer),
-    LayerCheck(
-        "L10_transport",
-        _pending_check(
-            "L10_transport",
-            "no instrumentation — SPA / API / federation transport "
-            "mutation surfaces not yet captured",
-        ),
-    ),
+    LayerCheck("L10_transport", check_transport_layer),
     LayerCheck("L11_evals", check_evals_layer),
     LayerCheck("L12_promotion_gate", check_promotion_gate_layer),
 )
