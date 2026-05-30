@@ -140,6 +140,13 @@ then re-smoke before commit.
 
 **Key independent findings:**
 - L10 transport check (Agent A6) flagged that **SPA components don't render** `summary` / `next_actions` / `artifacts` yet — that's the real B2 transport gap and it was found by the audit, not by the user. Pairs with E1 finding #11.
+
+**Operating-loop slate progress (D2 P0 items, started 2026-05-30):**
+- ✅ **Slate #3 (record_instinct hook):** `shared/runtime/role_runtime.complete_directive` now records an instinct on every successful directive. All 8 runtimes inherit it; fail-soft per #27. 5 new tests.
+- ✅ **Slate #1 (auditor runner):** `verify/runtime/auditor_runner.py` + wired into `build/runtime/hub_role_runner`. The `not_implemented_in_runner` branch is gone. Cite-or-Refuse (#12) is now enforced in-process — naked verdicts get refused, citations required. 9 new tests.
+- Remaining: #2 ledger writes on Conductor/Auditor/QA, #4 watcher rules, #5 operate_runner, #6 product_runner, #7 hygiene gate.
+
+**Test totals:** **341 tests pass**; 25 commits on `origin/main` this session.
 - D2 found that **auditor still returns `not_implemented_in_runner`** in `build/runtime/hub_role_runner.py` and the **decision ledger has zero writers** in production code. These are the two highest-leverage operating-loop fixes.
 
 ---
