@@ -38,6 +38,7 @@ tree are ECC's `rules/common/` upstream. No action — this is existing usage.
 | B7 | `SPINE_HOOK_PROFILE` runtime gating | `tools/` + smoke + hygiene | — | P2 |
 | B8 | `search-first` step in charters | `shared/charters/{engineer,architect}.md` | #7 | P2 |
 | B9 | Agentic-OS layer table | `docs/ARCHITECTURE.md` | — | P3 |
+| B10 | 12-layer agent architecture audit | `verify/agent_audit/` | #21, pairs with B6 | P2 |
 
 ---
 
@@ -236,6 +237,36 @@ charters don't yet bind to it.
    ledger before any Write/Edit.
 
 **Ratification needed.** Extends #7 charter contract. Annotate `#7b`.
+
+---
+
+## B10 — 12-layer agent architecture audit
+
+**ECC source.** `skills/agent-architecture-audit/SKILL.md` (origin
+`oh-my-agent-check`, MIT).
+
+**Why this fits Spine.** Charter evals (B6 / V3 #7a) signal *that* a
+role regressed; the 12-layer audit pinpoints *where* in the agent stack
+the regression lives so the fix lands in the right layer. Pairs
+naturally with B6 — pass@k says fail, audit says where.
+
+**Adaptation.** Spine-native, not a port:
+
+- Layer enum specialised to Spine surfaces (`L01_system_prompt` →
+  `shared/charters/<role>.md`; `L09_answer_shaping` → V3 #30a envelope;
+  `L11_evals` → `verify/charter_evals/` pass@k; `L12_promotion_gate`
+  → `shared/audit/decision_ledger/` denial rate; etc.).
+- Six native checks (L01 / L03 / L06 / L09 / L11 / L12) that inspect
+  the actual on-disk + injected-signal state. The remaining six layers
+  return `instrumentation_pending` explicitly so the gate cannot go
+  green just because nothing reported.
+- `scan_agent_stack(repo_root, signals)` is the entry point; read-only,
+  returns an `AgentAuditReport` with `overall_status` derived from the
+  worst-finding rule.
+
+**Ratification needed.** None — `verify/` is a green-field subsystem
+for these concerns. Future instrumentation work (L02 / L04 / L05 /
+L07 / L08 / L10) can land incrementally without ratification.
 
 ---
 
