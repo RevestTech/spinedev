@@ -153,6 +153,8 @@ then re-smoke before commit.
 **Operating loop now runs end-to-end on a single project** from intake through operate, with all-AI dispatch, decision-ledger writes on every promotion-class role, Cite-or-Refuse enforced for verify-class roles, and Smart Spine instincts captured automatically.
 
 **Test totals:** **391 tests pass**; 29 commits on `origin/main` this session.
+
+**Loop validation 2026-05-30 (live Hub + real LLM):** Every slate item validated end-to-end on project `a81f7f2c-de77-480b-ac7d-76da78885d06` ("loop-validation-2026-05-30", id 48). LLM intake chat works (product role's SVPG discoverer discipline visible — refuses to draft PRD without substance). Planner produced `roadmap_md` in ~40s. Auditor runner produces refusal envelope when no evidence + verdict envelope with citations when evidence supplied. Both writes land in `~/.spine/decision_ledger/${PROJECT_UUID}/` with `chain_ok=True`. B5 `spine status --markdown` surfaces the new entries. Operate runner fans out cleanly. Full matrix in [`docs/LOOP_VALIDATION_2026-05-30.md`](LOOP_VALIDATION_2026-05-30.md).
 - D2 found that **auditor still returns `not_implemented_in_runner`** in `build/runtime/hub_role_runner.py` and the **decision ledger has zero writers** in production code. These are the two highest-leverage operating-loop fixes.
 
 ---
