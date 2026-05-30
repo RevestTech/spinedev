@@ -134,6 +134,66 @@ def test_callable_exception_becomes_refusal() -> None:
 # ─── Verdict-without-citations is still rejected ───
 
 
+async def _drain_for(q, expected_type: str, max_events: int = 4):
+    """Drain the queue until an event of ``expected_type`` arrives.
+
+    Auditor calls also publish a ledger_append event (from T3), so the
+    auditor event is preceded by sibling events in the same publish
+    fan-out. Tests filter to the type they care about.
+    """
+    import asyncio
+
+    for _ in range(max_events):
+        evt = await asyncio.wait_for(q.get(), timeout=1.0)
+        if evt.event_type == expected_type:
+            return evt
+    raise AssertionError(
+        f"never received event_type={expected_type!r} (drained {max_events})"
+    )
+
+
+def test_realtime_verdict_event_publishes() -> None:
+    import asyncio
+
+    from shared.api.realtime.event_publisher import subscribe, unsubscribe
+
+    async def body():
+        q = subscribe("11111111-1111-1111-1111-111111111111")
+        try:
+            run_auditor(
+                _project(),
+                evidence_pointers=("node-auth", "shared/auth.py:42"),
+            )
+            await asyncio.sleep(0)
+            evt = await _drain_for(q, "auditor_verdict")
+            assert evt.verdict == "ok"
+            assert evt.citation_count == 2
+        finally:
+            unsubscribe(q)
+
+    asyncio.run(body())
+
+
+def test_realtime_refusal_event_publishes() -> None:
+    import asyncio
+
+    from shared.api.realtime.event_publisher import subscribe, unsubscribe
+
+    async def body():
+        q = subscribe("11111111-1111-1111-1111-111111111111")
+        try:
+            run_auditor(_project())  # no evidence → refusal
+            await asyncio.sleep(0)
+            evt = await _drain_for(q, "auditor_refusal")
+            assert evt.verdict == "refusal"
+            assert evt.citation_count == 0
+            assert evt.payload["refusal_reason"] == "no_evidence_pointers"
+        finally:
+            unsubscribe(q)
+
+    asyncio.run(body())
+
+
 def test_callable_passing_without_citations_yields_refusal() -> None:
     def naked(_briefing: AuditorBriefing) -> AuditorOutcome:
         return AuditorOutcome(

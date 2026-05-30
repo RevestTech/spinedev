@@ -225,11 +225,61 @@ def evaluate_charter(
             pass_at_k(trials, target_pass_rate=ev.target_pass_rate)
         )
     overall = all(p.meets_target for p in per_eval) if per_eval else False
-    return CharterReport(
+    report = CharterReport(
         role=role,
         per_eval=tuple(per_eval),
         overall_meets_target=overall,
     )
+    _publish_charter_eval(role=role, report=report)
+    return report
+
+
+def _publish_charter_eval(*, role: str, report: "CharterReport") -> None:
+    """Emit a ``charter_eval_run`` realtime event. Fail-soft.
+
+    Charter evals are project-agnostic in the harness, but the Hub
+    surfaces them per role. The SPA's Live tab subscribes per
+    project; the event publishes with the role name as the
+    ``project_id`` so the role-scoped Eval surface (Path A T19) can
+    pick it up. Operators viewing a project don't see this in their
+    Live feed by design — eval-class events have their own surface.
+    """
+    try:
+        from shared.api.realtime.event_publisher import publish
+        from shared.api.realtime.event_schema import ProjectEvent
+
+        per_eval = [
+            {
+                "eval_name": p.eval_name,
+                "trials": p.trials,
+                "passed": p.passed,
+                "pass_rate": p.pass_rate,
+                "target_pass_rate": p.target_pass_rate,
+                "meets_target": p.meets_target,
+            }
+            for p in report.per_eval
+        ]
+        verdict = "passed" if report.overall_meets_target else "failed"
+        publish(
+            ProjectEvent(
+                event_type="charter_eval_run",
+                project_id=f"charter:{role}",
+                actor=role,
+                verdict=verdict,
+                summary=(
+                    f"charter eval {role} — "
+                    f"{sum(1 for p in report.per_eval if p.meets_target)}/"
+                    f"{len(report.per_eval)} evals pass"
+                ),
+                payload={
+                    "role": role,
+                    "overall_meets_target": report.overall_meets_target,
+                    "per_eval": per_eval,
+                },
+            )
+        )
+    except Exception:  # noqa: BLE001 — fail-soft
+        return
 
 
 # ─── YAML loader ─────────────────────────────────────────────────────

@@ -41,6 +41,11 @@
       label: 'Pipeline',
       attention: Boolean(isPipelineStuck && !activeRole && decisionCount === 0),
     });
+    // Path B T12 — realtime project events. Always present so
+    // operators can see ledger / audit / instinct activity arrive
+    // as it happens; positioned right after Pipeline so it stays
+    // visually next to its source of truth.
+    out.push({ id: 'live', label: 'Live' });
     if (showArtifacts) {
       out.push({
         id: 'artifacts',

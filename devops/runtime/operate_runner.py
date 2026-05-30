@@ -185,6 +185,15 @@ def run_operate(
     run_id = f"operate_{uuid4().hex[:12]}"
     started_at = _utcnow_iso()
 
+    _publish_operate_events(
+        project_uuid=project_uuid,
+        project_name=project_name,
+        run_id=run_id,
+        statuses=statuses,
+        top_status=top_status,
+        summary_text=summary,
+    )
+
     return ToolResponse(
         status=top_status,
         summary=summary,
@@ -209,6 +218,62 @@ def run_operate(
             },
         },
     )
+
+
+def _publish_operate_events(
+    *,
+    project_uuid: str,
+    project_name: str,
+    run_id: str,
+    statuses: list[dict[str, Any]],
+    top_status: str,
+    summary_text: str,
+) -> None:
+    """Emit one per-plane event + one rollup. Fail-soft."""
+    try:
+        from shared.api.realtime.event_publisher import publish
+        from shared.api.realtime.event_schema import ProjectEvent
+
+        for snap in statuses:
+            publish(
+                ProjectEvent(
+                    event_type="operate_plane_status",
+                    project_id=project_uuid,
+                    actor="operate",
+                    verdict=snap.get("status", "unknown"),
+                    summary=(
+                        f"operate: {snap.get('plane')} → "
+                        f"{snap.get('status')}"
+                    ),
+                    payload={
+                        "run_id": run_id,
+                        "plane": snap.get("plane"),
+                        "status": snap.get("status"),
+                        "metadata": snap.get("metadata") or {},
+                        "error": snap.get("error"),
+                    },
+                )
+            )
+        # Rollup goes out last so the SPA can render a final
+        # "operate complete" timeline row distinct from the per-plane
+        # rows above.
+        publish(
+            ProjectEvent(
+                event_type="operate_plane_status",
+                project_id=project_uuid,
+                actor="operate",
+                verdict=top_status,
+                summary=summary_text,
+                payload={
+                    "run_id": run_id,
+                    "rollup": True,
+                    "plane_count": len(statuses),
+                    "project_name": project_name,
+                },
+            )
+        )
+    except Exception:  # noqa: BLE001 — fail-soft
+        return
 
 
 __all__ = ["PLANE_NAMES", "run_operate"]

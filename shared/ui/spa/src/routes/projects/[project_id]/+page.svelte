@@ -22,6 +22,7 @@
   import ProjectWorkspaceTabs from '$lib/components/ProjectWorkspaceTabs.svelte';
   import type { WorkspaceTab } from '$lib/projectWorkspaceTypes';
   import ProjectPipelinePanel from '$lib/components/ProjectPipelinePanel.svelte';
+  import LiveLoopActivity from '$lib/components/LiveLoopActivity.svelte';
   import ProjectDecisionsPanel from '$lib/components/ProjectDecisionsPanel.svelte';
   import { api } from '$lib/api/client';
   import { get } from 'svelte/store';
@@ -962,6 +963,12 @@
           projectId={project.project_id}
           onSelectPipelineTab={() => selectWorkspaceTab('pipeline')}
         />
+
+      {:else if workspaceTab === 'live'}
+        <!-- Path B T12 — realtime operating-loop activity. -->
+        <div class="workspace-pane flex h-full flex-col gap-4 p-4 overflow-y-auto" data-testid="live-panel">
+          <LiveLoopActivity projectId={project.project_id} />
+        </div>
 
       {:else if workspaceTab === 'artifacts'}
         <div class="workspace-pane workspace-split grid h-full grid-cols-1 lg:grid-cols-12 lg:gap-0" data-testid="artifacts-panel">

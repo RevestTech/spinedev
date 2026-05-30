@@ -21,6 +21,7 @@ from shared.api.routes.integrations import router as integrations_router
 from shared.api.routes.kg import router as kg_router
 from shared.api.routes.license import router as license_router
 from shared.api.routes.mobile import router as mobile_router
+from shared.api.routes.project_events import router as project_events_router
 from shared.api.routes.projects import router as projects_router
 from shared.api.routes.registry import router as registry_router
 from shared.api.routes.role_chat import router as role_chat_router
@@ -48,6 +49,8 @@ ALL_ROUTERS = [
     voice_router,
     # Conversational intake — real LLM-backed product role
     intake_router,
+    # Realtime project event stream (Path B)
+    project_events_router,
 ]
 
 __all__: list[str] = [
@@ -65,5 +68,6 @@ __all__: list[str] = [
     "kg_router",
     "license_router",
     "mobile_router",
+    "project_events_router",
     "voice_router",
 ]

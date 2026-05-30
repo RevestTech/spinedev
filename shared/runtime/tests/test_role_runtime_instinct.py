@@ -147,6 +147,78 @@ def test_different_role_changes_fingerprint(
     assert patterns == {"engineer completed directive", "qa completed directive"}
 
 
+def test_complete_directive_publishes_both_events(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Successful completion fires directive_complete + instinct_recorded."""
+    import asyncio
+
+    from shared.api.realtime.event_publisher import subscribe, unsubscribe
+
+    _instinct_root(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        "shared.runtime.role_runtime._directives_root",
+        lambda: tmp_path / "work",
+    )
+
+    async def body():
+        q = subscribe("proj-rt")
+        try:
+            handle = begin_directive(
+                project_uuid="proj-rt",
+                role="engineer",
+                directive="Implement REQ-RT-1 realtime wiring",
+            )
+            complete_directive(handle, report_md="done", ok=True)
+            await asyncio.sleep(0)
+
+            seen_types = set()
+            for _ in range(2):
+                evt = await asyncio.wait_for(q.get(), timeout=1.0)
+                seen_types.add(evt.event_type)
+
+            assert seen_types == {"directive_complete", "instinct_recorded"}
+        finally:
+            unsubscribe(q)
+
+    asyncio.run(body())
+
+
+def test_failed_completion_publishes_directive_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Failure fires directive_complete (verdict=failed) but no instinct."""
+    import asyncio
+
+    from shared.api.realtime.event_publisher import subscribe, unsubscribe
+
+    _instinct_root(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        "shared.runtime.role_runtime._directives_root",
+        lambda: tmp_path / "work",
+    )
+
+    async def body():
+        q = subscribe("proj-rt2")
+        try:
+            handle = begin_directive(
+                project_uuid="proj-rt2",
+                role="engineer",
+                directive="this will fail",
+            )
+            fail_directive(handle, error="boom")
+            await asyncio.sleep(0)
+
+            evt = await asyncio.wait_for(q.get(), timeout=1.0)
+            assert evt.event_type == "directive_complete"
+            assert evt.verdict == "failed"
+            assert q.empty()
+        finally:
+            unsubscribe(q)
+
+    asyncio.run(body())
+
+
 def test_instinct_failure_is_fail_soft(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

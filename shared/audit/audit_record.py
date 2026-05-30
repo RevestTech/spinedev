@@ -201,7 +201,44 @@ def write_via_psql(record: AuditRecord, db_url: Optional[str] = None,
     # Failures must never break the audit write path — hook subsystem
     # isolates its own exceptions but we double-guard here.
     _fire_memory_hooks(record, event_id)
+    _publish_audit_event(record, event_id)
     return event_id
+
+
+def _publish_audit_event(record: "AuditRecord", event_id: int) -> None:
+    """Emit an ``audit_event`` realtime event. Fail-soft.
+
+    Project id is taken from ``record.project_id`` (int → str). When
+    the audit row has no project context (rare — hub-global events)
+    we skip publishing rather than guess.
+    """
+    try:
+        if record.project_id is None:
+            return
+        from shared.api.realtime.event_publisher import publish
+        from shared.api.realtime.event_schema import ProjectEvent
+
+        publish(
+            ProjectEvent(
+                event_type="audit_event",
+                project_id=str(record.project_id),
+                actor=record.actor or record.role,
+                summary=(
+                    f"audit: {record.role}/{record.action}"
+                    + (f" — {record.rationale[:80]}" if record.rationale else "")
+                ),
+                payload={
+                    "event_id": event_id,
+                    "role": record.role,
+                    "subsystem": record.subsystem,
+                    "action": record.action,
+                    "content_hash": record.content_hash,
+                    "prev_event_hash": record.prev_event_hash,
+                },
+            )
+        )
+    except Exception:  # noqa: BLE001 — fail-soft
+        return
 
 
 def _fire_memory_hooks(record: "AuditRecord", event_id: int) -> None:

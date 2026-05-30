@@ -235,13 +235,25 @@ def run_auditor(
             reason=reason,
             evidence=briefing.evidence_pointers,
         )
-        return _refusal_envelope(
+        envelope = _refusal_envelope(
             project_uuid=project_uuid,
             role=role,
             summary=outcome.summary or "auditor refusal",
             reason=reason,
             audit_id=audit_id,
         )
+        _publish_auditor_event(
+            event_type="auditor_refusal",
+            project_uuid=project_uuid,
+            role=role,
+            audit_id=audit_id,
+            envelope=envelope,
+            payload_extra={
+                "refusal_reason": reason,
+                "artifact_subject": briefing.artifact_subject,
+            },
+        )
+        return envelope
 
     _record_ledger_verdict(
         project_uuid=project_uuid,
@@ -250,13 +262,60 @@ def run_auditor(
         outcome=outcome,
         evidence=briefing.evidence_pointers,
     )
-    return _verdict_envelope(
+    envelope = _verdict_envelope(
         project_uuid=project_uuid,
         role=role,
         artifact_subject=briefing.artifact_subject,
         outcome=outcome,
         audit_id=audit_id,
     )
+    _publish_auditor_event(
+        event_type="auditor_verdict",
+        project_uuid=project_uuid,
+        role=role,
+        audit_id=audit_id,
+        envelope=envelope,
+        payload_extra={
+            "verdict": outcome.verdict,
+            "artifact_subject": briefing.artifact_subject,
+            "findings_chars": len(outcome.findings_markdown or ""),
+        },
+    )
+    return envelope
+
+
+def _publish_auditor_event(
+    *,
+    event_type: str,
+    project_uuid: str,
+    role: str,
+    audit_id: str,
+    envelope,
+    payload_extra: dict,
+) -> None:
+    """Emit a realtime auditor event. Fail-soft."""
+    try:
+        from shared.api.realtime.event_publisher import publish
+        from shared.api.realtime.event_schema import ProjectEvent
+
+        publish(
+            ProjectEvent(
+                event_type=event_type,  # type: ignore[arg-type]
+                project_id=project_uuid,
+                actor=role,
+                verdict=envelope.status,
+                citation_count=len(envelope.citation),
+                summary=envelope.summary or f"{role} {event_type}",
+                payload={
+                    "audit_id": audit_id,
+                    "status": envelope.status,
+                    "next_actions": list(envelope.next_actions),
+                    **payload_extra,
+                },
+            )
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning("auditor_publish_failed", exc_info=True)
 
 
 def _record_ledger_refusal(

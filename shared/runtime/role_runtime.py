@@ -119,12 +119,18 @@ def complete_directive(
         "role_directive_complete",
         extra={"directive_id": handle.directive_id, "ok": ok},
     )
+    _publish_directive_complete_event(handle, ok)
     if ok:
-        _record_directive_instinct(handle)
+        instinct_recorded = _record_directive_instinct(handle)
+        if instinct_recorded:
+            _publish_instinct_event(handle, instinct_recorded)
 
 
-def _record_directive_instinct(handle: DirectiveHandle) -> None:
-    """Fail-soft instinct observation. Never raises."""
+def _record_directive_instinct(handle: DirectiveHandle):
+    """Fail-soft instinct observation. Returns the recorded
+    :class:`learning.instinct.InstinctRecord` on success, ``None`` on
+    failure. Never raises.
+    """
     try:
         from learning.instinct import Instinct, InstinctRecord, InstinctStore
 
@@ -134,26 +140,86 @@ def _record_directive_instinct(handle: DirectiveHandle) -> None:
             project_id=handle.project_uuid,
             run_id=handle.directive_id,
         )
-        store.record(
-            InstinctRecord(
-                instinct=Instinct(
-                    pattern=pattern,
-                    trigger=trigger,
-                    rationale=(
-                        f"role={handle.role} successfully completed a "
-                        f"directive matching this trigger"
-                    ),
+        record = InstinctRecord(
+            instinct=Instinct(
+                pattern=pattern,
+                trigger=trigger,
+                rationale=(
+                    f"role={handle.role} successfully completed a "
+                    f"directive matching this trigger"
                 ),
-                project_id=handle.project_uuid,
-                run_id=handle.directive_id,
-                actor=handle.role,
-            )
+            ),
+            project_id=handle.project_uuid,
+            run_id=handle.directive_id,
+            actor=handle.role,
         )
+        store.record(record)
+        return record
     except Exception:  # noqa: BLE001 — fail-soft per #27
         logger.warning(
             "instinct_record_failed",
             extra={"directive_id": handle.directive_id},
         )
+        return None
+
+
+def _publish_directive_complete_event(
+    handle: "DirectiveHandle", ok: bool,
+) -> None:
+    """Emit a ``directive_complete`` realtime event. Fail-soft."""
+    try:
+        from shared.api.realtime.event_publisher import publish
+        from shared.api.realtime.event_schema import ProjectEvent
+
+        verdict = "passed" if ok else "failed"
+        publish(
+            ProjectEvent(
+                event_type="directive_complete",
+                project_id=handle.project_uuid,
+                actor=handle.role,
+                verdict=verdict,
+                summary=(
+                    f"{handle.role} directive {handle.directive_id} "
+                    f"{'completed' if ok else 'failed'}"
+                ),
+                payload={
+                    "directive_id": handle.directive_id,
+                    "role": handle.role,
+                    "directive": handle.directive[:200],
+                    "ok": ok,
+                },
+            )
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning("directive_complete_publish_failed", exc_info=True)
+
+
+def _publish_instinct_event(handle: "DirectiveHandle", record) -> None:
+    """Emit an ``instinct_recorded`` realtime event. Fail-soft."""
+    try:
+        from shared.api.realtime.event_publisher import publish
+        from shared.api.realtime.event_schema import ProjectEvent
+
+        publish(
+            ProjectEvent(
+                event_type="instinct_recorded",
+                project_id=handle.project_uuid,
+                actor=handle.role,
+                summary=(
+                    f"instinct: {handle.role} completed "
+                    f"{record.instinct.trigger[:80]}"
+                ),
+                payload={
+                    "fingerprint": record.instinct.fingerprint,
+                    "pattern": record.instinct.pattern,
+                    "trigger": record.instinct.trigger,
+                    "confidence": record.instinct.confidence,
+                    "directive_id": handle.directive_id,
+                },
+            )
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning("instinct_publish_failed", exc_info=True)
 
 
 def _summarise_directive_intent(directive: str) -> str:

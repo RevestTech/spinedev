@@ -109,13 +109,51 @@ def append_promotion_decision(
             prior_accepted_winner=inputs.prior_winner,
             promotion_gate=gate,
         )
-        return ledger.append(entry)
+        appended = ledger.append(entry)
     except Exception:  # noqa: BLE001 — fail-soft
         logger.exception(
             "decision_ledger_io.append_failed",
             extra={"project_id": inputs.project_id, "role": inputs.role},
         )
         return None
+
+    _publish_ledger_event(appended)
+    return appended
+
+
+def _publish_ledger_event(entry: LedgerEntry) -> None:
+    """Emit a ``ledger_append`` realtime event. Fail-soft."""
+    try:
+        from shared.api.realtime.event_publisher import publish
+        from shared.api.realtime.event_schema import ProjectEvent
+
+        gate = entry.promotion_gate
+        summary = (
+            f"ledger: {entry.actor} rollout {entry.rollout_index} → "
+            f"{gate.verdict}"
+            + (f" ({', '.join(gate.reasons)})" if gate.reasons else "")
+        )
+        publish(
+            ProjectEvent(
+                event_type="ledger_append",
+                project_id=entry.project_id,
+                actor=entry.actor,
+                verdict=gate.verdict,
+                citation_count=0,
+                summary=summary,
+                payload={
+                    "run_id": entry.run_id,
+                    "rollout_index": entry.rollout_index,
+                    "content_hash": entry.content_hash,
+                    "prev_hash": entry.prev_hash,
+                    "promotion_tier": gate.tier,
+                    "promotion_reasons": list(gate.reasons),
+                    "candidate_ids": [c.candidate_id for c in entry.candidates],
+                },
+            )
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning("decision_ledger_io.publish_failed", exc_info=True)
 
 
 def latest_promotion_verdict(

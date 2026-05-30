@@ -48,6 +48,37 @@ def test_append_writes_entry_with_synthesized_candidate(tmp_path: Path) -> None:
     assert entry.content_hash is not None
 
 
+def test_append_publishes_ledger_event(tmp_path: Path) -> None:
+    import asyncio
+
+    from shared.api.realtime.event_publisher import subscribe, unsubscribe
+
+    async def body():
+        q = subscribe("proj-a")
+        try:
+            entry = append_promotion_decision(
+                _inputs(
+                    project_id="proj-a",
+                    run_id="run-pub",
+                    role="conductor",
+                ),
+                root=tmp_path,
+            )
+            assert entry is not None
+            await asyncio.sleep(0)
+            evt = await asyncio.wait_for(q.get(), timeout=1.0)
+            assert evt.event_type == "ledger_append"
+            assert evt.project_id == "proj-a"
+            assert evt.actor == "conductor"
+            assert evt.verdict in ("allowed", "denied")
+            assert evt.payload["run_id"] == "run-pub"
+            assert evt.payload["content_hash"] == entry.content_hash
+        finally:
+            unsubscribe(q)
+
+    asyncio.run(body())
+
+
 def test_append_preserves_caller_candidates(tmp_path: Path) -> None:
     candidate = make_candidate(
         "engineer:choice-A",
