@@ -98,7 +98,15 @@ def complete_directive(
     ok: bool = True,
     extra: dict[str, Any] | None = None,
 ) -> None:
-    """Mark directive done and write report."""
+    """Mark directive done and write report.
+
+    Also records an :mod:`learning.instinct` observation on successful
+    completion so Smart Spine (#27, B3) accumulates a per-project corpus
+    of "this role did this kind of thing successfully" patterns. Failures
+    don't generate instincts — corroboration is for successful behavior.
+    Instinct write is fail-soft: any error swallowed; the directive
+    completion is the source of truth.
+    """
     status_path = handle.workspace / "status.json"
     meta = json.loads(status_path.read_text(encoding="utf-8"))
     meta["status"] = "done" if ok else "failed"
@@ -111,6 +119,52 @@ def complete_directive(
         "role_directive_complete",
         extra={"directive_id": handle.directive_id, "ok": ok},
     )
+    if ok:
+        _record_directive_instinct(handle)
+
+
+def _record_directive_instinct(handle: DirectiveHandle) -> None:
+    """Fail-soft instinct observation. Never raises."""
+    try:
+        from learning.instinct import Instinct, InstinctRecord, InstinctStore
+
+        trigger = _summarise_directive_intent(handle.directive)
+        pattern = f"{handle.role} completed directive"
+        store = InstinctStore(
+            project_id=handle.project_uuid,
+            run_id=handle.directive_id,
+        )
+        store.record(
+            InstinctRecord(
+                instinct=Instinct(
+                    pattern=pattern,
+                    trigger=trigger,
+                    rationale=(
+                        f"role={handle.role} successfully completed a "
+                        f"directive matching this trigger"
+                    ),
+                ),
+                project_id=handle.project_uuid,
+                run_id=handle.directive_id,
+                actor=handle.role,
+            )
+        )
+    except Exception:  # noqa: BLE001 — fail-soft per #27
+        logger.warning(
+            "instinct_record_failed",
+            extra={"directive_id": handle.directive_id},
+        )
+
+
+def _summarise_directive_intent(directive: str) -> str:
+    """Compact first-line summary used as the instinct trigger."""
+    cleaned = (directive or "").strip()
+    if not cleaned:
+        return "directive: <empty>"
+    first = cleaned.splitlines()[0].strip()
+    if len(first) > 200:
+        first = first[:200].rstrip() + "…"
+    return f"directive: {first}"
 
 
 def fail_directive(handle: DirectiveHandle, error: str) -> None:
