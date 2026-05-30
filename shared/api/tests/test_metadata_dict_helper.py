@@ -48,3 +48,15 @@ def test_list_json_string_yields_empty_dict() -> None:
 def test_integer_payload_yields_empty_dict() -> None:
     # Defensive: any non-(dict|str) payload yields an empty dict.
     assert _metadata_dict(42) == {}
+
+
+def test_direct_fetch_project_row_exists() -> None:
+    """Regression for the DELETE 404 loop the user hit 2026-05-30.
+
+    Confirms the bypass helper is importable so the delete handler can
+    actually call it; the SPA's ConfirmDialog otherwise loops on the
+    404 returned by the strict ``_fetch_project_row``.
+    """
+    from shared.api.routes.projects import _direct_fetch_project_row
+
+    assert callable(_direct_fetch_project_row)

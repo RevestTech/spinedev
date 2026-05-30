@@ -71,6 +71,40 @@ def _parse_metadata(raw: Any) -> dict[str, Any]:
     return {}
 
 
+async def _direct_fetch_project_row(project_id: str) -> dict[str, Any] | None:
+    """Raw row fetcher that does NOT filter on ``status='terminated'``.
+
+    Used by delete / archive / restore so those mutations stay idempotent
+    on already-mutated rows. Returns the same shape the original
+    ``_fetch_project_row`` returns (None when no row exists).
+    """
+    pool = await _project_db_pool()
+    where = "id = $1" if project_id.isdigit() else "project_uuid::text = $1"
+    arg: Any = int(project_id) if project_id.isdigit() else project_id
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            f"SELECT id, project_uuid::text AS project_uuid, name, project_type, "
+            f"current_phase, status, owner_user, pipeline_version, metadata, "
+            f"created_at, updated_at FROM spine_lifecycle.project WHERE {where}",
+            arg,
+        )
+    if row is None:
+        return None
+    return {
+        "id": int(row["id"]),
+        "project_uuid": row["project_uuid"],
+        "name": row["name"],
+        "project_type": row["project_type"],
+        "current_phase": row["current_phase"],
+        "status": row["status"],
+        "owner": row["owner_user"],
+        "pipeline_version": row["pipeline_version"],
+        "metadata": row["metadata"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+
+
 def _metadata_dict(raw_md: Any) -> dict[str, Any]:
     """Tolerate asyncpg returning jsonb as str OR dict (depending on pool config).
 
@@ -985,8 +1019,15 @@ async def delete_project(
     user: Annotated[User, Depends(current_user)],
     note: Optional[str] = Query(default=None, max_length=2000),
 ) -> dict[str, Any]:
-    """Soft-delete a project (``status=terminated``). Excluded from all Hub lists."""
-    row = await _fetch_project_row(project_id)
+    """Soft-delete a project (``status=terminated``). Excluded from all Hub lists.
+
+    The lookup deliberately bypasses the strict ``_fetch_project_row``
+    (which 404s on ``status='terminated'``) so DELETE is **idempotent** —
+    deleting an already-deleted project returns ``200 already_deleted``
+    rather than 404. The SPA's ConfirmDialog otherwise loops indefinitely
+    on the 404 (user-reported 2026-05-30).
+    """
+    row = await _direct_fetch_project_row(project_id)
     if row is None:
         raise _err(404, "project_not_found", f"project {project_id!r} not found")
     if row["status"] == "terminated":
