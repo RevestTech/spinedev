@@ -41,20 +41,9 @@
       label: 'Pipeline',
       attention: Boolean(isPipelineStuck && !activeRole && decisionCount === 0),
     });
-    // Path B T12 — realtime project events. Always present so
-    // operators can see ledger / audit / instinct activity arrive
-    // as it happens; positioned right after Pipeline so it stays
-    // visually next to its source of truth.
-    out.push({ id: 'live', label: 'Live' });
-    // Path A T22 — dedicated per-channel surfaces:
-    //   Ledger  — LedgerTimeline + InstinctBadge
-    //   Audit   — AuditorVerdictCard + AgentAuditOverview
-    //   Operate — OperatePlaneGrid
-    //   Evals   — CharterEvalReport per role
-    out.push({ id: 'ledger', label: 'Ledger' });
-    out.push({ id: 'audit', label: 'Audit' });
-    out.push({ id: 'operate', label: 'Operate' });
-    out.push({ id: 'evals', label: 'Evals' });
+    // Realtime / dedicated-surface tabs (Live / Ledger / Audit /
+    // Operate / Evals) were rolled back 2026-05-30 after they hung
+    // the project page. Re-add via lazy-load in a follow-up.
     if (showArtifacts) {
       out.push({
         id: 'artifacts',

@@ -22,13 +22,10 @@
   import ProjectWorkspaceTabs from '$lib/components/ProjectWorkspaceTabs.svelte';
   import type { WorkspaceTab } from '$lib/projectWorkspaceTypes';
   import ProjectPipelinePanel from '$lib/components/ProjectPipelinePanel.svelte';
-  import LiveLoopActivity from '$lib/components/LiveLoopActivity.svelte';
-  import LedgerTimeline from '$lib/components/LedgerTimeline.svelte';
-  import AuditorVerdictCard from '$lib/components/AuditorVerdictCard.svelte';
-  import AgentAuditOverview from '$lib/components/AgentAuditOverview.svelte';
-  import OperatePlaneGrid from '$lib/components/OperatePlaneGrid.svelte';
-  import CharterEvalReport from '$lib/components/CharterEvalReport.svelte';
-  import InstinctBadge from '$lib/components/InstinctBadge.svelte';
+  // Path A / B realtime surfaces are temporarily removed from the
+  // workspace shell (2026-05-30) after the project page started
+  // hanging on load. Components remain in src/lib/components/ for a
+  // careful lazy-load re-add in a follow-up.
   import ProjectDecisionsPanel from '$lib/components/ProjectDecisionsPanel.svelte';
   import { api } from '$lib/api/client';
   import { get } from 'svelte/store';
@@ -969,42 +966,6 @@
           projectId={project.project_id}
           onSelectPipelineTab={() => selectWorkspaceTab('pipeline')}
         />
-
-      {:else if workspaceTab === 'live'}
-        <!-- Path B T12 — realtime operating-loop activity. -->
-        <div class="workspace-pane flex h-full flex-col gap-4 p-4 overflow-y-auto" data-testid="live-panel">
-          <LiveLoopActivity projectId={project.project_id} />
-        </div>
-
-      {:else if workspaceTab === 'ledger'}
-        <!-- Path A T22 — dedicated decision ledger + instinct surfaces. -->
-        <div class="workspace-pane flex h-full flex-col gap-4 p-4 overflow-y-auto" data-testid="ledger-panel">
-          <LedgerTimeline projectId={project.project_id} />
-          <InstinctBadge projectId={project.project_id} />
-        </div>
-
-      {:else if workspaceTab === 'audit'}
-        <!-- Path A T22 — auditor verdict + 12-layer audit. -->
-        <div class="workspace-pane flex h-full flex-col gap-4 p-4 overflow-y-auto" data-testid="audit-panel">
-          <AuditorVerdictCard projectId={project.project_id} />
-          <AgentAuditOverview />
-        </div>
-
-      {:else if workspaceTab === 'operate'}
-        <!-- Path A T22 — 8 control plane grid. -->
-        <div class="workspace-pane flex h-full flex-col gap-4 p-4 overflow-y-auto" data-testid="operate-panel">
-          <OperatePlaneGrid projectId={project.project_id} />
-        </div>
-
-      {:else if workspaceTab === 'evals'}
-        <!-- Path A T22 — per-role charter eval reports. -->
-        <div class="workspace-pane flex h-full flex-col gap-4 p-4 overflow-y-auto" data-testid="evals-panel">
-          <CharterEvalReport role="engineer" />
-          <CharterEvalReport role="architect" />
-          <CharterEvalReport role="qa" />
-          <CharterEvalReport role="planner" />
-          <CharterEvalReport role="auditor" />
-        </div>
 
       {:else if workspaceTab === 'artifacts'}
         <div class="workspace-pane workspace-split grid h-full grid-cols-1 lg:grid-cols-12 lg:gap-0" data-testid="artifacts-panel">
