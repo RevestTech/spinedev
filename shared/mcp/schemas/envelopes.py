@@ -18,11 +18,33 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
-ToolStatus = Literal["ok", "error", "stub_implementation"]
-"""Envelope-level outcome status used by every Spine MCP tool."""
+ToolStatus = Literal["ok", "warning", "error", "refusal", "stub_implementation"]
+"""Envelope-level outcome status used by every Spine MCP tool.
+
+V3 #30a extension (2026-05-29). ``warning`` and ``refusal`` join the original
+three statuses to align with the ECC-borrowed harness-construction
+observation contract (see ``docs/ECC_BORROWS.md`` B2):
+
+  * ``warning``  — tool produced a usable result but the caller should
+                   attend to ``summary`` / ``next_actions`` before promoting
+                   (e.g. degraded mode, missing optional dep).
+  * ``refusal``  — tool deliberately declined to act. Use for policy /
+                   Cite-or-Refuse (#12) / gate denials. Distinct from
+                   ``error`` (internal failure, possibly retryable).
+"""
 
 CitationType = Literal["kg_node", "file_line", "audit_hash"]
 """Categories of supporting evidence recognised by Cite-or-Refuse (V3 #12)."""
+
+ArtifactType = Literal[
+    "file_path",
+    "kg_node",
+    "run_id",
+    "audit_hash",
+    "url",
+    "ledger_entry",
+]
+"""Categories of artifact references emitted by tools (V3 #30a)."""
 
 
 class Citation(BaseModel):
@@ -50,6 +72,39 @@ class Citation(BaseModel):
     excerpt: str | None = Field(
         default=None,
         description="Optional short verbatim excerpt for human review.",
+    )
+
+
+class Artifact(BaseModel):
+    """One stable reference to something the tool produced or touched.
+
+    V3 #30a (2026-05-29). Adapted from the ECC ``agent-harness-construction``
+    observation contract: every tool response exposes structured artifacts
+    so calling roles can chain follow-up work without re-parsing free-text.
+
+    ``ref`` is a stable identifier whose interpretation depends on ``type``:
+
+      * ``file_path``    — repo-relative or absolute path.
+      * ``kg_node``      — ``spine_kg.node`` identifier.
+      * ``run_id``       — orchestrator run identifier.
+      * ``audit_hash``   — ``spine_audit.event.content_hash``.
+      * ``url``          — externally resolvable URL.
+      * ``ledger_entry`` — ``shared.audit.decision_ledger`` entry id.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    type: ArtifactType = Field(
+        ...,
+        description="Artifact class; see ArtifactType literal.",
+    )
+    ref: str = Field(
+        ..., min_length=1,
+        description="Stable reference (see class docstring for shape per type).",
+    )
+    label: str | None = Field(
+        default=None,
+        description="Optional human-readable label for UI / log surfaces.",
     )
 
 
@@ -155,16 +210,60 @@ class ToolResponse(BaseModel):
     ``spine_audit`` (see REQ-INIT-9 FR-8). ``status='stub_implementation'`` is
     used during scaffolding so callers can detect un-wired tools without
     treating them as errors.
+
     ``citation`` carries Cite-or-Refuse evidence (V3 #12) and is REQUIRED
     for tools registered with ``requires_citation=True``; the MCP server
     middleware rejects empty citation lists with a 422 refusal.
+
+    V3 #30a (2026-05-29) observation extensions:
+
+      * ``summary``      — one-line, role-readable result. Always present
+                           on non-error responses; orchestrator surfaces
+                           this in queue UI without parsing ``data``.
+      * ``next_actions`` — actionable follow-ups the calling role can
+                           dispatch next. Items SHOULD reference tools or
+                           commands by name (e.g. ``"retry_engineer"``,
+                           ``"approve_decision <id>"``).
+      * ``artifacts``    — structured references to things produced or
+                           touched. Replaces ad-hoc lists stuffed into
+                           ``data``.
+
+    These three fields are additive — existing tools that omit them still
+    validate. The ``MCPToolResponseConvention`` validator at the bottom of
+    this module emits a ``warning`` for responses that violate the
+    convention (status ``ok``/``warning`` without ``summary``); enforcement
+    mode is controlled by ``SPINE_HOOK_PROFILE`` (V3 #30a, B7).
     """
 
     model_config = ConfigDict(extra="forbid")
 
     status: ToolStatus = Field(
         ...,
-        description="Envelope outcome: 'ok' | 'error' | 'stub_implementation'.",
+        description=(
+            "Envelope outcome: 'ok' | 'warning' | 'error' | 'refusal' | "
+            "'stub_implementation'."
+        ),
+    )
+    summary: str | None = Field(
+        default=None,
+        description=(
+            "One-line, role-readable result. SHOULD be non-empty when "
+            "status is 'ok' or 'warning'. See V3 #30a observation contract."
+        ),
+    )
+    next_actions: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Actionable follow-ups for the calling role (e.g. tool names, "
+            "command identifiers). V3 #30a observation contract."
+        ),
+    )
+    artifacts: list[Artifact] = Field(
+        default_factory=list,
+        description=(
+            "Structured references to artifacts produced or touched by "
+            "this call. V3 #30a observation contract."
+        ),
     )
     data: dict[str, Any] = Field(
         default_factory=dict,
@@ -192,11 +291,40 @@ class ToolResponse(BaseModel):
     )
 
 
+def check_envelope_convention(response: "ToolResponse") -> list[str]:
+    """Return a list of convention violations for ``response``.
+
+    V3 #30a (2026-05-29). Soft check used by the server middleware:
+
+      * ``ok`` / ``warning`` responses SHOULD set ``summary``.
+      * ``refusal`` responses SHOULD populate ``error`` with a
+        ``cite_or_refuse_*`` or ``policy_*`` code.
+      * ``error`` responses MUST populate ``error`` (already enforced
+        elsewhere; included here for symmetry of the violation list).
+
+    Returns an empty list when the response conforms.
+
+    This function never raises. The server middleware decides whether to
+    log, warn, or reject based on ``SPINE_HOOK_PROFILE``.
+    """
+    violations: list[str] = []
+    if response.status in ("ok", "warning") and not response.summary:
+        violations.append("missing_summary")
+    if response.status == "refusal" and response.error is None:
+        violations.append("refusal_missing_error")
+    if response.status == "error" and response.error is None:
+        violations.append("error_missing_error_payload")
+    return violations
+
+
 __all__: list[str] = [
+    "Artifact",
+    "ArtifactType",
     "Citation",
     "CitationType",
     "ToolError",
     "ToolRequest",
     "ToolResponse",
     "ToolStatus",
+    "check_envelope_convention",
 ]
