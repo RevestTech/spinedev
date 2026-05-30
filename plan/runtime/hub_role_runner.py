@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -15,6 +16,8 @@ from typing import Any
 from uuid import uuid4
 
 from shared.llm import LLMRequest, Message, call_async
+
+logger = logging.getLogger("spine.plan.hub_role_runner")
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _CHARTERS_DIR = _REPO_ROOT / "shared" / "charters"
@@ -232,6 +235,28 @@ async def _run_text_role(
         fail_directive,
     )
 
+    project_uuid_pre = project["project_uuid"]
+
+    # V3 #34 hygiene gate — Conductor refuses to mark a project done
+    # while uncleaned workspace state exists (D2 slate #7, 2026-05-30).
+    # Applies to ``conductor`` only; other plan roles bypass.
+    if role == "conductor":
+        unclean = _hygiene_blockers(project_uuid_pre)
+        if unclean:
+            return HubPlanRoleResult(
+                ok=False,
+                role=role,
+                directive_id=f"dir_{uuid4().hex[:12]}",
+                artifact_key=_ROLE_CONFIG[role][1],
+                error_class="workspace_unclean",
+                error_message=(
+                    "conductor refused per V3 #34 — uncleaned workspace: "
+                    + ", ".join(unclean[:5])
+                ),
+                project_uuid=project_uuid_pre,
+                project_name=project["name"],
+            )
+
     handle = begin_directive(
         project["project_uuid"],
         role,
@@ -305,6 +330,19 @@ async def _run_text_role(
         directive_id=directive_id,
     )
     complete_directive(handle, artifact_md, ok=True, extra={"artifact_key": artifact_key})
+
+    # V3 #12a decision-ledger write for promotion-gating roles
+    # (Conductor + QA; D2 slate #2, 2026-05-30). Auditor writes through
+    # its own runtime. Fail-soft inside _record_ledger_outcome.
+    if role in ("conductor", "qa"):
+        _record_ledger_outcome(
+            project_uuid=project_uuid,
+            run_id=directive_id,
+            role=role,
+            artifact_key=artifact_key,
+            artifact_md=artifact_md,
+        )
+
     return HubPlanRoleResult(
         ok=True,
         role=role,
@@ -419,6 +457,79 @@ async def _run_architect(
         directive=directive or "PRODUCE_TRD",
         actor=actor,
     )
+
+
+# ─── V3 #34 + #12a wiring helpers (D2 slate #2 + #7) ────────────────
+
+
+def _hygiene_blockers(project_uuid: str) -> list[str]:
+    """Return any uncleaned-workspace reasons; empty list = OK.
+
+    Fail-soft: if the hygiene module is unavailable or raises, we
+    treat the project as clean rather than blocking dispatch on a
+    broken hygiene check.
+    """
+    try:
+        from shared.runtime.hygiene import project_is_clean
+
+        ok, reasons = project_is_clean(project_uuid)
+        if ok:
+            return []
+        return list(reasons)
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "hygiene_check_unavailable",
+            extra={"project_uuid": project_uuid},
+        )
+        return []
+
+
+def _record_ledger_outcome(
+    *,
+    project_uuid: str,
+    run_id: str,
+    role: str,
+    artifact_key: str,
+    artifact_md: str,
+) -> None:
+    """Append a V3 #12a decision-ledger entry for Conductor / QA.
+
+    Fail-soft: any error swallowed so the directive's report.md and
+    audit chain remain the source of truth.
+    """
+    try:
+        from shared.audit.decision_ledger_io import (
+            SafePromotionInputs,
+            append_promotion_decision,
+            make_candidate,
+        )
+
+        # Both roles default to internal tier here. The orchestrator
+        # promotes to production-class after gate checks downstream.
+        append_promotion_decision(
+            SafePromotionInputs(
+                project_id=project_uuid,
+                run_id=run_id,
+                role=role,
+                rollout_index=0,
+                tier="internal",
+                freshness_passed=True,  # artifact produced fresh in this run
+                replay_passed=False,    # caller decides; default-deny live promotion
+                candidates=(
+                    make_candidate(
+                        f"{role}:{artifact_key}",
+                        mark="accept",
+                        rationale=f"{role} produced {artifact_key}",
+                    ),
+                ),
+                fresh_evidence=(f"artifact:{artifact_key}:{len(artifact_md)}chars",),
+            )
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "ledger_write_failed",
+            extra={"project_uuid": project_uuid, "role": role},
+        )
 
 
 __all__ = ["HubPlanRoleResult", "run_plan_hub_role"]

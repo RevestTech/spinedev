@@ -228,6 +228,13 @@ def run_auditor(
             outcome.refusal_reason
             or ("no_citations" if not outcome.citations else "callable_refused")
         )
+        _record_ledger_refusal(
+            project_uuid=project_uuid,
+            role=role,
+            audit_id=audit_id,
+            reason=reason,
+            evidence=briefing.evidence_pointers,
+        )
         return _refusal_envelope(
             project_uuid=project_uuid,
             role=role,
@@ -236,6 +243,13 @@ def run_auditor(
             audit_id=audit_id,
         )
 
+    _record_ledger_verdict(
+        project_uuid=project_uuid,
+        role=role,
+        audit_id=audit_id,
+        outcome=outcome,
+        evidence=briefing.evidence_pointers,
+    )
     return _verdict_envelope(
         project_uuid=project_uuid,
         role=role,
@@ -243,6 +257,87 @@ def run_auditor(
         outcome=outcome,
         audit_id=audit_id,
     )
+
+
+def _record_ledger_refusal(
+    *,
+    project_uuid: str,
+    role: str,
+    audit_id: str,
+    reason: str,
+    evidence: tuple[str, ...],
+) -> None:
+    """Persist the refusal to the decision ledger (V3 #12a). Fail-soft."""
+    try:
+        from shared.audit.decision_ledger_io import (
+            SafePromotionInputs,
+            append_promotion_decision,
+            make_candidate,
+        )
+
+        append_promotion_decision(
+            SafePromotionInputs(
+                project_id=project_uuid,
+                run_id=audit_id,
+                role=role,
+                rollout_index=0,
+                tier="production",  # auditor refusal is always production-class
+                freshness_passed=False,
+                replay_passed=False,
+                candidates=(
+                    make_candidate(
+                        f"{role}:refusal",
+                        mark="reject",
+                        rationale=f"refusal_reason={reason}",
+                    ),
+                ),
+                fresh_evidence=evidence,
+            )
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("auditor_ledger_refusal_failed")
+
+
+def _record_ledger_verdict(
+    *,
+    project_uuid: str,
+    role: str,
+    audit_id: str,
+    outcome: AuditorOutcome,
+    evidence: tuple[str, ...],
+) -> None:
+    """Persist the verdict to the decision ledger (V3 #12a). Fail-soft."""
+    try:
+        from shared.audit.decision_ledger_io import (
+            SafePromotionInputs,
+            append_promotion_decision,
+            make_candidate,
+        )
+
+        # Auditor verdicts default to internal-tier; promotion to
+        # production-tier is the orchestrator's call (it has the freshness
+        # + replay context). We record what we know.
+        append_promotion_decision(
+            SafePromotionInputs(
+                project_id=project_uuid,
+                run_id=audit_id,
+                role=role,
+                rollout_index=0,
+                tier="internal",
+                freshness_passed=outcome.verdict == "passed",
+                replay_passed=outcome.verdict == "passed",
+                candidates=(
+                    make_candidate(
+                        f"{role}:verdict",
+                        mark="accept" if outcome.verdict == "passed" else "watch",
+                        rationale=outcome.summary,
+                    ),
+                ),
+                fresh_evidence=evidence,
+            )
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("auditor_ledger_verdict_failed")
 
 
 def _stub_audit_callable(briefing: AuditorBriefing) -> AuditorOutcome:
