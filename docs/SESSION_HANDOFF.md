@@ -126,14 +126,16 @@ then re-smoke before commit.
 
 ## In progress
 
-**Nothing in progress. All 9 borrows + 4 V3 ratifications + 3 follow-ups landed and committed.**
+**Nothing in progress. 10 borrows + 4 V3 ratifications + 8 follow-ups all landed, committed, and pushed to `origin/main`.**
 
-Follow-up status (all done):
-1. **Committed the batch as 10 Conventional Commits on `main`** (8 in the borrows batch + 2 follow-ups; see `git log --oneline -10`).
-2. **B4 wired into `build/runtime/build_dispatcher.py`** as opt-in `dispatch_build_bounded()`. Existing `dispatch_build()` path unchanged. 11 new dispatch tests.
-3. **Starter capability evals landed** under `verify/charter_evals/engineer/` (3) and `verify/charter_evals/architect/` (3) + a YAML loader. #7a regression gate now has something to enforce.
+Second-wave follow-ups (all done):
+1. **Push** — all commits live on `origin/main`.
+2. **End-to-end charter evals** — new CLI `python -m verify.charter_evals.run <role>` with stub + fixture role callables; engineer green, architect intentionally red on anchor eval. 11 new tests.
+3. **B4 wired into role daemon path** — `build_dispatch` MCP tool routes `SYNTHESIZE_MINIMAL_BRIEF`/`DISPATCH_MINIMAL_BRIEF` to `dispatch_build_bounded()`. Response surfaces V3 #30a `summary` + `next_actions`. 3 new tests.
+4. **py.skills smoke regression** — verified PASS (stale 2026-05-25 flag cleared).
+5. **B10 — 12-layer agent architecture audit** — new `verify/agent_audit/` subsystem; 6 native checks (L01/L03/L06/L09/L11/L12); live audit on repo: overall=clean, 0 regressed. 22 new tests.
 
-**Test totals after follow-ups:** 189 tests pass (was 149 at end of borrow batch).
+**Test totals after second wave:** **225 tests pass** (was 189 → 203 → 225).
 
 ---
 
@@ -240,4 +242,4 @@ in git history of this file before 2026-05-29.
 
 ---
 
-*Last updated: 2026-05-29 (late) — all 9 ECC borrows + 4 V3 ratifications + 3 follow-ups (commit batch, B4 dispatcher wiring, starter evals) committed in one session. 189 tests pass; 10 new commits on main.*
+*Last updated: 2026-05-29 (late) — 10 ECC borrows (B1–B10) + 4 V3 ratifications + 8 follow-ups landed, committed, and pushed to origin/main. **225 tests pass; 15 new commits on origin/main.***
