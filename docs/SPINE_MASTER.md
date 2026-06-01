@@ -224,6 +224,7 @@ Read in this order. Do **not** treat overlapping docs as equal authority.
 | Order | Doc | Use when |
 |---|---|---|
 | **0** | **`docs/SPINE_MASTER.md`** (this file) | Always — vision, gaps, component list |
+| **0b** | **`docs/MASTER_TODO.md`** | Operational queue — what to do next this session |
 | 1 | `docs/V3_DESIGN_DECISIONS.md` | Why a decision was locked (#1–#34) |
 | 2 | `docs/PRD.md` | Detailed REQ acceptance criteria |
 | 3 | `docs/ARCHITECTURE.md` | Subsystem boundaries + data flow |

@@ -1,5 +1,8 @@
 # Overnight handoff — 2026-05-23
 
+> **Operational queue:** [`MASTER_TODO.md`](MASTER_TODO.md) (updated 2026-05-25).
+> **Latest session narrative:** [`SESSION_HANDOFF.md`](SESSION_HANDOFF.md) (2026-05-24).
+
 > Written while Khash sleeps. Agent continued as founder proxy.
 
 ## What got done tonight
