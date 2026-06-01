@@ -46,7 +46,7 @@ npm run pm:dev                      # optional dashboard
 - Hub rate-limit middleware registered in `create_app()`
 - Project route tests mock `_direct_fetch_project_row`
 - Doc SoT: process state → this file; QA scripts → `tools/fc-sdlc/ci-*.sh`
-- PM dashboard started; `pm.config.json` QA → `ci-test-full.sh` (uncommitted)
+- PM dashboard started; `pm.config.json` QA → `ci-test-full.sh`
 - Golden-path: run with `PYTHONUNBUFFERED=1`; resume via `PROJECT_UUID=…` + `MAX_EMPTY_POLLS=5` for quick drain
 - **Deploy fix:** `devops/runtime/hub_deploy_runner.py` schedules on Hub lifespan loop (fixes asyncpg cross-loop error from MCP `to_thread`)
 
