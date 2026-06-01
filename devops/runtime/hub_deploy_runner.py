@@ -62,6 +62,29 @@ async def run_local_deploy_async(project: dict[str, Any]) -> HubDeployResult:
     )
 
 
+def _run_local_deploy_on_hub_loop(project: dict[str, Any]) -> HubDeployResult:
+    """Run local deploy on the Hub lifespan loop (safe for asyncpg pool)."""
+    from shared.api.dependencies import get_hub_event_loop  # noqa: PLC0415
+
+    hub_loop = get_hub_event_loop()
+    if hub_loop is not None and hub_loop.is_running():
+        future = asyncio.run_coroutine_threadsafe(
+            run_local_deploy_async(project),
+            hub_loop,
+        )
+        try:
+            return future.result(timeout=600)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("hub_deploy_threadsafe_failed")
+            return HubDeployResult(
+                ok=False,
+                directive_id=f"dir_{uuid4().hex[:12]}",
+                error_class=type(exc).__name__,
+                error_message=str(exc)[:500],
+            )
+    return asyncio.run(run_local_deploy_async(project))
+
+
 def run_devops_hub_role(
     *,
     project_id: str,
@@ -75,7 +98,7 @@ def run_devops_hub_role(
     project = _load_project_dict(project_id)
 
     if "DEPLOY" in upper or "LOCAL" in upper or "RELEASE" in upper:
-        return asyncio.run(run_local_deploy_async(project))
+        return _run_local_deploy_on_hub_loop(project)
 
     return HubDeployResult(
         ok=False,

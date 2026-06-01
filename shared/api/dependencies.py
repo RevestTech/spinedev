@@ -66,6 +66,21 @@ from shared.identity.models import User
 
 logger = logging.getLogger("spine.api.deps")
 
+# Hub main asyncio loop — set in ``app.lifespan`` so sync MCP runners invoked
+# via ``asyncio.to_thread`` can schedule coroutines that use the asyncpg pool.
+_hub_event_loop: asyncio.AbstractEventLoop | None = None
+
+
+def set_hub_event_loop(loop: asyncio.AbstractEventLoop | None) -> None:
+    """Record the FastAPI lifespan loop (or clear on shutdown)."""
+    global _hub_event_loop
+    _hub_event_loop = loop
+
+
+def get_hub_event_loop() -> asyncio.AbstractEventLoop | None:
+    return _hub_event_loop
+
+
 # ---------------------------------------------------------------------------
 # Public surface — preserves the names the v2 routes already import
 # ---------------------------------------------------------------------------
@@ -490,6 +505,9 @@ __all__: list[str] = [
     "current_user",
     "optional_user",
     "actor_label",
+    # Hub loop (sync MCP → async DB)
+    "set_hub_event_loop",
+    "get_hub_event_loop",
     # Vault paths
     "DSN_VAULT_PATH",
 ]

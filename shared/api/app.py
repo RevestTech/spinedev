@@ -184,6 +184,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     ok = await db.ping() if pool_ok else False
     logger.info("lifespan_start", extra={"db_reachable": ok})
 
+    import asyncio as _asyncio
+
+    from shared.api.dependencies import set_hub_event_loop  # noqa: PLC0415
+
+    set_hub_event_loop(_asyncio.get_running_loop())
+
     # 1b. Wire the asyncpg-backed durability layer for the decision store
     # once at startup (was per-request in FIX3). Lifespan injection lets
     # the pool be cleanly torn down at shutdown and avoids re-stamping
@@ -344,6 +350,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             set_decisions_db(None)
         except Exception:  # noqa: BLE001 — defensive teardown
             pass
+        set_hub_event_loop(None)
         await close_db_pool()
         logger.info("lifespan_stop")
 

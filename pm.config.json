@@ -18,7 +18,7 @@
     "waveHeaderPattern": "^##\\s+(Wave\\s+\\S+\\s*—\\s*.+|Phase\\s+\\d+\\s*—\\s*.+)"
   },
   "qa": {
-    "command": "tools/fc-sdlc/ci-test.sh",
+    "command": "tools/fc-sdlc/ci-test-full.sh",
     "intervalMinutes": 2,
     "readyForG4": {
       "minPassRate": 1.0
