@@ -1,0 +1,41 @@
+---
+description: ProjectManager SDLC monitor — agents check in; QA must evidence test runs
+alwaysApply: true
+---
+
+# ProjectManager protocol — Spine
+
+**Dashboard:** http://localhost:5190 (when PM service is running)
+
+## Every agent MUST check in when starting and finishing work
+
+```bash
+# Starting
+npm run pm:checkin -- --agent <id> --role <role> --status in_progress --task <TASK-ID> --message "Starting …"
+
+# Completed
+npm run pm:checkin -- --agent <id> --role <role> --status completed --task <TASK-ID> --message "Done …" --deliverable <path>
+
+# Blocked
+npm run pm:checkin -- --agent <id> --role <role> --status blocked --task <TASK-ID> --message "Blocked: reason"
+```
+
+Set `PM_URL=http://localhost:5190` if not default.
+
+## QA agents MUST evidence test runs
+
+```bash
+npm run pm:qa
+# or run configured QA command from pm.config.json
+```
+
+Do not claim "tests pass" without evidenced run in the same turn.
+
+## PO / PM (main agent)
+
+- Post milestones: `curl -X POST http://localhost:5190/api/events -H 'Content-Type: application/json' -d '{"eventType":"milestone","title":"…","source":"po"}'`
+- User reviews live dashboard — updates via SSE without refresh.
+
+## Source of truth
+
+Backlog and gates live in `todo/` markdown. PM derives display state from those files — do not treat external ALM as canonical.

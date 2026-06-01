@@ -1,0 +1,18 @@
+{
+  "name": "spinedevelopment",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": {
+    "pm:install": "npm install --prefix ../../FutureCapital/Engineering/SDLC/services/project-manager",
+    "pm:dev": "WORKSPACE_ROOT=\"${PWD}\" PM_QA_AUTO=false npm run dev --prefix ../../FutureCapital/Engineering/SDLC/services/project-manager",
+    "pm:start": "WORKSPACE_ROOT=\"${PWD}\" PM_QA_AUTO=false npm start --prefix ../../FutureCapital/Engineering/SDLC/services/project-manager",
+    "pm:up": "PM_WORKSPACE=\"${PWD}\" docker compose -f ../../FutureCapital/Engineering/SDLC/docker-compose.yml up project-manager -d --build",
+    "pm:down": "docker compose -f ../../FutureCapital/Engineering/SDLC/docker-compose.yml stop project-manager",
+    "pm:checkin": "node ../../FutureCapital/Engineering/SDLC/scripts/pm-checkin.mjs",
+    "pm:qa": "node ../../FutureCapital/Engineering/SDLC/scripts/pm-qa.mjs",
+    "sdlc:validate-gates": "node ../../FutureCapital/Engineering/SDLC/scripts/validate-gates.mjs",
+    "sdlc:run-qa": "node ../../FutureCapital/Engineering/SDLC/scripts/run-qa.mjs",
+    "sdlc:run-qa:full": "bash tools/fc-sdlc/ci-test-full.sh",
+    "sdlc:migrate-brownfield": "node ../../FutureCapital/Engineering/SDLC/scripts/migrate-brownfield.mjs"
+  }
+}

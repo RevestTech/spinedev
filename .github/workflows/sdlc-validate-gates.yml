@@ -1,0 +1,73 @@
+# fc-sdlc — gate structure CI (copied into target repo by init-sdlc.sh)
+name: SDLC gates
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+    inputs:
+      run_qa:
+        description: Run test/QA command from pm.config.json
+        type: boolean
+        default: false
+      check_g5:
+        description: Validate G5 coverage thresholds
+        type: boolean
+        default: false
+
+jobs:
+  validate-gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Validate gate artifacts (standalone — no SDLC sibling required)
+        run: bash tools/fc-sdlc/ci-validate-gates-standalone.sh
+
+      # Full fc-sdlc validator (derive.js, G5 thresholds): requires monorepo checkout of
+      # FutureCapital/Engineering/SDLC at ../../FutureCapital relative to repo root.
+      - name: Validate gates (full SDLC package)
+        run: npm run sdlc:validate-gates -- --check-placeholders
+        continue-on-error: true
+
+  qa:
+    needs: validate-gates
+    if: inputs.run_qa == true || vars.SDLC_RUN_QA == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install PM deps (if needed for run-qa path)
+        run: npm run pm:install || true
+
+      - name: Run QA command
+        run: npm run sdlc:run-qa
+
+  g5:
+    needs: validate-gates
+    if: inputs.check_g5 == true || vars.SDLC_CHECK_G5 == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Validate G5 thresholds
+        run: npm run sdlc:validate-gates -- --check-g5

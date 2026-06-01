@@ -37,6 +37,19 @@ export interface FetchOptions extends Omit<RequestInit, 'body'> {
   timeoutMs?: number;
 }
 
+const CSRF_COOKIE = 'spine_csrf';
+const CSRF_HEADER = 'x-spine-csrf';
+
+/** Read double-submit CSRF token from readable cookie (set at OIDC callback). */
+function csrfHeadersForMethod(method?: string): Record<string, string> {
+  const m = (method ?? 'GET').toUpperCase();
+  if (m === 'GET' || m === 'HEAD' || m === 'OPTIONS') return {};
+  if (typeof document === 'undefined') return {};
+  const match = document.cookie.match(new RegExp(`(?:^|;\\s*)${CSRF_COOKIE}=([^;]+)`));
+  if (!match?.[1]) return {};
+  return { [CSRF_HEADER]: decodeURIComponent(match[1]) };
+}
+
 /** Build the absolute URL for an API path. */
 function urlFor(path: string): string {
   if (path.startsWith('http://') || path.startsWith('https://')) return path;
@@ -119,6 +132,9 @@ export async function apiFetch<T = unknown>(
     : null;
 
   const headers = new Headers(extraHeaders ?? {});
+  for (const [k, v] of Object.entries(csrfHeadersForMethod(rest.method))) {
+    if (!headers.has(k)) headers.set(k, v);
+  }
   let payload: BodyInit | undefined;
   if (body !== undefined && body !== null) {
     if (body instanceof FormData || body instanceof Blob || typeof body === 'string') {

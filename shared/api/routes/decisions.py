@@ -55,7 +55,8 @@ from shared.identity.models import User
 logger = logging.getLogger("spine.api.decisions")
 router = APIRouter(prefix="/api/v2/decisions", tags=["decisions"])
 
-DecisionStatus = Literal["pending", "acked", "rejected", "expired"]
+DecisionStatus = Literal["pending", "acked", "rejected", "superseded", "expired"]
+# V36 / #19: ``kind`` is open text in Postgres — do not close the API enum.
 DecisionClass = Literal[
     "approval", "incident", "release", "briefing", "budget", "policy_change",
 ]
@@ -71,7 +72,7 @@ class DecisionCard(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     decision_id: str
-    decision_class: DecisionClass
+    decision_class: str = Field(..., min_length=1, max_length=64)
     project_id: Optional[str] = None
     title: str = Field(..., min_length=1, max_length=200)
     # Body up to 64 KB so real artifacts (PRD/TRD/impl plan/QA plan) can

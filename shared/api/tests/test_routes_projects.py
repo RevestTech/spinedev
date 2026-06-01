@@ -71,7 +71,7 @@ def test_delete_project_sets_terminated() -> None:
     updated = _row(status="terminated")
 
     async def _run():
-        with patch.object(projects_routes, "_fetch_project_row", AsyncMock(return_value=row)), patch.object(
+        with patch.object(projects_routes, "_direct_fetch_project_row", AsyncMock(return_value=row)), patch.object(
             projects_routes, "_write_project_row", AsyncMock(return_value=updated)
         ), patch.object(projects_routes, "_audit_project_mutation", return_value="audit-3"):
             return await projects_routes.delete_project(row["project_uuid"], user=_user())
@@ -99,7 +99,7 @@ def test_get_project_summary_strips_artifacts_and_code_list() -> None:
     )
 
     async def _run():
-        with patch.object(projects_routes, "_fetch_project_row", AsyncMock(return_value=row)):
+        with patch.object(projects_routes, "_direct_fetch_project_row", AsyncMock(return_value=row)):
             return await projects_routes.get_project_summary(row["project_uuid"])
 
     resp = asyncio.run(_run())

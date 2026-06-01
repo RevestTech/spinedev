@@ -1,0 +1,38 @@
+{
+  "$schema": "https://futurecapital.com/schemas/fc-sdlc-pm-config.v1.json",
+  "projectName": "Spine",
+  "workspaceMount": "/workspace",
+  "port": 5190,
+  "sources": {
+    "backlog": "todo/BACKLOG.md",
+    "backlogAliases": ["todo/MasterTodo.md"],
+    "gatesGlob": "todo/gates/G*.md",
+    "traceability": "todo/testing/traceability-matrix.md",
+    "status": "docs/fc-sdlc-STATUS.md",
+    "currentSprintRegex": "Sprint\\s+(\\d+(?:\\.\\d+)?)"
+  },
+  "parsers": {
+    "backlogFormat": "wave-table",
+    "ticketIdPattern": "[A-Z]{2,5}-\\d{3,4}",
+    "doneSectionHeaders": ["Done", "Released", "Completed"],
+    "waveHeaderPattern": "^##\\s+(Wave\\s+\\S+\\s*—\\s*.+|Phase\\s+\\d+\\s*—\\s*.+)"
+  },
+  "qa": {
+    "command": "tools/fc-sdlc/ci-test.sh",
+    "intervalMinutes": 2,
+    "readyForG4": {
+      "minPassRate": 1.0
+    }
+  },
+  "gates": {
+    "g5Thresholds": {
+      "p0CoveragePct": 90,
+      "apiCoveragePct": 90,
+      "dataCoveragePct": 90,
+      "fakeBrokenMax": 0
+    }
+  },
+  "dashboard": {
+    "headlineTemplate": "{{projectName}} — {{sprint}} — QA {{qaStatus}} — {{openGates}} gate(s) open"
+  }
+}

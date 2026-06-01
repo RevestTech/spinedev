@@ -335,6 +335,9 @@ def install_oidc_routes(
             ),
         )
         signed = _sign(session_id, cfg.hmac_key)
+        from shared.api.middleware.csrf import CSRF_COOKIE_NAME, new_csrf_token
+
+        csrf_value = new_csrf_token()
         # Successful callback → land on the SPA root (or wherever the SPA
         # passed in ``state`` — Wave 3 part 2 wires deep-link handling).
         resp = RedirectResponse(url="/", status_code=302)
@@ -343,6 +346,16 @@ def install_oidc_routes(
             signed,
             max_age=cfg.session_ttl_seconds,
             httponly=True,
+            secure=cfg.cookie_secure,
+            samesite="lax",
+            domain=cfg.cookie_domain,
+            path="/",
+        )
+        resp.set_cookie(
+            CSRF_COOKIE_NAME,
+            csrf_value,
+            max_age=cfg.session_ttl_seconds,
+            httponly=False,
             secure=cfg.cookie_secure,
             samesite="lax",
             domain=cfg.cookie_domain,
@@ -374,6 +387,9 @@ def install_oidc_routes(
         redirect_target = cfg.post_logout_redirect_uri or cfg.keycloak_logout_url
         resp = RedirectResponse(url=redirect_target, status_code=302)
         resp.delete_cookie(SESSION_COOKIE_NAME, path="/", domain=cfg.cookie_domain)
+        from shared.api.middleware.csrf import CSRF_COOKIE_NAME
+
+        resp.delete_cookie(CSRF_COOKIE_NAME, path="/", domain=cfg.cookie_domain)
         return resp
 
     app.include_router(router)

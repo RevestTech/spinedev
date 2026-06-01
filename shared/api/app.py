@@ -585,6 +585,12 @@ def create_app() -> FastAPI:
     app.add_middleware(OidcCookieMiddleware)
     app.add_middleware(RequestIdMiddleware)
 
+    from shared.api.middleware.csrf import install_csrf_middleware
+    from shared.api.rate_limit import install_rate_limit_middleware
+
+    install_rate_limit_middleware(app)
+    install_csrf_middleware(app)
+
     for r in ALL_ROUTERS:
         app.include_router(r)
 

@@ -20,6 +20,10 @@ scripts/
 !shared/ui/spa/scripts/
 !shared/ui/spa/scripts/*
 
+# SPA test artifacts (never commit)
+shared/ui/spa/test-results/
+shared/ui/spa/e2e/_debug/
+
 # Python venv (per-machine; created during dogfood / dev)
 .venv/
 */__pycache__/

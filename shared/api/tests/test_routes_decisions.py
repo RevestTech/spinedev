@@ -113,6 +113,27 @@ def test_ack_transitions_to_acked_and_audits(client, oidc_user) -> None:
     assert get_store().get("d-ack").status == "acked"
 
 
+def test_decision_card_accepts_superseded_status() -> None:
+    """V36 DB CHECK includes ``superseded`` — API types must allow it."""
+    card = DecisionCard(
+        decision_id="d-sup",
+        decision_class="approval",
+        title="Superseded card",
+        status="superseded",
+    )
+    assert card.status == "superseded"
+
+
+def test_decision_card_accepts_open_kind_text() -> None:
+    """V36 ``kind`` is open text per #19 — not limited to DecisionClass literals."""
+    card = DecisionCard(
+        decision_id="d-kind",
+        decision_class="escalation_review",
+        title="Open kind",
+    )
+    assert card.decision_class == "escalation_review"
+
+
 def test_reject_transitions_to_rejected_and_audits(client, oidc_user) -> None:
     """REJECT transitions the card status to ``rejected``."""
     _seed("d-rej")
