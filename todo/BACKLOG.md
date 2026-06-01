@@ -19,7 +19,7 @@
 
 | Gate | Status | Blocker |
 |------|--------|---------|
-| G0 Charter | Open | Human sign-off in [gates/G0-charter.md](./gates/G0-charter.md) (scope filled 2026-06-01) |
+| G0 Charter | Open | Human sign-off in [gates/G0-charter.md](./gates/G0-charter.md); §9 auto-walk reached `released` 2026-06-01 |
 | G1 Requirements | Open | — |
 | G2 Architecture | Open | — |
 | G3 Build | Open | — |

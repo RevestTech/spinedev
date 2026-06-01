@@ -51,7 +51,7 @@
 | Decision API `superseded` + open `kind` | Engineering | Sprint 1 | Align with V36 |
 | Dual backlog (`docs/BACKLOG` vs `todo/BACKLOG`) | PO | Sprint 1 | Pick canonical mirror |
 | SDLC scripts in sibling repo (GHA) | DevOps | Sprint 1 | Vendor or copy `validate-gates.mjs` |
-| §9 founder walkthrough | Founder | Before ship | Needs live LLM + approvals |
+| §9 founder walkthrough | Founder | **Automated to `released`** | SPA manual pass optional; project `65eed349-…` |
 | V1_SHIP_CHECKLIST ops gates | Founder | Launch | Outside repo |
 | Commit fc-sdlc adoption tree | Engineering | This week | Still `??` on main |
 | Full `pytest shared/` in PM QA | QA | Sprint 1 | PM QA remains narrow subset |
