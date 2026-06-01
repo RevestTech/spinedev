@@ -2,9 +2,9 @@
 
 > **Read me first for fc-sdlc / PM dashboard.** Spine's historical wave log stays in [`docs/STATUS.md`](./STATUS.md).
 
-**Last updated:** 2026-06-01 — Sprint 0 cleanup (lane 1 + audit fan-out)  
+**Last updated:** 2026-06-01 — priorities 1–7 (partial; G0 sign + §9 walk human)  
 **Active phase:** Adoption — Sprint 0 (process bootstrap)  
-**Sprint verdict:** Smoke **99/0** green with hub-up; fc-sdlc placeholders partially filled; gates unsigned  
+**Sprint verdict:** Smoke **99/0** with hub-up; fc-sdlc committed; G0 scope filled — **sign-off pending**  
 **Branch:** `main`  
 **Repo root:** `/Users/khashsarrafi/Projects/Apps/SpineDevelopment`
 
@@ -15,7 +15,9 @@
 | Area | Status | Evidence |
 |------|--------|----------|
 | Local dev stack | **Green** | `bash tools/hub-up.sh --rebuild` + `bash tools/smoke-test.sh` → 99 PASS / 0 FAIL |
-| fc-sdlc scaffold | Done (uncommitted) | `todo/`, `pm.config.json`, `tools/fc-sdlc/` |
+| fc-sdlc scaffold | **Committed** | `todo/`, `pm.config.json`, `tools/fc-sdlc/` |
+| CSRF + rate limit | Code done | Rebuild Hub: `bash tools/hub-up.sh --rebuild` |
+| QA breadth | `npm run sdlc:run-qa:full` | Narrow `sdlc:run-qa` unchanged in pm.config |
 | G0 charter content | Filled | `todo/gates/G0-charter.md` — scope in/out, no `{{SCOPE_*}}` |
 | Backlog | Partial | `todo/BACKLOG.md` — SPINE-001..003 with real test paths |
 | Gate sign-offs | Open | All G0–G6 unsigned |
@@ -31,6 +33,7 @@ bash tools/hub-up.sh --rebuild    # before smoke / DB tests
 bash tools/smoke-test.sh          # 99 PASS / 0 FAIL contract
 npm run sdlc:validate-gates
 npm run sdlc:run-qa
+npm run sdlc:run-qa:full            # API + MCP smoke suites
 npm run pm:dev                      # optional dashboard
 ```
 
