@@ -1,0 +1,6 @@
+interface:
+  display_name: "Spinedev"
+  short_description: "Repo-specific patterns and workflows for spinedev"
+  default_prompt: "Use the spinedev repo skill to follow existing architecture, testing, and workflow conventions."
+policy:
+  allow_implicit_invocation: true
