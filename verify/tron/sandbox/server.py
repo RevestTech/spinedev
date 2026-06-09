@@ -1,3 +1,4 @@
+from typing import Dict
 """HTTP sandbox API — runs inside tron-sandbox container with Docker socket access."""
 
 from __future__ import annotations

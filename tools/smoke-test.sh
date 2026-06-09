@@ -56,6 +56,11 @@ _phase_banner() { [[ "$FORMAT" == text ]] && printf '\n%s %s\n' "$(_color bold "
 
 # Builds SPINE_DB_URL — prefers spine-hub-postgres (v3 laptop), else db/.env (legacy).
 _load_db_env() {
+  # If SPINE_DB_URL is already set (e.g. by CI), respect it and don't overwrite.
+  if [[ -n "${SPINE_DB_URL:-}" ]]; then
+    export PGPASSWORD="${POSTGRES_PASSWORD:-}"
+    return 0
+  fi
   POSTGRES_DB=spine
   POSTGRES_USER=spine
   POSTGRES_PASSWORD=smoke-test-db-pw

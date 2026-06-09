@@ -101,7 +101,6 @@ class FixWorkflow:
                 retry_policy=_QUICK_RETRY,
             )
 
-            last_attempt = verified
 
             if verified.verification_passed:
                 workflow.logger.info(

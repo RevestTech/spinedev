@@ -12,6 +12,8 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
+import logging
+logger = logging.getLogger(__name__)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tron.api.config import settings
@@ -249,7 +251,7 @@ async def get_cost_dashboard(
             budget_limit_usd=budget_limit,
             budget_used_pct=min(budget_used_pct, 999.0),
         )
-    except Exception as e:
+    except Exception:
         logger.exception("Cost dashboard failed")
         raise
 

@@ -25,7 +25,7 @@ from tron.agents.base import ISOConfig, ISOSpecialization, LLMProvider, ToolResu
 @pytest.fixture
 def builder_iso(iso_config_builder, fake_secrets, mock_llm_client):
     """BuilderISO instance with mocked LLM."""
-    from tests.conftest import SAMPLE_BUILDER_FINDINGS_JSON, FakeLLMResponse
+    from ..conftest import SAMPLE_BUILDER_FINDINGS_JSON, FakeLLMResponse
     mock_llm_client.complete = AsyncMock(
         return_value=FakeLLMResponse(content=SAMPLE_BUILDER_FINDINGS_JSON)
     )

@@ -452,7 +452,7 @@ class TestExecute:
             }
         ])
 
-        from tests.conftest import FakeLLMResponse
+        from ..conftest import FakeLLMResponse
         mock_llm_client.complete = AsyncMock(
             return_value=FakeLLMResponse(content=qa_findings)
         )
