@@ -157,7 +157,6 @@ class TypeScriptParser(JavaScriptParser):
                             members.append(member)
 
                     if depth == 0:
-                        end_line = j + 1
                         break
 
                 result.top_level_statements += 1

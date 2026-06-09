@@ -244,7 +244,6 @@ class MemoryStore:
 
         # pgvector cosine distance: <=> operator
         # Distance is (1 - similarity), so we filter: distance <= (1 - min_similarity)
-        distance_threshold = 1 - min_similarity
 
         stmt = (
             select(

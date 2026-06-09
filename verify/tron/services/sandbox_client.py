@@ -199,7 +199,7 @@ class SandboxClient:
                 self.logger.warning(f"Container timeout/error: {timeout_error}")
                 try:
                     container.kill()
-                except:
+                except Exception:
                     pass
                 
                 duration = (datetime.utcnow() - start_time).total_seconds() * 1000

@@ -20,7 +20,7 @@ from tron.agents.base import ISOConfig, ISOSpecialization, LLMProvider
 @pytest.fixture
 def perf_iso(iso_config_performance, fake_secrets, mock_llm_client):
     """PerformanceISO instance with mocked LLM."""
-    from tests.conftest import SAMPLE_PERFORMANCE_FINDINGS_JSON, FakeLLMResponse
+    from ..conftest import SAMPLE_PERFORMANCE_FINDINGS_JSON, FakeLLMResponse
     mock_llm_client.complete = AsyncMock(
         return_value=FakeLLMResponse(content=SAMPLE_PERFORMANCE_FINDINGS_JSON)
     )

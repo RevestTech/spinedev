@@ -94,13 +94,11 @@ class PrivacyGuard:
         def strip_bodies(text):
             result = []
             stack = 0
-            current_line = []
             
             # This logic identifies method/class signatures and preserves them 
             # while purging the actual implementation blocks.
             lines = text.split('\n')
             for line in lines:
-                trimmed = line.strip()
                 
                 # Check for start of a block
                 if '{' in line:
@@ -112,7 +110,8 @@ class PrivacyGuard:
                 # Check for end of a block
                 if '}' in line:
                     stack -= line.count('}')
-                    if stack < 0: stack = 0
+                    if stack < 0:
+                        stack = 0
                     continue
                 
                 # If we are not inside a block, preserve the line (headers, imports, namespaces)

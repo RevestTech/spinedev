@@ -53,7 +53,8 @@ async def list_github_repos(
         # 2. Fallback to env for local dev if vault not configured
         import os
         token = os.environ.get("TRON_PLAN_GIT_TOKEN")
-        if token: logger.info("Using TRON_PLAN_GIT_TOKEN from environment")
+        if token:
+            logger.info("Using TRON_PLAN_GIT_TOKEN from environment")
         
     if not token:
         logger.error("No GitHub token found in vault or environment")

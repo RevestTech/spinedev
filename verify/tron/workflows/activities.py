@@ -866,7 +866,7 @@ async def generate_fix(finding_input: FindingInput, iteration: int) -> FixAttemp
         # Strip markdown code blocks if present
         if fix_code.startswith("```"):
             lines = fix_code.split("\n")
-            lines = [l for l in lines if not l.strip().startswith("```")]
+            lines = [line for line in lines if not line.strip().startswith("```")]
             fix_code = "\n".join(lines).strip()
 
         return FixAttempt(

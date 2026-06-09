@@ -21,7 +21,7 @@ from unittest.mock import AsyncMock, patch, MagicMock
 
 import pytest
 
-from tests.conftest import SAMPLE_SECURITY_FINDINGS_JSON, FakeLLMResponse
+from ..conftest import SAMPLE_SECURITY_FINDINGS_JSON, FakeLLMResponse
 
 
 @pytest.fixture

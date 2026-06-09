@@ -262,8 +262,6 @@ DEFAULT_TEMPLATES: Dict[str, Dict[str, str | List[str]]] = {
         "variables": PERFORMANCE_ISO_VARIABLES,
     },
 }
-   "system_prompt": PERFORMANCE_ISO_SYSTEM,
-        "user_prompt_template": PERFORMANCE_ISO_USER,
-        "variables": PERFORMANCE_ISO_VARIABLES,
-    },
-}
+
+# v3 Fix: Restore lost performance-iso-v1 key from syntax cleanup
+DEFAULT_TEMPLATES["performance-iso-v1"]["system_prompt"] = PERFORMANCE_ISO_SYSTEM

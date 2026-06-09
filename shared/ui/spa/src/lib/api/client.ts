@@ -20,6 +20,7 @@ const DEFAULT_BASE = ''; // same-origin; SPA + API served by Hub container.
 
 /** Override only for tests / Storybook / non-default deployment shapes. */
 let API_BASE = DEFAULT_BASE;
+const DEFAULT_TIMEOUT_MS = 30000;
 
 export function setApiBase(base: string): void {
   API_BASE = base.replace(/\/+$/, '');
