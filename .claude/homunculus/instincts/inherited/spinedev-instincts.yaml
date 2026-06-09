@@ -1,0 +1,378 @@
+# Instincts generated from https://github.com/RevestTech/spinedev
+# Generated: 2026-06-09T04:53:03.555Z
+# Version: 2.0
+# NOTE: This file supplements (does not replace) any existing curated instincts.
+# High-confidence manually curated instincts should be preserved alongside these.
+
+---
+id: spinedev-commit-conventional
+trigger: "when writing a commit message"
+confidence: 0.85
+domain: git
+source: repo-analysis
+source_repo: https://github.com/RevestTech/spinedev
+---
+
+# Spinedev Commit Conventional
+
+## Action
+
+Use conventional commit format with prefixes: docs
+
+## Evidence
+
+- 2 commits analyzed
+- Detected conventional commit pattern
+- Examples: docs: add comprehensive project review summary, docs: add project review and fix CI failures
+
+---
+id: spinedev-commit-length
+trigger: "when writing a commit message"
+confidence: 0.6
+domain: git
+source: repo-analysis
+source_repo: https://github.com/RevestTech/spinedev
+---
+
+# Spinedev Commit Length
+
+## Action
+
+Keep commit messages concise (~45 characters)
+
+## Evidence
+
+- Average commit message length: 45 chars
+- Based on 2 commits
+
+---
+id: spinedev-naming-files
+trigger: "when creating a new file"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/RevestTech/spinedev
+---
+
+# Spinedev Naming Files
+
+## Action
+
+Use snake_case naming convention
+
+## Evidence
+
+- Analyzed file naming patterns in repository
+- Dominant pattern: snake_case
+
+---
+id: spinedev-import-relative
+trigger: "when importing modules"
+confidence: 0.75
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/RevestTech/spinedev
+---
+
+# Spinedev Import Relative
+
+## Action
+
+Use relative imports for project files
+
+## Evidence
+
+- Import analysis shows relative import pattern
+- Example: import { x } from '../lib/x'
+
+---
+id: spinedev-export-style
+trigger: "when exporting from a module"
+confidence: 0.7
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/RevestTech/spinedev
+---
+
+# Spinedev Export Style
+
+## Action
+
+Prefer named exports
+
+## Evidence
+
+- Export pattern analysis
+- Dominant style: named
+
+---
+id: spinedev-arch-type-based
+trigger: "when adding new code"
+confidence: 0.8
+domain: architecture
+source: repo-analysis
+source_repo: https://github.com/RevestTech/spinedev
+---
+
+# Spinedev Arch Type Based
+
+## Action
+
+Place code in the appropriate type folder (components/, services/, utils/, etc.)
+
+## Evidence
+
+- Type-based module organization detected
+- Folders: 
+
+---
+id: spinedev-test-naming
+trigger: "when creating a test file"
+confidence: 0.85
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/RevestTech/spinedev
+---
+
+# Spinedev Test Naming
+
+## Action
+
+Name test files using the pattern: *.test.ts
+
+## Evidence
+
+- File pattern: *.test.ts
+- Consistent across test files
+
+---
+id: spinedev-test-types
+trigger: "when planning tests for a feature"
+confidence: 0.7
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/RevestTech/spinedev
+---
+
+# Spinedev Test Types
+
+## Action
+
+Write unit, integration, e2e tests to match project standards
+
+## Evidence
+
+- Test types detected: unit, integration, e2e
+- Coverage config: no
+
+---
+id: spinedev-instinct-file-naming
+trigger: "When creating a new Python file"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: RevestTech/spinedev
+---
+
+# Spinedev Instinct File Naming
+
+## Action
+
+Name the file using snake_case
+
+## Evidence
+
+- Pattern in namingConventions.files: snake_case
+
+---
+id: spinedev-instinct-function-naming
+trigger: "When defining a new function in Python"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: RevestTech/spinedev
+---
+
+# Spinedev Instinct Function Naming
+
+## Action
+
+Name the function using camelCase
+
+## Evidence
+
+- Pattern in namingConventions.functions: camelCase
+
+---
+id: spinedev-instinct-class-naming
+trigger: "When defining a new class in Python"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: RevestTech/spinedev
+---
+
+# Spinedev Instinct Class Naming
+
+## Action
+
+Name the class using PascalCase
+
+## Evidence
+
+- Pattern in namingConventions.classes: PascalCase
+
+---
+id: spinedev-instinct-constant-naming
+trigger: "When defining a constant in Python"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: RevestTech/spinedev
+---
+
+# Spinedev Instinct Constant Naming
+
+## Action
+
+Name the constant using SCREAMING_SNAKE_CASE
+
+## Evidence
+
+- Pattern in namingConventions.constants: SCREAMING_SNAKE_CASE
+
+---
+id: spinedev-instinct-import-style
+trigger: "When importing modules in Python"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: RevestTech/spinedev
+---
+
+# Spinedev Instinct Import Style
+
+## Action
+
+Use relative imports
+
+## Evidence
+
+- Pattern in importStyle: relative
+
+---
+id: spinedev-instinct-export-style
+trigger: "When exporting symbols from a module"
+confidence: 0.7
+domain: code-style
+source: repo-analysis
+source_repo: RevestTech/spinedev
+---
+
+# Spinedev Instinct Export Style
+
+## Action
+
+Use named exports
+
+## Evidence
+
+- Pattern in exportStyle: named
+
+---
+id: spinedev-instinct-test-file-pattern
+trigger: "When creating a new test file"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: RevestTech/spinedev
+---
+
+# Spinedev Instinct Test File Pattern
+
+## Action
+
+Name the file with the pattern *.test.ts
+
+## Evidence
+
+- Pattern in testing.filePattern: *.test.ts
+
+---
+id: spinedev-instinct-test-types
+trigger: "When writing tests"
+confidence: 0.7
+domain: testing
+source: repo-analysis
+source_repo: RevestTech/spinedev
+---
+
+# Spinedev Instinct Test Types
+
+## Action
+
+Include unit, integration, and e2e tests as appropriate
+
+## Evidence
+
+- Pattern in testing.testTypes: unit, integration, e2e
+
+---
+id: spinedev-instinct-commit-format
+trigger: "When making a git commit"
+confidence: 0.9
+domain: git
+source: repo-analysis
+source_repo: RevestTech/spinedev
+---
+
+# Spinedev Instinct Commit Format
+
+## Action
+
+Format the commit message using the conventional commits style with a prefix, e.g., 'docs: ...'
+
+## Evidence
+
+- Pattern in commits.type: conventional
+- Examples: 'docs: add comprehensive project review summary'
+
+---
+id: spinedev-instinct-commit-prefix-docs
+trigger: "When committing documentation changes"
+confidence: 0.9
+domain: git
+source: repo-analysis
+source_repo: RevestTech/spinedev
+---
+
+# Spinedev Instinct Commit Prefix Docs
+
+## Action
+
+Use the 'docs:' prefix in the commit message
+
+## Evidence
+
+- Pattern in commits.prefixes: docs
+- Examples: 'docs: add comprehensive project review summary'
+
+---
+id: spinedev-instinct-error-handling
+trigger: "When handling potential errors in code"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: RevestTech/spinedev
+---
+
+# Spinedev Instinct Error Handling
+
+## Action
+
+Use try-catch blocks for error handling
+
+## Evidence
+
+- Pattern in errorHandling.style: try-catch
+
