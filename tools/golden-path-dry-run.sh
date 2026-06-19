@@ -19,13 +19,14 @@ fi
 
 export PYTHONPATH="${REPO_ROOT}${PYTHONPATH:+:${PYTHONPATH}}"
 
-# Reuse smoke DB discovery when present.
+# Reuse smoke DB discovery when present. Hub postgres binds 33099 (not fc-motion 33001).
 if [[ -f "${REPO_ROOT}/db/.env" ]]; then
   # shellcheck disable=SC1091
   set -a
   source "${REPO_ROOT}/db/.env"
   set +a
-  SPINE_DB_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@127.0.0.1:${POSTGRES_HOST_PORT:-33000}/${POSTGRES_DB}"
+  POSTGRES_HOST_PORT="${SPINE_DB_HOST_PORT:-33099}"
+  SPINE_DB_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@127.0.0.1:${POSTGRES_HOST_PORT}/${POSTGRES_DB}"
   export SPINE_DB_URL
 fi
 

@@ -158,6 +158,7 @@ services:
       POSTGRES_PASSWORD: ${SPINE_DB_PASSWORD:?SPINE_DB_PASSWORD must be set}
     volumes:
       - spine_db_data:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U spine -d spine"]
       interval: 5s

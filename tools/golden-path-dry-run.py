@@ -9,7 +9,7 @@ import subprocess
 import sys
 
 from shared.api.routes._role_dispatch_bridge import KIND_ROLE_DISPATCH
-from shared.api.tests.test_golden_path_e2e import GOLDEN_PATH_APPROVAL_KINDS
+from shared.api.tests.test_golden_path_e2e import GOLDEN_PATH_ORCHESTRATOR_KINDS
 from shared.mcp.tools import TOOL_REGISTRY, discover_tools
 
 
@@ -36,7 +36,7 @@ def _q(sql: str) -> str:
 def main() -> None:
     discover_tools()
 
-    missing = [k for k in GOLDEN_PATH_APPROVAL_KINDS if k not in KIND_ROLE_DISPATCH]
+    missing = [k for k in GOLDEN_PATH_ORCHESTRATOR_KINDS if k not in KIND_ROLE_DISPATCH]
     if missing:
         _fail(f"bridge missing kinds: {missing}")
 

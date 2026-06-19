@@ -16,19 +16,27 @@ GOLDEN_PATH_APPROVAL_KINDS: tuple[str, ...] = (
     "code_review_pass",
     "devops_approval",
     "qa_approval",
+    "release_gate_approval",
     "local_deploy_prompt",
+)
+
+# User gates that advance lifecycle / enqueue cards without orchestrator dispatch.
+GOLDEN_PATH_USER_GATE_KINDS: frozenset[str] = frozenset({"release_gate_approval"})
+
+GOLDEN_PATH_ORCHESTRATOR_KINDS: tuple[str, ...] = tuple(
+    k for k in GOLDEN_PATH_APPROVAL_KINDS if k not in GOLDEN_PATH_USER_GATE_KINDS
 )
 
 
 def test_golden_path_kinds_have_orchestrator_bridge() -> None:
     """Every post-intake approval step routes through the orchestrator bridge."""
-    missing = [k for k in GOLDEN_PATH_APPROVAL_KINDS if k not in KIND_ROLE_DISPATCH]
+    missing = [k for k in GOLDEN_PATH_ORCHESTRATOR_KINDS if k not in KIND_ROLE_DISPATCH]
     assert missing == [], f"missing bridge mappings: {missing}"
 
 
 def test_golden_path_role_sequence() -> None:
     """Roles fire in SDLC order through the bridge."""
-    roles = [KIND_ROLE_DISPATCH[k].role for k in GOLDEN_PATH_APPROVAL_KINDS]
+    roles = [KIND_ROLE_DISPATCH[k].role for k in GOLDEN_PATH_ORCHESTRATOR_KINDS]
     assert roles == [
         "planner",
         "architect",

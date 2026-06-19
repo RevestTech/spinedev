@@ -305,7 +305,7 @@ def main() -> None:
     max_runtime_sec = float(os.environ.get("MAX_RUNTIME_SEC", str(60 * 60)))
     deadline = time.time() + max_runtime_sec
     iteration = 0
-    while time.time() < deadline:
+    while time.time() < deadline and iteration < max_iter:
         iteration += 1
         items = _fetch_pending_clean(base)
         pending = _pending_for_project(items, project_uuid)
@@ -349,10 +349,16 @@ def main() -> None:
 
         time.sleep(sleep_sec)
     else:
-        print(
-            f"[golden-path-walkthrough] stopped after {max_runtime_sec}s runtime "
-            f"({acked_total} cards acked)"
-        )
+        if iteration >= max_iter:
+            print(
+                f"[golden-path-walkthrough] stopped after {max_iter} iterations "
+                f"({acked_total} cards acked)"
+            )
+        else:
+            print(
+                f"[golden-path-walkthrough] stopped after {max_runtime_sec}s runtime "
+                f"({acked_total} cards acked)"
+            )
 
     phase = _current_phase(base, project_uuid)
     print(f"[golden-path-walkthrough] project_uuid={project_uuid}")

@@ -77,7 +77,7 @@ def test_orchestrator_gap_enqueued_when_bridge_misses(monkeypatch: pytest.Monkey
 
 
 def test_golden_path_ack_kinds_all_call_require(monkeypatch: pytest.MonkeyPatch) -> None:
-    from shared.api.tests.test_golden_path_e2e import GOLDEN_PATH_APPROVAL_KINDS
+    from shared.api.tests.test_golden_path_e2e import GOLDEN_PATH_ORCHESTRATOR_KINDS
 
     seen: list[str] = []
 
@@ -98,10 +98,10 @@ def test_golden_path_ack_kinds_all_call_require(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(_post_ack, "advance_sequence", fake_sequence)
     monkeypatch.setattr(_post_ack, "_load_project_full", fake_load)
 
-    for kind in GOLDEN_PATH_APPROVAL_KINDS:
+    for kind in GOLDEN_PATH_ORCHESTRATOR_KINDS:
         asyncio.run(_post_ack.on_decision_acked(_card(kind), actor="founder"))
 
-    assert seen == list(GOLDEN_PATH_APPROVAL_KINDS)
+    assert seen == list(GOLDEN_PATH_ORCHESTRATOR_KINDS)
 
 
 def test_write_workspace_files_respects_spine_on_spine(
