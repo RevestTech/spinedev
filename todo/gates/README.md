@@ -21,9 +21,9 @@ Go / no-go checkpoints for delivery. Each gate requires an **approval artifact**
 | G0 | **Signed — Go** | 2026-06-19 — [`G0-charter.md`](./G0-charter.md) |
 | G1 | **Signed — Go** | 2026-06-19 — [`G1-requirements.md`](./G1-requirements.md) |
 | G2 | **Signed — Go** | 2026-06-19 — [`G2-architecture.md`](./G2-architecture.md) |
-| G3 | **Open** | — |
-| G4 | **Open** | — |
-| G5 | **Open** | — |
+| G3 | **Signed — Go** | 2026-06-19 — [`G3-build-signoff.md`](./G3-build-signoff.md) |
+| G4 | **Signed — Go** | 2026-06-19 — [`G4-test-signoff.md`](./G4-test-signoff.md) |
+| G5 | **Open** | Reality audit + coverage reports required |
 | G6 | **Open** | — |
 
 ## Waivers

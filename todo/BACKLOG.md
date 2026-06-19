@@ -22,8 +22,8 @@
 | G0 Charter | **Signed — Go** | PO + Eng lead sign-off 2026-06-19 — [`G0-charter.md`](./gates/G0-charter.md) |
 | G1 Requirements | **Signed — Go** | PO + Eng lead sign-off 2026-06-19 — [`G1-requirements.md`](./gates/G1-requirements.md) |
 | G2 Architecture | **Signed — Go** | Tech + Eng lead sign-off 2026-06-19 — [`G2-architecture.md`](./gates/G2-architecture.md) |
-| G3 Build | Open | — |
-| G4 Test | Open | — |
+| G3 Build | **Signed — Go** | Foundation epic SPINE-001–003 — [`G3-build-signoff.md`](./gates/G3-build-signoff.md) |
+| G4 Test | **Signed — Go** | QA + Tech lead 2026-06-19 — [`G4-test-signoff.md`](./gates/G4-test-signoff.md) |
 | G5 Release | Open | — |
 | G6 Operate | Open | — |
 
@@ -51,7 +51,9 @@
 
 ## Done
 
-<!-- Move completed items here: - [x] **SPINE-001** Title (Sprint N) -->
+- [x] **SPINE-001** Local dev stack + smoke contract (Sprint 0, 2026-06-19)
+- [x] **SPINE-002** CI pipeline main workflow (Sprint 0, 2026-06-19)
+- [x] **SPINE-003** Hub project route unit tests (Sprint 0, 2026-06-19)
 
 ---
 

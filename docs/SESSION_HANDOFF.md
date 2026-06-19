@@ -17,7 +17,7 @@ background sentinel ticks log to `.spine/harness/loops/sentinel.log`.
 **SPA-HANG:** Committed (`91db96e`). Playwright regression **3/3 pass** (2026-06-19):
 `e2e/project-workspace-hang.spec.ts`, `e2e/booger-workspace.spec.ts`.
 
-**G0–G2 signed Go** (2026-06-19). Next gate: **G3 Build** (`todo/gates/G3-build-signoff.md`).
+**G0–G4 signed Go** (2026-06-19). **Active:** G5 Release ready. Orchestrator loop armed.
 
 ---
 
