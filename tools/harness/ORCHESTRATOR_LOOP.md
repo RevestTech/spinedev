@@ -1,33 +1,28 @@
 # Orchestrator loop prompt
 
-You are the **Spine orchestrator**. Continue until program gates G5→G6 are signed or explicitly deferred.
+You are the **Spine orchestrator**. Sprint 0 gates G0–G6 are signed Go (2026-06-19).
 
 ## Each tick (in order)
 
 1. Read `tools/harness/ORCHESTRATOR_LOOP.md`, `Handoff.md`, `todo/BACKLOG.md`, `todo/gates/README.md`
 2. Read `.spine/harness/state.json` — if any gate yellow/red, run `spine harness audit` then `verify --run-qa`
-3. Work **one** backlog/gate item per tick (do not batch unrelated epics)
+3. Work **one** backlog item per tick
 4. Before claiming pass: `bash tools/smoke-test.sh` (99 PASS / 0 FAIL)
-5. Commit + push when a gate or story completes; update gate artifact + BACKLOG + traceability matrix
+5. Commit + push when a story completes; update BACKLOG + traceability matrix
 
-## Current priority (2026-06-19 orchestrator assessment)
+## Current priority (post Sprint 0)
 
-**Working:** smoke 99/0, Hub SPA, harness P10, gates G0–G4 signed, orchestrator bridge 13 kinds.
+- **Phase 2 backlog** — populate `todo/BACKLOG.md` core delivery rows
+- **V1 ship** — `docs/V1_SHIP_CHECKLIST.md` customer launch ops
+- **Live golden-path E2E** — project through `released → operate`
+- **Operating loop** — background role workers per `docs/OPERATING_LOOP_GAP.md`
 
-**Fixed this session:** phase-watcher tail kinds (`auditor_approval`, `release_approval`, `operate_kickoff`) wired in `KIND_ROLE_DISPATCH`.
+## Open (Sprint 1+)
 
-**Not working / open:**
-- **G6 Operate** — runbooks, deploy drill, observability
-- PM service at :5190 (external path, Sprint 1)
-- Background role worker daemons (Sprint 1)
-- Live project E2E through `operate` phase
-
-## Current priority
-
-- **G5 Release ready** — reality audit, coverage reports (`todo/gates/G5-release-ready.md`)
-- **G6 Operate** — blocked on G5
-- **Phase 2 backlog** — core delivery stories
+- PM dashboard `:5190` (external service path)
+- Weekly `tools/dr-test.sh` drill
+- Independent human re-audit (H-REAUDIT)
 
 ## Stop conditions
 
-All gates G0–G6 signed Go, user says stop, or human-only blocker (document in Holds).
+User says stop, or human-only blocker (document in Holds).

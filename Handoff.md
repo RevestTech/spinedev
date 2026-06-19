@@ -278,6 +278,7 @@ May live as subcommands under existing `orchestrator/bin/spine` rather than a se
 | P7 | Wire TRON/charter evals into verify-wave | **Done** (2026-06-19) |
 | P8 | Automated audit-wave scanners + findings JSON | **Done** (2026-06-19) |
 | P10 | Loop-bridge tests, sprint-close auto-audit, background sentinel log | **Done** (2026-06-19) |
+| Sprint 0 | Gates G0–G6 signed Go | **Done** (2026-06-19) |
 
 ---
 

@@ -25,7 +25,7 @@
 | G3 Build | **Signed — Go** | Foundation epic SPINE-001–003 — [`G3-build-signoff.md`](./gates/G3-build-signoff.md) |
 | G4 Test | **Signed — Go** | QA + Tech lead 2026-06-19 — [`G4-test-signoff.md`](./gates/G4-test-signoff.md) |
 | G5 Release | **Signed — Go** | Sprint 0 golden path — [`G5-release-ready.md`](./gates/G5-release-ready.md) |
-| G6 Operate | Open | — |
+| G6 Operate | **Signed — Go** | Sprint 0 laptop baseline — [`G6-operate.md`](./gates/G6-operate.md) |
 
 ---
 
