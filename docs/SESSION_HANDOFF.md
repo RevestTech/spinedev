@@ -9,7 +9,28 @@
 
 ---
 
-## Where we left off (2026-06-19)
+## Where we left off (2026-06-19, post–Phase 3)
+
+**Engineering backlog complete:** SPINE-001–020 done. `main` at `3e053e6` (pushed).
+
+| Check | Result | When |
+|-------|--------|------|
+| Smoke | **99 PASS / 0 FAIL / 1 WARN / 11 INFO** | 2026-06-19 |
+| Hub | healthy (5h uptime) | 2026-06-19 |
+| Playwright SPA-HANG | **3/3 pass** | 2026-06-19 |
+| Design-partner smoke | **4 pass / 0 fail / 1 skip** | 2026-06-19 |
+| `make hygiene` | 0 paths to clean | 2026-06-19 |
+| Golden-path E2E (prior) | project `fe4c11c3-…` reached **operate** | 2026-06-19 |
+
+**Next (human/ops):** `docs/V1_SHIP_CHECKLIST.md` §1–7 — vendor vault, Shamir, live BYOC, `spine.dev`, design partners, legal, SOC2.
+
+**Guides:** [`FOUNDER_WALKTHROUGH.md`](FOUNDER_WALKTHROUGH.md) · [`DESIGN_PARTNER_ONBOARDING.md`](DESIGN_PARTNER_ONBOARDING.md) · [`VAULT_PATHS_CHECKLIST.md`](VAULT_PATHS_CHECKLIST.md)
+
+**Orchestrator loops:** `.spine/orchestrator/loops/start-watcher.sh` + `start-heartbeat.sh` (Phase 3-complete prompts).
+
+---
+
+## Where we left off (2026-06-19, Sprint 0)
 
 **Harness Lite P10 done:** loop-bridge integration tests (4), sprint-close auto-runs audit,
 background sentinel ticks log to `.spine/harness/loops/sentinel.log`.
@@ -17,7 +38,7 @@ background sentinel ticks log to `.spine/harness/loops/sentinel.log`.
 **SPA-HANG:** Committed (`91db96e`). Playwright regression **3/3 pass** (2026-06-19):
 `e2e/project-workspace-hang.spec.ts`, `e2e/booger-workspace.spec.ts`.
 
-**All gates G0–G6 signed Go** (2026-06-19, Sprint 0). Next: Phase 2 backlog + `V1_SHIP_CHECKLIST.md`.
+**All gates G0–G6 signed Go** (2026-06-19, Sprint 0).
 
 ---
 
@@ -165,4 +186,4 @@ PM dashboard (if running): `http://localhost:5190`
 
 ---
 
-*Last updated: 2026-06-02 — SPA-HANG fixed and verified; changes uncommitted; G0 sign-off pending.*
+*Last updated: 2026-06-19 — Phase 3 engineering complete; V1 ops checklist is the launch gate.*

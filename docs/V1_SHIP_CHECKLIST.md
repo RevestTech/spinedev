@@ -17,7 +17,8 @@
 ## 0. Pre-ship sanity check (run this first)
 
 - [ ] `git log --oneline 1da7148..HEAD` — confirm 57+ commits land cleanly on `main`
-- [ ] `bash tools/smoke-test.sh` — must show **99 PASS / 0 FAIL / 1 WARN / 0 SKIP**
+- [x] `bash tools/smoke-test.sh` — **99 PASS / 0 FAIL / 1 WARN / 0 SKIP** (verified 2026-06-19; 11 INFO gates)
+- [x] `make hygiene` — 0 paths to clean (2026-06-19)
 - [ ] Read all 5 canonical docs end-to-end as a returning user would:
   - `README.md` → `docs/positioning.md` → `docs/PRD.md` → `docs/ARCHITECTURE.md` → `INSTALL.md`
   - Then operational guides: `HUB_OPERATIONS_GUIDE` / `DEPLOYMENT_SHAPES` / `SECURITY_GUIDE` / `LICENSING_GUIDE` / `FEDERATION_GUIDE` / `DR_RUNBOOK`
