@@ -28,7 +28,7 @@
 | Orchestrator bridge | LIVE | `KIND_ROLE_DISPATCH` 13 kinds (tail wired 2026-06-19) |
 | Phase watcher tail | PARTIAL | Bridged; live project E2E through `operate` pending |
 | Role chat offline | STUB | `RoleChatPanel` shows visible **stub** badge (`:228-231`) |
-| PM dashboard | PARTIAL | `pm.config.json`; service external — defer Sprint 1 |
+| PM dashboard | PARTIAL | Wired `pm.config.json`; PM service optional (H-PM) — [PM_DASHBOARD.md](../PM_DASHBOARD.md) |
 | Operating loop daemons | PARTIAL | `role_runtime.py` directive bus; background workers Sprint 1 |
 | Coverage reports | LIVE | PRD/API/Data 2026-06-19 in `docs/product/` |
 
@@ -36,6 +36,6 @@
 
 | Item | Hold | Owner | Target |
 |------|------|-------|--------|
-| PM :5190 | H-PM | DevOps | Sprint 1 — vendor PM path |
+| PM :5190 | H-PM | DevOps | Sprint 1 — see [PM_DASHBOARD.md](../PM_DASHBOARD.md) |
 | Background role workers | H-WORKERS | Engineering | Sprint 1 per OPERATING_LOOP_GAP |
 | Independent human re-audit | H-REAUDIT | QA | Before customer ship |
