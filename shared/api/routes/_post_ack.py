@@ -2031,7 +2031,16 @@ async def on_decision_acked(card: Any, *, actor: str) -> None:
         return
 
     if kind == "deploy_status":
-        # User acked a successful local deploy — leave running.
+        # User acked deploy — persist deploy_result so phase_watcher can
+        # fire operate_kickoff (released → operate tail).
+        deploy_ok = md.get("deploy_ok", True)
+        await _persist_metadata_patch(project_id, {
+            "deploy_result": {
+                "ok": bool(deploy_ok),
+                "mode": "cli" if md.get("deploy_cli_mode") else "local",
+                "acknowledged_by": actor,
+            },
+        })
         return
 
     if kind == "host_deploy_instructions":
