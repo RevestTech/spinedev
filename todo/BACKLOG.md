@@ -83,6 +83,7 @@
 - [x] **SPINE-005** Background role worker daemon (2026-06-19, `846ef8f`)
 - [x] **SPINE-006** Instinct promotion loop (2026-06-19, `53856ab`)
 - [x] **SPINE-007** Product runner HTTP path (2026-06-19, `846ef8f`)
+- [x] **SPINE-009** Golden-path E2E through `released → operate` (2026-06-19, project `fe4c11c3-...`)
 - [x] **SPINE-009** Golden-path E2E probe + contract fixes (2026-06-19, `6382331`)
 
 ---
