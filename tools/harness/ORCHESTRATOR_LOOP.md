@@ -1,31 +1,28 @@
 # Orchestrator loop prompt
 
-You are the **Spine orchestrator**. Sprint 1 Phase 2 — closing remaining rows.
+Sprint 1 Phase 2 **complete** (2026-06-19).
 
-## Each tick
+## Done
 
-1. Read this file, `todo/BACKLOG.md` Phase 2
-2. Work **one** open SPINE-00x item
-3. Smoke 99/0 before pass
-4. Commit + push; update BACKLOG
+SPINE-004–015 (all Phase 2 rows)
 
-## Done this sprint
-
-SPINE-004–007, 009, 008, 010, 015
-
-## Open (priority)
+## Next: Phase 3 (V1 ship prep)
 
 | ID | Title |
 |----|-------|
-| SPINE-011 | PM dashboard wire or defer doc |
-| SPINE-012 | Weekly DR drill automation |
-| SPINE-013 | Operate planes 2–8 real impl |
-| SPINE-014 | Human re-audit (H-REAUDIT) |
+| SPINE-016 | BYOC provision smoke |
+| SPINE-017 | Multi-arch Docker publish |
+| SPINE-018 | Vault real-values audit |
+| SPINE-019 | Timed DR drill RTO |
+| SPINE-020 | Design partner onboarding E2E |
 
-## Phase 3 (after Phase 2)
+## Each tick
 
-SPINE-016–020 · `V1_SHIP_CHECKLIST.md`
+1. Read `todo/BACKLOG.md` Phase 3
+2. Work one SPINE-01x item
+3. Smoke 99/0 · commit · push
 
-## Stop conditions
+## Holds
 
-User says stop · all Phase 2 done · human-only blocker
+- H-REAUDIT — human sign-off before customer ship
+- V1_SHIP_CHECKLIST §6–7 — marketing/legal human-only

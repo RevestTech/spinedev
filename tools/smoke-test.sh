@@ -1062,6 +1062,12 @@ phase12_bootstrap() {
   else
     _fail boot.make_help "'make help' fails — Makefile syntax broken"
   fi
+  # SPINE-012 — DR drill wiring (full run: .github/workflows/nightly.yml daily).
+  if bash "$REPO_ROOT/tools/dr-test.sh" --dry-run >/dev/null 2>&1; then
+    _info boot.dr_dryrun "tools/dr-test.sh --dry-run OK (nightly CI runs full drill)"
+  else
+    _warn boot.dr_dryrun "tools/dr-test.sh --dry-run failed — check recovery/ wiring"
+  fi
 }
 
 # ─── cleanup + formatters ────────────────────────────────────────────

@@ -84,7 +84,12 @@
 - [x] **SPINE-006** Instinct promotion loop (2026-06-19, `53856ab`)
 - [x] **SPINE-007** Product runner HTTP path (2026-06-19, `846ef8f`)
 - [x] **SPINE-008** Charter eval smoke gate (2026-06-19, `1294533`)
+- [x] **SPINE-009** Golden-path E2E through `released → operate` (2026-06-19, project `fe4c11c3-...`)
 - [x] **SPINE-010** Live role-chat dev mode (2026-06-19, `57538c1`)
+- [x] **SPINE-011** PM dashboard integration guide (2026-06-19, `09efc74`)
+- [x] **SPINE-012** DR drill automation — nightly.yml + smoke dry-run (2026-06-19)
+- [x] **SPINE-013** Operate plane health probes (2026-06-19, `ededf07`)
+- [x] **SPINE-014** Sprint 1 reality re-audit (2026-06-19, `ddb988f`)
 - [x] **SPINE-015** Founder walkthrough doc (2026-06-19, `fe20407`)
 
 ---
