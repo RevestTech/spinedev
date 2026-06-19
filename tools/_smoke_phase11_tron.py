@@ -165,3 +165,27 @@ try:
                      f"status={conv_status}")
 except Exception as exc:
     emit("iso.iso_invoke.dispatched", "FAIL", f"{type(exc).__name__}: {exc}")
+
+# Check 6-7: charter eval stub runs (V3 #7a offline gate). INFO on success
+# keeps the 99 PASS smoke contract; FAIL only when the harness regresses.
+for _role in ("engineer", "architect"):
+    _cid = f"verify.charter_evals.{_role}"
+    try:
+        _result = subprocess.run(
+            [sys.executable, "-m", "verify.charter_evals.run", _role, "--callable", "stub"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        _green = "Overall: **green**" in _result.stdout
+        if _result.returncode == 0 and _green:
+            emit(_cid, "INFO", "stub eval gate green")
+        else:
+            _tail = (_result.stderr or _result.stdout or "").strip()[:200]
+            emit(
+                _cid,
+                "FAIL",
+                f"exit={_result.returncode} green={_green} tail={_tail!r}",
+            )
+    except Exception as exc:
+        emit(_cid, "FAIL", f"{type(exc).__name__}: {exc}")

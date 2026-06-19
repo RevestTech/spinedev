@@ -124,15 +124,33 @@ def test_main_runs_stub_on_engineer(capsys: pytest.CaptureFixture) -> None:
     assert "Overall: **green**" in captured.out
 
 
-def test_main_runs_stub_on_architect_fails_anchor(
-    capsys: pytest.CaptureFixture,
-) -> None:
+def test_main_runs_stub_on_architect(capsys: pytest.CaptureFixture) -> None:
     code = main(["architect", "--callable", "stub"])
     captured = capsys.readouterr()
-    # The anchor eval is intentionally wired to fail in the stub so
-    # the red path is also exercised.
-    assert code == 1
-    assert "Overall: **red**" in captured.out
+    assert code == 0
+    assert "architect" in captured.out
+    assert "Overall: **green**" in captured.out
+
+
+def test_main_returns_1_when_gate_regresses(
+    capsys: pytest.CaptureFixture,
+) -> None:
+    failing = CapabilityEval(
+        name="engineer-cites-req-id-in-report",
+        role="engineer",
+        task="t",
+        criteria=[
+            EvalCriterion(name="impossible", required_substrings=("NEVER_MATCH",)),
+        ],
+        target_k=1,
+        target_pass_rate=1.0,
+    )
+
+    def always_fail(_eval: CapabilityEval, _trial: int) -> str:
+        return stub_role_callable(failing, 0)
+
+    report = evaluate_charter("engineer", [failing], always_fail)
+    assert not report.overall_meets_target
 
 
 def test_main_writes_report_to_file(

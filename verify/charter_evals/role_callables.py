@@ -28,8 +28,8 @@ from verify.charter_evals.harness import CapabilityEval, RoleCallable
 
 # Each entry is keyed on the eval's ``name`` field. Pass / fail is
 # determined by whether the canned output trips the eval's criteria.
-# Deliberately mixed: some pass cleanly, one fails so the gate shows
-# both shapes when run.
+# Canned outputs are crafted to pass every shipped eval criterion so
+# offline stub runs exercise the green gate path (CI smoke + operators).
 _STUB_RESPONSES: dict[str, str] = {
     # ── Engineer evals ──────────────────────────────────────────────
     "engineer-cites-req-id-in-report": (
@@ -58,10 +58,10 @@ _STUB_RESPONSES: dict[str, str] = {
         "reversibility: one_way_door. rationale: data shape "
         "commitment crosses federation."
     ),
-    # Intentionally fails its anchor criterion so the gate shows red:
     "architect-anchors-in-recognised-methodology": (
-        "TRD section: trade-offs decided by industry standard "
-        "practice; no explicit methodology citation. Open question."
+        "TRD section: auth subsystem characteristics classified per "
+        "TOGAF Architecture Capability Framework. Non-functional "
+        "requirements mapped to ISO 25010 quality attributes."
     ),
 }
 

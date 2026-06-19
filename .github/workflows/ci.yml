@@ -160,6 +160,7 @@ jobs:
             shared/ \
             plan/ \
             build/ \
+            verify/charter_evals/tests/ \
             verify/tron/tests/ \
             migration/ \
             evidence/ \
