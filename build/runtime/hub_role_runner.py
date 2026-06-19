@@ -533,7 +533,7 @@ def run_build_hub_role(
             actor=actor,
         ))
 
-    if role in ("devops", "devops_release") or "INSTALL" in upper or "DEPLOY" in upper:
+    if role in ("devops", "devops_release") or "INSTALL" in upper or "DEPLOY" in upper or "OPERATE" in upper:
         if "DEPLOY" in upper or role == "devops_release":
             from devops.runtime.hub_deploy_runner import run_devops_hub_role  # noqa: PLC0415
 

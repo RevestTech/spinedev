@@ -60,6 +60,10 @@ KIND_ROLE_DISPATCH: dict[str, RoleDispatchSpec] = {
     "devops_approval": RoleDispatchSpec("plan", "qa", "PRODUCE_TEST_PLAN"),
     "qa_approval": RoleDispatchSpec("plan", "release_manager", "PRODUCE_RELEASE_GATE"),
     "local_deploy_prompt": RoleDispatchSpec("build", "devops_release", "DEPLOY_LOCAL"),
+    # Phase-watcher tail rules (verify_approved → acceptance → released → operate).
+    "auditor_approval": RoleDispatchSpec("build", "auditor", "PRODUCE_COMPLIANCE_AUDIT"),
+    "release_approval": RoleDispatchSpec("plan", "release_manager", "PRODUCE_RELEASE_GATE"),
+    "operate_kickoff": RoleDispatchSpec("build", "devops", "OPERATE_KICKOFF"),
 }
 
 

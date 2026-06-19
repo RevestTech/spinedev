@@ -50,6 +50,19 @@ def test_phase_watcher_covers_plan_and_build_gates() -> None:
     assert "code_approval" in kinds
 
 
+def test_phase_watcher_kinds_have_orchestrator_bridge() -> None:
+    """Every phase_watcher dispatch_kind routes through KIND_ROLE_DISPATCH."""
+    watcher_kinds = {rule[2] for rule in _WATCH_RULES}
+    missing = sorted(k for k in watcher_kinds if k not in KIND_ROLE_DISPATCH)
+    assert missing == [], f"missing bridge mappings: {missing}"
+
+
+def test_post_verify_watcher_kinds_map_to_expected_roles() -> None:
+    assert KIND_ROLE_DISPATCH["auditor_approval"].role == "auditor"
+    assert KIND_ROLE_DISPATCH["release_approval"].role == "release_manager"
+    assert KIND_ROLE_DISPATCH["operate_kickoff"].role == "devops"
+
+
 def test_code_review_remediate_path_exists() -> None:
     assert KIND_ROLE_DISPATCH["code_review_blocked"].role == "engineer"
     assert "REMEDIATE" in KIND_ROLE_DISPATCH["code_review_blocked"].directive

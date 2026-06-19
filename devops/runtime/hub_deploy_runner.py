@@ -97,6 +97,41 @@ def run_devops_hub_role(
     upper = directive.upper()
     project = _load_project_dict(project_id)
 
+    if "OPERATE" in upper:
+        try:
+            from devops.runtime.operate_runner import run_operate  # noqa: PLC0415
+        except Exception as exc:  # noqa: BLE001
+            return HubDeployResult(
+                ok=False,
+                directive_id=f"dir_{uuid4().hex[:12]}",
+                role=role,
+                error_class="operate_runtime_unavailable",
+                error_message=f"devops.runtime.operate_runner import failed: {exc}",
+            )
+        envelope = run_operate(project)
+        ok = envelope.status in ("ok", "warning")
+        data = envelope.data if isinstance(envelope.data, dict) else {}
+        if ok and data.get("operate_started_at"):
+            from build.runtime.build_dispatcher import _merge_metadata  # noqa: PLC0415
+
+            _merge_metadata(
+                int(project["id"]),
+                {
+                    "operate_started_at": data["operate_started_at"],
+                    "operate_report": data.get("operate_report"),
+                },
+            )
+        return HubDeployResult(
+            ok=ok,
+            directive_id=f"dir_{uuid4().hex[:12]}",
+            role=role or "devops",
+            extra={
+                "operate_started_at": data.get("operate_started_at"),
+                "summary": envelope.summary,
+                "top_status": envelope.status,
+            },
+        )
+
     if "DEPLOY" in upper or "LOCAL" in upper or "RELEASE" in upper:
         return _run_local_deploy_on_hub_loop(project)
 
