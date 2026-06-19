@@ -21,11 +21,17 @@
 #
 # Usage:
 #   bash tools/dr-test.sh [--env=dr-sandbox] [--target-uri=URI]
-#                         [--validate-against-version=VER] [--dry-run]
+#                         [--validate-against-version=VER]
+#                         [--max-rto-seconds=SECS] [--dry-run]
+#
+# RTO gate (SPINE-019):
+#   Non-dry-run runs record wall-clock elapsed seconds and fail (exit 1)
+#   when elapsed exceeds --max-rto-seconds (default 1800 = 30 min).
+#   Dry-run validates wiring only and skips the RTO gate.
 #
 # Exit codes:
-#   0  test ran and succeeded (or dry-run completed)
-#   1  test ran and FAILED (page on-call)
+#   0  test ran and succeeded (or dry-run completed; RTO gate passed)
+#   1  test ran and FAILED (restore failure or RTO gate exceeded)
 #   2  environment problem — couldn't run the test
 #   64 unknown flag
 #
@@ -42,6 +48,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 ENV_NAME="dr-sandbox"
 TARGET_URI=""
 VALIDATE_VERSION=""
+MAX_RTO_SECONDS=1800
 DRY_RUN=0
 
 for arg in "$@"; do
@@ -49,6 +56,7 @@ for arg in "$@"; do
     --env=*)                          ENV_NAME="${arg#*=}" ;;
     --target-uri=*)                   TARGET_URI="${arg#*=}" ;;
     --validate-against-version=*)     VALIDATE_VERSION="${arg#*=}" ;;
+    --max-rto-seconds=*)              MAX_RTO_SECONDS="${arg#*=}" ;;
     --dry-run|-n)                     DRY_RUN=1 ;;
     -h|--help)
       sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'
@@ -61,6 +69,12 @@ for arg in "$@"; do
   esac
 done
 
+if ! [[ "$MAX_RTO_SECONDS" =~ ^[0-9]+$ ]] || (( MAX_RTO_SECONDS < 1 )); then
+  printf 'invalid --max-rto-seconds=%s (must be a positive integer)\n' \
+    "$MAX_RTO_SECONDS" >&2
+  exit 64
+fi
+
 case "$ENV_NAME" in
   staging|dr-sandbox|qa) ;;
   *)
@@ -70,7 +84,7 @@ case "$ENV_NAME" in
 esac
 
 # ─── helpers ────────────────────────────────────────────────────────
-log() { printf '%s [dr-test] %s\n' "$(date -u +%FT%TZ)" "$*"; }
+log() { printf '%s [dr-test] %s\n' "$(date -u +%FT%TZ)" "$*" >&2; }
 
 require() {
   local what="$1" hint="${2:-}"
@@ -92,7 +106,8 @@ else
 fi
 
 # ─── pre-flight ─────────────────────────────────────────────────────
-log "starting DR test cycle (env=$ENV_NAME, dry_run=$DRY_RUN)"
+RUN_START_EPOCH=$(date +%s)
+log "starting DR test cycle (env=$ENV_NAME, dry_run=$DRY_RUN, max_rto_seconds=$MAX_RTO_SECONDS)"
 [[ -n "$VALIDATE_VERSION" ]] && log "layer-12 validation against version: $VALIDATE_VERSION"
 
 problems=0
@@ -204,21 +219,66 @@ if ! driver_output=$(run_driver 2>&1); then
   driver_rc=$?
 fi
 
+RTO_ELAPSED_SECONDS=$(( $(date +%s) - RUN_START_EPOCH ))
+RTO_GATE_PASS=1
+if (( DRY_RUN == 0 && RTO_ELAPSED_SECONDS > MAX_RTO_SECONDS )); then
+  RTO_GATE_PASS=0
+fi
+
+enrich_json() {
+  MAX_RTO_SECONDS="$MAX_RTO_SECONDS" \
+  RTO_ELAPSED_SECONDS="$RTO_ELAPSED_SECONDS" \
+  RTO_GATE_PASS="$RTO_GATE_PASS" \
+  DRY_RUN="$DRY_RUN" \
+  "$PY" -c '
+import json
+import os
+import sys
+
+elapsed = int(os.environ["RTO_ELAPSED_SECONDS"])
+gate_pass = os.environ["RTO_GATE_PASS"] == "1"
+dry_run = os.environ["DRY_RUN"] == "1"
+max_rto = int(os.environ["MAX_RTO_SECONDS"])
+raw = sys.stdin.read()
+try:
+    data = json.loads(raw)
+except json.JSONDecodeError:
+    print(raw, end="")
+    sys.exit(0)
+data["rto_elapsed_seconds"] = elapsed
+data["rto_gate_pass"] = gate_pass
+data["max_rto_seconds"] = max_rto
+if dry_run:
+    data["rto_gate_skipped"] = True
+print(json.dumps(data, indent=2))
+'
+}
+
+if [[ -n "$driver_output" ]]; then
+  driver_output=$(printf '%s' "$driver_output" | enrich_json)
+fi
+
 printf '%s\n' "$driver_output"
 
-# Surface a structured summary line for log scrapers.
-if (( driver_rc == 0 )); then
-  log "result: PASS"
-  exit 0
-fi
-log "result: FAIL (driver exit=$driver_rc)"
-
-# Best-effort notify; never blocks the exit code.
-NOTIFY_SCRIPT="$REPO_ROOT/shared/runtime/notify.sh"
-if [[ -x "$NOTIFY_SCRIPT" ]]; then
-  "$NOTIFY_SCRIPT" "[dr-test] weekly DR restore FAILED" \
-                   "env=$ENV_NAME target=$TARGET_URI rc=$driver_rc" \
-                   </dev/null >/dev/null 2>&1 &
+final_rc=$driver_rc
+if (( DRY_RUN == 0 && RTO_GATE_PASS == 0 )); then
+  log "result: FAIL (RTO gate: ${RTO_ELAPSED_SECONDS}s elapsed > max ${MAX_RTO_SECONDS}s)"
+  final_rc=1
+elif (( final_rc == 0 )); then
+  log "result: PASS (rto_elapsed_seconds=${RTO_ELAPSED_SECONDS}, rto_gate_pass=true)"
+else
+  log "result: FAIL (driver exit=$driver_rc, rto_elapsed_seconds=${RTO_ELAPSED_SECONDS})"
 fi
 
-exit "$driver_rc"
+if (( final_rc != 0 )); then
+  # Best-effort notify; never blocks the exit code.
+  NOTIFY_SCRIPT="$REPO_ROOT/shared/runtime/notify.sh"
+  if [[ -x "$NOTIFY_SCRIPT" ]]; then
+    "$NOTIFY_SCRIPT" "[dr-test] weekly DR restore FAILED" \
+                     "env=$ENV_NAME target=$TARGET_URI rc=$final_rc rto=${RTO_ELAPSED_SECONDS}s" \
+                     </dev/null >/dev/null 2>&1 &
+  fi
+  exit "$final_rc"
+fi
+
+exit 0
