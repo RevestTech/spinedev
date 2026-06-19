@@ -176,6 +176,16 @@ def _current_phase(base: str, project_uuid: str) -> str:
     raise AssertionError
 
 
+def _project_metadata(base: str, project_uuid: str) -> dict:
+    full = _request(base, "GET", f"/api/v2/projects/{project_uuid}/full")
+    md = full.get("metadata")
+    return md if isinstance(md, dict) else {}
+
+
+def _operate_already_started(base: str, project_uuid: str) -> bool:
+    return bool(_project_metadata(base, project_uuid).get("operate_started_at"))
+
+
 def _run_intake(base: str, project_uuid: str, name: str) -> None:
     """Complete intake via chat turns until product role emits [INTAKE_COMPLETE]."""
     transcript: list[dict[str, str]] = []
@@ -331,6 +341,16 @@ def main() -> None:
             decision_id = card.get("decision_id")
             kind = (card.get("metadata") or {}).get("kind", "?")
             title = card.get("title", decision_id)
+            if kind == "role_failure" and _operate_already_started(base, project_uuid):
+                if not isinstance(decision_id, str) or not decision_id:
+                    continue
+                print(
+                    f"[golden-path-walkthrough] WARN: stale role_failure after operate "
+                    f"— ack and continue ({title})"
+                )
+                _request(base, "POST", f"/api/v2/decisions/{decision_id}/ack")
+                acked_total += 1
+                continue
             if kind in ("orchestrator_gap", "role_failure"):
                 print(f"[golden-path-walkthrough] STOP: {kind} — {title}")
                 phase = _current_phase(base, project_uuid)
