@@ -355,3 +355,4 @@ Engineer output for spine-on-spine lands in `.spine/dogfood/<uuid>/` by default.
 | 2026-06-19 | P6 dogfood: `tools/harness/dogfood.sh` on SpineDevelopment. |
 | 2026-06-19 | P9: charter eval fixtures; `spine harness verify` defaults to `--callable fixture` — all 6 gates green offline. |
 | 2026-06-19 | P8: `spine harness audit` — deterministic scanners; findings under `.spine/harness/findings/`. |
+| 2026-06-19 | Dogfood `--smoke` fix: accept JUnit `failures="0"` (not only human `FAIL=0`); `init` refreshes `project_root`. |

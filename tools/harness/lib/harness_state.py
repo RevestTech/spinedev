@@ -90,6 +90,10 @@ def init_harness(project_root: Path) -> Path:
     path = state_path(root)
     if not path.is_file():
         write_state(root, default_state(root))
+    else:
+        state = read_state(root)
+        state["project_root"] = str(root)
+        write_state(root, state)
     return path
 
 

@@ -54,9 +54,16 @@ if [[ "${RUN_SMOKE}" -eq 1 ]]; then
   bash "${REPO_ROOT}/tools/smoke-test.sh" --ci >"${SMOKE_OUT}" 2>&1
   SMOKE_EXIT=$?
   set -e
-  if grep -qE '0 FAIL' "${SMOKE_OUT}" && [[ "${SMOKE_EXIT}" -eq 0 ]]; then
+  if [[ "${SMOKE_EXIT}" -eq 0 ]] && {
+    grep -qE 'FAIL=0' "${SMOKE_OUT}" ||
+    grep -qE 'failures="0"' "${SMOKE_OUT}";
+  }; then
     TESTS_GATE="green"
-    SMOKE_SUMMARY="99 PASS / 0 FAIL (exit ${SMOKE_EXIT})"
+    if grep -qE 'PASS=[0-9]+' "${SMOKE_OUT}"; then
+      SMOKE_SUMMARY="$(grep -E 'PASS=[0-9]+' "${SMOKE_OUT}" | tail -1 | tr -d ' ')"
+    else
+      SMOKE_SUMMARY="smoke pass (exit ${SMOKE_EXIT}, JUnit failures=0)"
+    fi
   else
     TESTS_GATE="red"
     SMOKE_SUMMARY="smoke failed (exit ${SMOKE_EXIT}) — see report"
