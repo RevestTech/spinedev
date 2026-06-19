@@ -79,13 +79,11 @@
 - [x] **SPINE-001** Local dev stack + smoke contract (Sprint 0, 2026-06-19)
 - [x] **SPINE-002** CI pipeline main workflow (Sprint 0, 2026-06-19)
 - [x] **SPINE-003** Hub project route unit tests (Sprint 0, 2026-06-19)
-- [x] **D2-1** Auditor runner + Cite-or-Refuse (pre-Sprint 1, in tree)
-- [x] **D2-2** Decision ledger IO on conductor/auditor (pre-Sprint 1, in tree)
-- [x] **D2-3** `record_instinct` in `complete_directive` (pre-Sprint 1, in tree)
-- [x] **D2-4** Phase watcher tail rules (2026-06-19, `c5d806b`)
-- [x] **D2-5** `operate_runner.py` minimal 8-plane heartbeat (pre-Sprint 1, in tree)
-- [x] **D2-6** Product role in `_ROLE_CONFIG` (pre-Sprint 1, in tree)
-- [x] **D2-7** Conductor hygiene gate (pre-Sprint 1, in tree)
+- [x] **SPINE-004** QA execution runner (2026-06-19, `846ef8f`)
+- [x] **SPINE-005** Background role worker daemon (2026-06-19, `846ef8f`)
+- [x] **SPINE-006** Instinct promotion loop (2026-06-19, `53856ab`)
+- [x] **SPINE-007** Product runner HTTP path (2026-06-19, `846ef8f`)
+- [x] **SPINE-009** Golden-path E2E probe + contract fixes (2026-06-19, `6382331`)
 
 ---
 
