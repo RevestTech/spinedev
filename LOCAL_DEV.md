@@ -10,8 +10,10 @@ Open **this folder** in Cursor:
 
 | Path | Role |
 |------|------|
-| `~/dev/SpineDevelopment` | **Runtime** — Docker, npm, tests, agents |
-| `~/Projects/Apps/SpineDevelopment` | iCloud sync mirror — backup only |
+| `~/dev/SpineDevelopment` | **Canonical** — git root, Docker, npm, agents |
+| `~/Projects/Apps/SpineDevelopment` | Symlink → `~/dev/SpineDevelopment` (same tree) |
+
+The old iCloud-synced duplicate (if any) is archived as `SpineDevelopment.icloud-archive-*` under `~/Projects/Apps/`.
 
 ## Services
 

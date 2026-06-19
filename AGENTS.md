@@ -6,8 +6,10 @@ Read this first when working in this repository.
 
 | | Path |
 |---|------|
-| **Use for all dev** | `~/dev/SpineDevelopment` |
-| iCloud mirror (sync only) | `~/Projects/Apps/SpineDevelopment` → resolves under `Library/CloudStorage/...` |
+| **Canonical (git + dev)** | `~/dev/SpineDevelopment` |
+| **Projects shortcut** | `~/Projects/Apps/SpineDevelopment` → symlink to canonical |
+
+Both paths resolve to the **same** working tree. Do not maintain a separate iCloud duplicate.
 
 Set `SPINE_LOCAL_ROOT=~/dev/SpineDevelopment`. Cursor hooks block npm/Docker on iCloud paths.
 

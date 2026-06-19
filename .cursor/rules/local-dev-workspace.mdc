@@ -15,9 +15,9 @@ alwaysApply: true
 
 Resolved: `/Users/khashsarrafi/dev/SpineDevelopment`
 
-Do **not** run `npm`, `vite`, `vitest`, `docker compose`, or `hub-up.sh` from the iCloud-synced path (`~/Library/CloudStorage/...` or `~/Projects/Apps/SpineDevelopment` when it resolves to CloudStorage). Node fails with `ERR_INVALID_MODULE_SPECIFIER` there.
+Do **not** run `npm`, `vite`, `vitest`, `docker compose`, or `hub-up.sh` from a duplicate under `Library/CloudStorage/...`. Node fails with `ERR_INVALID_MODULE_SPECIFIER` there.
 
-iCloud copy is for sync/backup only. Copy changes via git or `rsync` — do not treat it as the runtime cwd.
+`~/Projects/Apps/SpineDevelopment` is a **symlink** to `~/dev/SpineDevelopment` — both paths are the same tree.
 
 ## Environment
 
