@@ -91,6 +91,9 @@
 - [x] **SPINE-013** Operate plane health probes (2026-06-19, `ededf07`)
 - [x] **SPINE-014** Sprint 1 reality re-audit (2026-06-19, `ddb988f`)
 - [x] **SPINE-015** Founder walkthrough doc (2026-06-19, `fe20407`)
+- [x] **SPINE-016** BYOC AWS+Railway dry-run smoke gate (2026-06-19, `0d57e5c`)
+- [x] **SPINE-017** Multi-arch docker-build smoke gate (2026-06-19, `76627df`)
+- [x] **SPINE-018** Vault paths production checklist (2026-06-19, `cfb9705`)
 
 ---
 

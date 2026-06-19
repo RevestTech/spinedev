@@ -6,15 +6,16 @@ Sprint 1 Phase 2 **complete** (2026-06-19).
 
 SPINE-004–015 (all Phase 2 rows)
 
-## Next: Phase 3 (V1 ship prep)
+## Phase 3 — open
 
 | ID | Title |
 |----|-------|
-| SPINE-016 | BYOC provision smoke |
-| SPINE-017 | Multi-arch Docker publish |
-| SPINE-018 | Vault real-values audit |
-| SPINE-019 | Timed DR drill RTO |
+| SPINE-019 | Timed DR drill RTO ≤ 30m |
 | SPINE-020 | Design partner onboarding E2E |
+
+## Done Phase 3 (engineering-prep)
+
+SPINE-016, 017, 018
 
 ## Each tick
 
