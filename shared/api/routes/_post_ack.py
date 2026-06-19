@@ -212,6 +212,7 @@ _ACK_CARD_META: dict[str, tuple[str, str]] = {
     "roadmap_approval": ("trd_approval", PHASE_PLAN_IN_PROGRESS),
     "trd_approval": ("sprint_plan_approval", PHASE_PLAN_IN_PROGRESS),
     "devops_approval": ("qa_approval", PHASE_VERIFY_IN_PROGRESS),
+    "qa_execution": ("qa_approval", PHASE_VERIFY_IN_PROGRESS),
     "qa_approval": ("release_gate_approval", PHASE_RELEASED),
 }
 
@@ -416,6 +417,36 @@ async def _orchestrate_hub_role(
             f"## Install log\n\n```\n{artifact_md}\n```"
         )
         title = f"DevOps stand-up — {project_name}"
+    elif card_kind == "qa_approval" and kind == "qa_execution":
+        all_passed = (data.get("extra") or {}).get("all_passed", False)
+        status_line = "✅ QA execution PASS" if all_passed else "❌ QA execution FAIL"
+        body = (
+            f"QA ran sprint-plan acceptance checks against the engineer RUN block.\n\n"
+            f"**Status:** {status_line}\n\n---\n\n{artifact_md}"
+        )
+        title = f"QA execution — {project_name}"
+        severity = "info" if all_passed else "critical"
+        _emit("role_finished", project_uuid=project_id, role=spec.role,
+              artifact_key=artifact_key, artifact_chars=len(artifact_md))
+        _enqueue({
+            "decision_class": "approval",
+            "project_id": project_id,
+            "title": title,
+            "body": body,
+            "severity": severity,
+            "actions": ["ack", "reject"],
+            "metadata": {
+                "kind": card_kind,
+                "project_name": project_name,
+                "project_uuid": project_id,
+                "advances_phase_to": target_phase,
+                "produced_by": spec.role,
+                "directive_id": result.directive_id,
+                "orchestrator_tool": result.tool,
+                "qa_execution_ok": all_passed,
+            },
+        })
+        return True
     else:
         body = (
             f"The {spec.role} role produced this artifact (orchestrator dispatch). "

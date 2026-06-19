@@ -25,6 +25,7 @@ ProjectEventType = Literal[
     "instinct_recorded",
     "auditor_verdict",
     "auditor_refusal",
+    "qa_execution_finished",
     "audit_event",
     "charter_eval_run",
     "operate_plane_status",
@@ -42,6 +43,8 @@ ProjectEventType = Literal[
                              citation count required (V3 #12).
   * ``auditor_refusal``    — auditor refusal envelope; carries the
                              refusal reason.
+  * ``qa_execution_finished`` — QA execution runner completed against
+                                sprint-plan AC + engineer RUN block.
   * ``audit_event``        — ``spine_audit.event`` row written; the
                              chain content_hash is the canonical id.
   * ``charter_eval_run``   — pass@k regression run (B6 / V3 #7a).
@@ -59,6 +62,7 @@ PROJECT_EVENT_TYPES: tuple[str, ...] = (
     "instinct_recorded",
     "auditor_verdict",
     "auditor_refusal",
+    "qa_execution_finished",
     "audit_event",
     "charter_eval_run",
     "operate_plane_status",

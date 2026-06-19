@@ -556,6 +556,40 @@ def run_build_hub_role(
             )
         return asyncio.run(_run_devops_install(project))
 
+    if role == "qa" and ("EXECUTE" in upper or "RUN_TESTS" in upper):
+        try:
+            from verify.runtime.qa_execution_runner import run_qa_execution  # noqa: PLC0415
+        except Exception as exc:  # noqa: BLE001
+            return HubBuildRoleResult(
+                ok=False,
+                role=role,
+                directive_id=f"dir_{uuid4().hex[:12]}",
+                result_kind="qa_execution",
+                error_class="qa_execution_runtime_unavailable",
+                error_message=f"verify.runtime.qa_execution_runner import failed: {exc}",
+                project_uuid=project["project_uuid"],
+                project_name=project["name"],
+            )
+        result = run_qa_execution(project)
+        return HubBuildRoleResult(
+            ok=result.ok,
+            role=role,
+            directive_id=result.directive_id,
+            result_kind="qa_execution",
+            artifact_key="qa_execution_md",
+            artifact_md=result.execution_md,
+            error_class=result.error_class,
+            error_message=result.error_message,
+            project_uuid=project["project_uuid"],
+            project_name=project["name"],
+            extra={
+                "all_passed": result.all_passed,
+                "commands_run": result.commands_run,
+                "commands_failed": result.commands_failed,
+                "criteria_total": result.criteria_total,
+            },
+        )
+
     if role in ("security_engineer", "auditor") or "CODE_REVIEW" in upper:
         # V3 #12 Cite-or-Refuse contract — routes through the new
         # auditor runtime (D2 gap-analysis slate #1, 2026-05-30).

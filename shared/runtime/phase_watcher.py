@@ -50,6 +50,11 @@ _WATCH_RULES: list[tuple[str, str, str]] = [
         "metadata ? 'devops_install_ok' AND NOT (metadata ? 'qa_md')",
         "devops_approval",
     ),
+    (
+        "verify_in_progress",
+        "metadata ? 'qa_md' AND NOT (metadata ? 'qa_execution_md')",
+        "qa_execution",
+    ),
     # D2 slate #4 — verify_approved → acceptance → released → operate.
     # Without these the loop dead-ends at QA. Each rule fires when the
     # phase's required artifact is in metadata and the next-phase's

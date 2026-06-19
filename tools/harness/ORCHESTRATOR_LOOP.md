@@ -1,28 +1,46 @@
 # Orchestrator loop prompt
 
-You are the **Spine orchestrator**. Sprint 0 gates G0–G6 are signed Go (2026-06-19).
+You are the **Spine orchestrator**. Sprint 0 gates G0–G6 signed Go. **Sprint 1 active.**
 
 ## Each tick (in order)
 
-1. Read `tools/harness/ORCHESTRATOR_LOOP.md`, `Handoff.md`, `todo/BACKLOG.md`, `todo/gates/README.md`
-2. Read `.spine/harness/state.json` — if any gate yellow/red, run `spine harness audit` then `verify --run-qa`
-3. Work **one** backlog item per tick
-4. Before claiming pass: `bash tools/smoke-test.sh` (99 PASS / 0 FAIL)
-5. Commit + push when a story completes; update BACKLOG + traceability matrix
+1. Read this file, `Handoff.md`, `todo/BACKLOG.md` Phase 2
+2. Pick **one** open SPINE-00x row (top-down, respect Depends)
+3. Dispatch specialist subagent OR implement directly if surgical
+4. Before pass: `bash tools/smoke-test.sh` (99 PASS / 0 FAIL) + story tests
+5. Commit + push; mark row done in BACKLOG + traceability matrix
+6. When SPINE-004–015 done: run `tools/golden-path-walkthrough.sh` then founder E2E
 
-## Current priority (post Sprint 0)
+## Active sprint (Phase 2)
 
-- **Phase 2 backlog** — populate `todo/BACKLOG.md` core delivery rows
-- **V1 ship** — `docs/V1_SHIP_CHECKLIST.md` customer launch ops
-- **Live golden-path E2E** — project through `released → operate`
-- **Operating loop** — background role workers per `docs/OPERATING_LOOP_GAP.md`
+| Priority | ID | Title |
+|----------|-----|-------|
+| **NOW** | SPINE-004 | QA execution runner |
+| **NOW** | SPINE-005 | Background role worker daemon |
+| **NOW** | SPINE-007 | Product runner HTTP path |
+| Next | SPINE-006 | Instinct promotion loop |
+| Next | SPINE-008 | Charter eval CI gate |
+| Gate | SPINE-009 | Live golden-path E2E |
+| Gate | SPINE-015 | Founder walkthrough |
 
-## Open (Sprint 1+)
+## Parallel specialist groups
 
-- PM dashboard `:5190` (external service path)
-- Weekly `tools/dr-test.sh` drill
-- Independent human re-audit (H-REAUDIT)
+| Group | Owns | Agent type |
+|-------|------|------------|
+| **Build** | SPINE-004, 005, 007, 010, 013 | generalPurpose |
+| **Verify** | SPINE-008, 009, 014 | generalPurpose + Playwright |
+| **Ops** | SPINE-011, 012, 016–019 | generalPurpose |
 
 ## Stop conditions
 
-User says stop, or human-only blocker (document in Holds).
+- User says stop
+- All Phase 2 + Phase 3 engineering rows done AND golden-path E2E green
+- Human-only blocker (document in Holds)
+
+## Completion definition (Spine 100%)
+
+1. Phase 2 rows SPINE-004–015 **done** with tests
+2. `tools/golden-path-walkthrough.sh` reaches `operate` phase
+3. Spine builds a real app in `~/spine-projects/<uuid>/` without founder intervention between approvals
+4. Smoke 99/0 + harness verify pass
+5. V1 ship checklist §1–§5 engineering items done (§6–§7 human launch deferred)

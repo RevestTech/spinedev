@@ -64,7 +64,7 @@ def test_event_type_tuple_matches_literal() -> None:
     # The runtime tuple must stay in lockstep with the Literal so
     # iteration in tests (and future loops) covers exactly the same
     # set the schema accepts.
-    assert len(PROJECT_EVENT_TYPES) == 9
+    assert len(PROJECT_EVENT_TYPES) == 10
 
 
 # ─── Field constraints ───

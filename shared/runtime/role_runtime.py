@@ -32,14 +32,63 @@ class DirectiveHandle:
     workspace: Path
 
 
-def _directives_root() -> Path:
+def directives_root() -> Path:
+    """Live directive workspaces: ``.spine/work/<project_uuid>/directives/``."""
     return _REPO_ROOT / ".spine" / "work"
+
+
+def _directives_root() -> Path:
+    return directives_root()
 
 
 def _validate_id(value: str, label: str) -> str:
     if not _RUN_ID_RE.match(value):
         raise ValueError(f"invalid {label}: {value!r}")
     return value
+
+
+def enqueue_directive(
+    project_uuid: str,
+    role: str,
+    directive: str,
+    actor: str = "orchestrator",
+    *,
+    directive_id: str | None = None,
+) -> DirectiveHandle:
+    """Queue a directive for the background role worker (status ``pending``)."""
+    _validate_id(project_uuid, "project_uuid")
+    did = directive_id or f"dir_{uuid4().hex[:12]}"
+    _validate_id(did, "directive_id")
+
+    ws = (_directives_root() / project_uuid / "directives" / did).resolve()
+    ws.mkdir(parents=True, exist_ok=True)
+
+    meta = {
+        "directive_id": did,
+        "project_uuid": project_uuid,
+        "role": role,
+        "directive": directive,
+        "actor": actor,
+        "status": "pending",
+        "queued_at": datetime.now(timezone.utc).isoformat(),
+    }
+    (ws / "status.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    (ws / "directive.md").write_text(
+        f"# Directive {did}\n\n"
+        f"- **Role:** {role}\n"
+        f"- **Directive:** {directive}\n"
+        f"- **Actor:** {actor}\n"
+        f"- **Status:** pending (awaiting role worker)\n",
+        encoding="utf-8",
+    )
+    logger.info("role_directive_enqueued", extra={"directive_id": did, "role": role})
+    return DirectiveHandle(
+        directive_id=did,
+        project_uuid=project_uuid,
+        role=role,
+        directive=directive,
+        workspace=ws,
+    )
 
 
 def begin_directive(
@@ -248,5 +297,7 @@ __all__ = [
     "append_directive_context",
     "begin_directive",
     "complete_directive",
+    "directives_root",
+    "enqueue_directive",
     "fail_directive",
 ]

@@ -58,6 +58,7 @@ KIND_ROLE_DISPATCH: dict[str, RoleDispatchSpec] = {
     "code_review_pass": RoleDispatchSpec("build", "devops", "INSTALL_AND_SMOKE"),
     "code_review_blocked": RoleDispatchSpec("build", "engineer", "REMEDIATE_FROM_REVIEW"),
     "devops_approval": RoleDispatchSpec("plan", "qa", "PRODUCE_TEST_PLAN"),
+    "qa_execution": RoleDispatchSpec("build", "qa", "EXECUTE_QA"),
     "qa_approval": RoleDispatchSpec("plan", "release_manager", "PRODUCE_RELEASE_GATE"),
     "local_deploy_prompt": RoleDispatchSpec("build", "devops_release", "DEPLOY_LOCAL"),
     # Phase-watcher tail rules (verify_approved → acceptance → released → operate).

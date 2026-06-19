@@ -19,33 +19,58 @@
 
 | Gate | Status | Blocker |
 |------|--------|---------|
-| G0 Charter | **Signed — Go** | PO + Eng lead sign-off 2026-06-19 — [`G0-charter.md`](./gates/G0-charter.md) |
-| G1 Requirements | **Signed — Go** | PO + Eng lead sign-off 2026-06-19 — [`G1-requirements.md`](./gates/G1-requirements.md) |
-| G2 Architecture | **Signed — Go** | Tech + Eng lead sign-off 2026-06-19 — [`G2-architecture.md`](./gates/G2-architecture.md) |
-| G3 Build | **Signed — Go** | Foundation epic SPINE-001–003 — [`G3-build-signoff.md`](./gates/G3-build-signoff.md) |
-| G4 Test | **Signed — Go** | QA + Tech lead 2026-06-19 — [`G4-test-signoff.md`](./gates/G4-test-signoff.md) |
-| G5 Release | **Signed — Go** | Sprint 0 golden path — [`G5-release-ready.md`](./gates/G5-release-ready.md) |
-| G6 Operate | **Signed — Go** | Sprint 0 laptop baseline — [`G6-operate.md`](./gates/G6-operate.md) |
+| G0 Charter | **Signed — Go** | 2026-06-19 |
+| G1 Requirements | **Signed — Go** | 2026-06-19 |
+| G2 Architecture | **Signed — Go** | 2026-06-19 |
+| G3 Build | **Signed — Go** | Foundation epic SPINE-001–003 |
+| G4 Test | **Signed — Go** | 2026-06-19 |
+| G5 Release | **Signed — Go** | Sprint 0 golden path |
+| G6 Operate | **Signed — Go** | Sprint 0 laptop baseline |
 
 ---
 
-## Phase 1 — Foundation
-
-*Replace wave title and rows for your domain.*
+## Phase 1 — Foundation (done)
 
 | ID | Title | Phase | P | Gate | Depends | Tests |
 |----|-------|-------|---|------|---------|-------|
-| SPINE-001 | Local dev stack + smoke contract | Build | P0 | G2 | — | `tools/smoke-test.sh (contract 99 PASS)` |
+| SPINE-001 | Local dev stack + smoke contract | Build | P0 | G2 | — | `tools/smoke-test.sh` |
 | SPINE-002 | CI pipeline (main workflow) | Build | P0 | G2 | SPINE-001 | `.github/workflows/ci.yml` |
 | SPINE-003 | Hub project route unit tests | Build | P1 | G4 | SPINE-001 | `shared/api/tests/test_routes_projects.py` |
 
 ---
 
-## Phase 2 — Core delivery
+## Phase 2 — Operating loop closure (Sprint 1)
+
+*Closes `docs/OPERATING_LOOP_GAP.md` + live golden-path E2E.*
 
 | ID | Title | Phase | P | Gate | Depends | Tests |
 |----|-------|-------|---|------|---------|-------|
-| | | | | | | |
+| SPINE-004 | QA execution runner (sprint AC against engineer commit) | Build | P0 | G4 | SPINE-003 | `verify/runtime/tests/test_qa_execution_runner.py` |
+| SPINE-005 | Background role worker daemon (directive queue poller) | Build | P0 | G3 | SPINE-003 | `shared/runtime/tests/test_role_worker.py` |
+| SPINE-006 | Instinct promotion loop (Hub lifespan) | Build | P1 | G4 | SPINE-005 | `shared/runtime/tests/test_instinct_promotion_loop.py` |
+| SPINE-007 | Product runner HTTP path (Hub intake → product charter PRD) | Build | P0 | G4 | SPINE-003 | `plan/runtime/tests/test_product_runner.py` |
+| SPINE-008 | Charter eval CI gate on `shared/charters/*.md` changes | Build | P1 | G4 | SPINE-002 | `tools/smoke-test.sh` + charter eval |
+| SPINE-009 | Live golden-path E2E through `released → operate` | Test | P0 | G4 | SPINE-004,005 | `tools/golden-path-walkthrough.sh` + E2E report |
+| SPINE-010 | RoleChat live surface (replace STUB badge) | Build | P1 | G4 | SPINE-009 | Playwright role-chat spec |
+| SPINE-011 | PM dashboard wire or document Sprint 1 defer | Ops | P2 | G6 | — | `docs/PM_DASHBOARD.md` |
+| SPINE-012 | Weekly DR drill automation (H-DR-DRILL) | Ops | P2 | G6 | SPINE-002 | `tools/dr-test.sh` CI job |
+| SPINE-013 | Operate planes 2–8 real impl (beyond heartbeat stub) | Build | P1 | G6 | SPINE-009 | `devops/runtime/tests/test_operate_runner.py` |
+| SPINE-014 | Independent human re-audit (H-REAUDIT) | QA | P1 | G5 | SPINE-009 | `docs/product/REALITY-AUDIT-*.md` |
+| SPINE-015 | Founder walkthrough — non-engineer golden path | Test | P0 | G5 | SPINE-009 | `docs/FOUNDER_WALKTHROUGH.md` |
+
+---
+
+## Phase 3 — Customer ship (V1)
+
+*Engineering-prep only; many items in `docs/V1_SHIP_CHECKLIST.md` are human/ops.*
+
+| ID | Title | Phase | P | Gate | Depends | Tests |
+|----|-------|-------|---|------|---------|-------|
+| SPINE-016 | BYOC provision smoke (AWS + Railway dry-run) | Ops | P0 | G6 | SPINE-012 | `tools/byoc/` integration test |
+| SPINE-017 | Multi-arch Docker publish pipeline | Ops | P0 | G6 | SPINE-002 | `.github/workflows/docker-build.yml` |
+| SPINE-018 | All vault paths real-values audit (not InMemory) | Security | P0 | G6 | SPINE-016 | `bash tools/audit-secrets.sh` |
+| SPINE-019 | Timed DR drill RTO ≤ 30m | Ops | P1 | G6 | SPINE-012 | `tools/dr-test.sh` timed run |
+| SPINE-020 | Design partner onboarding E2E (no founder) | Test | P0 | G5 | SPINE-015 | V1 checklist §6 |
 
 ---
 
@@ -54,6 +79,13 @@
 - [x] **SPINE-001** Local dev stack + smoke contract (Sprint 0, 2026-06-19)
 - [x] **SPINE-002** CI pipeline main workflow (Sprint 0, 2026-06-19)
 - [x] **SPINE-003** Hub project route unit tests (Sprint 0, 2026-06-19)
+- [x] **D2-1** Auditor runner + Cite-or-Refuse (pre-Sprint 1, in tree)
+- [x] **D2-2** Decision ledger IO on conductor/auditor (pre-Sprint 1, in tree)
+- [x] **D2-3** `record_instinct` in `complete_directive` (pre-Sprint 1, in tree)
+- [x] **D2-4** Phase watcher tail rules (2026-06-19, `c5d806b`)
+- [x] **D2-5** `operate_runner.py` minimal 8-plane heartbeat (pre-Sprint 1, in tree)
+- [x] **D2-6** Product role in `_ROLE_CONFIG` (pre-Sprint 1, in tree)
+- [x] **D2-7** Conductor hygiene gate (pre-Sprint 1, in tree)
 
 ---
 
@@ -61,4 +93,6 @@
 
 | ID | Title | Notes |
 |----|-------|-------|
-| | | |
+| SPINE-ICE-01 | Federation hub-to-hub operate events | After Smart Spine loop closed |
+| SPINE-ICE-02 | Voice / mobile v1.1+ | `V1_SHIP_CHECKLIST.md` §8 |
+| SPINE-ICE-03 | Full Grafana observability stack | H-OBS-STACK |

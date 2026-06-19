@@ -276,6 +276,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     briefing_task: asyncio.Task[None] | None = None
     instinct_promotion_stop: asyncio.Event | None = None
     instinct_promotion_task: asyncio.Task[None] | None = None
+    role_worker_stop: asyncio.Event | None = None
+    role_worker_task: asyncio.Task[None] | None = None
     try:
         from shared.runtime.phase_watcher import (  # noqa: PLC0415
             run_phase_watcher,
@@ -317,6 +319,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception as exc:  # noqa: BLE001
         logger.warning("instinct_promotion_loop_start_failed", extra={"error": str(exc)})
 
+    try:
+        from shared.runtime.role_worker import (  # noqa: PLC0415
+            run_role_worker,
+            worker_enabled,
+        )
+
+        if ok and worker_enabled():
+            role_worker_stop = asyncio.Event()
+            role_worker_task = asyncio.create_task(run_role_worker(role_worker_stop))
+            logger.info("role_worker_task_started")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("role_worker_start_failed", extra={"error": str(exc)})
+
     if ok:
         try:
             from shared.api.routes._project_recovery import (  # noqa: PLC0415
@@ -356,6 +371,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 await watcher_task
             except Exception:  # noqa: BLE001
                 logger.warning("phase_watcher_task_stop_failed")
+        if role_worker_stop is not None and role_worker_task is not None:
+            role_worker_stop.set()
+            try:
+                await role_worker_task
+            except Exception:  # noqa: BLE001
+                logger.warning("role_worker_task_stop_failed")
         if remote_mcp_client is not None:
             try:
                 await remote_mcp_client.aclose()

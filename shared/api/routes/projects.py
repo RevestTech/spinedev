@@ -591,6 +591,7 @@ _MD_ARTIFACT_KEYS = frozenset({
     "code_intro_md",
     "code_review_md",
     "qa_md",
+    "qa_execution_md",
     "release_gate_md",
 })
 
