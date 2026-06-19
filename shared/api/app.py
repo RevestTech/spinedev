@@ -274,6 +274,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     watcher_task: asyncio.Task[None] | None = None
     briefing_stop: asyncio.Event | None = None
     briefing_task: asyncio.Task[None] | None = None
+    instinct_promotion_stop: asyncio.Event | None = None
+    instinct_promotion_task: asyncio.Task[None] | None = None
     try:
         from shared.runtime.phase_watcher import (  # noqa: PLC0415
             run_phase_watcher,
@@ -299,6 +301,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             logger.info("master_briefing_task_started")
     except Exception as exc:  # noqa: BLE001
         logger.warning("master_briefing_start_failed", extra={"error": str(exc)})
+
+    try:
+        from shared.runtime.instinct_promotion_loop import (  # noqa: PLC0415
+            promotion_loop_enabled,
+            run_instinct_promotion_loop,
+        )
+
+        if ok and promotion_loop_enabled():
+            instinct_promotion_stop = asyncio.Event()
+            instinct_promotion_task = asyncio.create_task(
+                run_instinct_promotion_loop(instinct_promotion_stop),
+            )
+            logger.info("instinct_promotion_loop_task_started")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("instinct_promotion_loop_start_failed", extra={"error": str(exc)})
 
     if ok:
         try:
@@ -327,6 +344,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 await briefing_task
             except Exception:  # noqa: BLE001
                 logger.warning("master_briefing_task_stop_failed")
+        if instinct_promotion_stop is not None and instinct_promotion_task is not None:
+            instinct_promotion_stop.set()
+            try:
+                await instinct_promotion_task
+            except Exception:  # noqa: BLE001
+                logger.warning("instinct_promotion_loop_task_stop_failed")
         if watcher_stop is not None and watcher_task is not None:
             watcher_stop.set()
             try:
