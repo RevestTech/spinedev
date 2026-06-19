@@ -32,7 +32,7 @@ import importlib
 import pytest
 from pydantic import BaseModel
 
-EXPECTED_TOOL_COUNT: int = 55
+EXPECTED_TOOL_COUNT: int = 56
 
 EXPECTED_TOOLS_BY_MODULE: dict[str, set[str]] = {
     "shared.mcp.tools.orchestrator": {
@@ -111,6 +111,7 @@ EXPECTED_TOOLS_BY_MODULE: dict[str, set[str]] = {
         "integrations_test_connection",
         "integrations_configure",
     },
+    "shared.mcp.tools.role_chat": {"role_chat"},
 }
 
 

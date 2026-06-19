@@ -8,14 +8,14 @@ acts on the user's behalf, plus the user's typed message.
 Routing:
 
 1. Validate the role name exists in ``shared.charters``.
-2. Resolve the charter text (Wave 2 substrate).
-3. Dispatch via MCP (in-process for Wave 3 part 1; remote-MCP federation
-   in Wave 3 part 2) to the role's underlying LLM tool.
+2. Resolve the charter text from ``shared/charters/<role>.md``.
+3. Dispatch via MCP ``role_chat`` tool → ``shared.llm``.
 4. Audit the call so the conversation is hash-chained in
    ``spine_audit.audit_event``.
 
-Wave 3 part 1 returns a synchronous reply; streaming variant lands in
-Wave 3 part 2 with the SPA chat panel.
+In ``SPINE_HUB_DEV=1``, a deterministic stub is returned only when no
+LLM API key is configured; otherwise the live charter-backed reply is
+used.
 
 Dependencies: ``fastapi``, ``pydantic`` (already required).
 """
@@ -23,7 +23,9 @@ Dependencies: ``fastapi``, ``pydantic`` (already required).
 from __future__ import annotations
 
 import logging
+import os
 import uuid
+from pathlib import Path
 from typing import Annotated, Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -39,6 +41,8 @@ router = APIRouter(prefix="/api/v2/role-chat", tags=["role-chat"])
 # Min/max input lengths — tight enough to bound LLM cost, loose enough
 # that "draft the standup summary" fits.
 _MAX_MESSAGE_LEN = 8_000
+
+_CHARTERS_DIR = Path(__file__).resolve().parents[2] / "charters"
 
 
 class RoleChatRequest(BaseModel):
@@ -76,18 +80,46 @@ _KNOWN_ROLES: frozenset[str] = frozenset(
 )
 
 
-def _resolve_charter(role: str) -> str:
-    """Fetch the charter text for ``role``.
+def _load_charter(role: str) -> str:
+    """Fetch charter markdown for ``role`` from ``shared/charters/``."""
+    path = _CHARTERS_DIR / f"{role}.md"
+    if not path.exists():
+        raise FileNotFoundError(f"charter not found: {path}")
+    return path.read_text(encoding="utf-8")
 
-    Wave 3 part 1: stub returns a fixed system prompt referencing the
-    role name. Wave 2's ``shared.charters`` package will swap this for
-    a real lookup. The stub keeps the call path testable end-to-end
-    without depending on filesystem layout.
-    """
-    return (
-        f"You are the Spine `{role}` role. Respond in the charter's voice, "
-        "citing standards when claims are made (per cite-or-refuse, #12)."
+
+def _is_dev_mode() -> bool:
+    return os.environ.get("SPINE_HUB_DEV") == "1"
+
+
+def _llm_key_available() -> bool:
+    """True when an Anthropic or OpenAI key is present (env or vault)."""
+    for env_name in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY"):
+        val = os.environ.get(env_name, "").strip()
+        if val and not val.lower().startswith("placeholder"):
+            return True
+    try:
+        from shared.secrets import get_default_adapter  # noqa: PLC0415
+
+        adapter = get_default_adapter()
+        for path in ("llm/anthropic_api_key", "llm/openai_api_key"):
+            try:
+                secret = adapter.get_secret(path)
+            except Exception:  # noqa: BLE001
+                continue
+            if secret and str(secret).strip() and not str(secret).lower().startswith("placeholder"):
+                return True
+    except Exception:  # noqa: BLE001
+        pass
+    return False
+
+
+def _stub_reply(role: str, message: str) -> tuple[str, dict[str, Any]]:
+    reply = (
+        f"[{role} placeholder] received {len(message)} chars. "
+        "Set ANTHROPIC_API_KEY (or OPENAI_API_KEY) for live replies in dev mode."
     )
+    return reply, {"stub": True}
 
 
 @router.post("", response_model=RoleChatResponse, status_code=status.HTTP_200_OK)
@@ -106,28 +138,46 @@ async def role_chat(
                 "known": sorted(_KNOWN_ROLES),
             },
         )
-    charter = _resolve_charter(body.role)
+
+    try:
+        charter = _load_charter(body.role)
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"error_code": "charter_missing", "message": str(exc)},
+        ) from exc
+
     actor = actor_label(user)
 
-    # Dispatch via MCP. The tool name is conventional ("role_chat"); the
-    # underlying tool wires to ``shared.llm`` and will be registered in
-    # Wave 3 part 2's ``shared/mcp/tools/role_chat.py``. Until then we
-    # return a deterministic stub so the SPA panel can be built end-to-end.
-    try:
-        resp = mcp.call(
-            "role_chat",
-            {"role": body.role, "system": charter, "message": body.message},
-        )
-        reply = str(resp.get("reply", ""))
-        metadata = dict(resp.get("metadata") or {})
-    except KeyError:
-        # Tool not yet registered — return a deterministic placeholder so
-        # the panel renders + can be E2E-tested without an LLM bill.
-        reply = (
-            f"[{body.role} placeholder] received {len(body.message)} chars. "
-            "Wave 3 part 2 wires the live LLM tool."
-        )
-        metadata = {"stub": True}
+    if _is_dev_mode() and not _llm_key_available():
+        reply, metadata = _stub_reply(body.role, body.message)
+    else:
+        try:
+            resp = mcp.call(
+                "role_chat",
+                {"role": body.role, "system": charter, "message": body.message},
+            )
+        except KeyError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={"error_code": "mcp_tool_missing", "message": str(exc)},
+            ) from exc
+
+        if resp.get("status") == "error":
+            err = resp.get("error") or {}
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail={
+                    "error_code": err.get("code", "llm_error"),
+                    "message": err.get("message", "role_chat tool failed"),
+                },
+            )
+
+        data = (resp or {}).get("data") or {}
+        reply = str(data.get("reply", ""))
+        metadata = dict(data.get("metadata") or {})
+        if "stub" not in metadata:
+            metadata["stub"] = False
 
     correlation = uuid.UUID(body.correlation_id) if body.correlation_id else uuid.uuid4()
     rec = AuditRecord(
