@@ -100,3 +100,4 @@ Full-mode dogfood (Hub required): `bash tools/spine-on-spine.sh`
 | P7 | Charter evals in verify-wave | **Done** |
 | P8 | Automated audit-wave scanners (`spine harness audit`) | **Done** |
 | P9 | Charter eval fixtures for green verify-wave offline | **Done** |
+| P10 | Loop-bridge tests + sprint-close auto-audit + sentinel log redirect | **Done** |

@@ -56,17 +56,22 @@ _lb_register() {
   printf '%s\n' "${pid}" > "$(_lb_pid_file "${purpose}")"
 }
 
+_lb_sentinel_log() {
+  printf '%s/sentinel.log\n' "$(_harness_loops_dir)"
+}
+
 _lb_start_fixed_loop() {
   local purpose="$1" seconds="$2"
   local sentinel="AGENT_LOOP_WAKE_harness_${purpose}"
-  local prompt
+  local prompt log
   prompt="$(_skill_prompt_for_mode "${LB_MODE}")"
+  log="$(_lb_sentinel_log)"
   (
     while true; do
       sleep "${seconds}"
       printf '%s {"prompt":"%s"}\n' "${sentinel}" "${prompt}"
     done
-  ) &
+  ) >>"${log}" 2>&1 &
   local pid=$!
   _lb_register "${pid}" "${purpose}" "${sentinel}" "${seconds}"
   echo "loop-bridge: fixed loop pid=${pid} interval=${seconds}s sentinel=${sentinel}"
@@ -76,8 +81,9 @@ _lb_start_fixed_loop() {
 _lb_start_event_watcher() {
   local purpose="git"
   local sentinel="AGENT_LOOP_WAKE_harness_git"
-  local prompt
+  local prompt log
   prompt="$(_skill_prompt_for_mode "${LB_MODE}")"
+  log="$(_lb_sentinel_log)"
   (
     local last=""
     while true; do
@@ -91,7 +97,7 @@ _lb_start_event_watcher() {
         last="${head}"
       fi
     done
-  ) &
+  ) >>"${log}" 2>&1 &
   local pid=$!
   _lb_register "${pid}" "${purpose}" "${sentinel}"
   echo "loop-bridge: git watcher pid=${pid} sentinel=${sentinel}"
@@ -101,14 +107,15 @@ _lb_start_dynamic_heartbeat() {
   local purpose="heartbeat"
   local seconds="${1:-1800}"
   local sentinel="AGENT_LOOP_WAKE_harness_heartbeat"
-  local prompt
+  local prompt log
   prompt="$(_skill_prompt_for_mode "${LB_MODE}")"
+  log="$(_lb_sentinel_log)"
   (
     while true; do
       sleep "${seconds}"
       printf '%s {"prompt":"%s"}\n' "${sentinel}" "${prompt}"
     done
-  ) &
+  ) >>"${log}" 2>&1 &
   local pid=$!
   _lb_register "${pid}" "${purpose}" "${sentinel}" "${seconds}"
   echo "loop-bridge: heartbeat pid=${pid} interval=${seconds}s sentinel=${sentinel}"

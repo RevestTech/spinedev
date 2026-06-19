@@ -106,8 +106,10 @@ _cmd_start() {
         --interval 5m
       ;;
     sprint-close)
-      echo "harness: sprint-close armed — run audit-wave skill (Phase 1) via foreground agent"
-      echo "harness: skill → tools/harness/skills/harness-audit-wave/SKILL.md"
+      echo "harness: sprint-close Phase 1 — running audit-wave ..."
+      _cmd_audit
+      echo "harness: audit complete — run harness-fix-wave skill for HIGH/CRITICAL findings"
+      echo "harness: skill → tools/harness/skills/harness-fix-wave/SKILL.md"
       ;;
     bootstrap)
       echo "harness: bootstrap — run orchestrator skill once, then: spine-harness start watch"

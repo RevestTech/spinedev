@@ -9,7 +9,19 @@
 
 ---
 
-## Where we left off (2026-06-02)
+## Where we left off (2026-06-19)
+
+**Harness Lite P10 done:** loop-bridge integration tests (4), sprint-close auto-runs audit,
+background sentinel ticks log to `.spine/harness/loops/sentinel.log`.
+
+**SPA-HANG:** Committed (`91db96e`). Playwright regression **3/3 pass** (2026-06-19):
+`e2e/project-workspace-hang.spec.ts`, `e2e/booger-workspace.spec.ts`.
+
+**G0 human sign-off** still pending — PO + Eng lead in `todo/gates/G0-charter.md`.
+
+---
+
+## Where we left off (2026-06-02) — historical
 
 **Primary work this session:** Fixed the Hub SPA **project workspace page hang** (task **SPA-HANG**). User confirmed **“ok now it works”** after staged boot landed.
 
