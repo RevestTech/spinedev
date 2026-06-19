@@ -14,15 +14,31 @@ Supported actions
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
-from devops.planes.base import ControlPlane, PlaneName, utcnow_iso
+from devops.planes.base import (
+    ControlPlane,
+    PlaneName,
+    PlaneStatus,
+    _probe_hub_healthz_sync,
+    utcnow_iso,
+)
 
 
 class InfrastructureControlPlane(ControlPlane):
     """IaC plane — Terraform / Pulumi scaffold."""
 
     name: PlaneName = "infrastructure"
+
+    async def status(self, project_id: str | None = None) -> PlaneStatus:
+        ok, detail = await asyncio.to_thread(_probe_hub_healthz_sync)
+        return PlaneStatus(
+            plane_name=self.name,
+            project_id=project_id,
+            status="active" if ok else "error",
+            details={"probe": "hub_healthz", "detail": detail},
+        )
 
     @classmethod
     def _supported_actions(cls) -> tuple[str, ...]:

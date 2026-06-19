@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
@@ -95,3 +96,56 @@ def test_plane_subset_honoured() -> None:
     )
     assert response.status == "ok"
     assert response.data["operate_report"]["plane_count"] == 2
+
+
+@patch("devops.planes.database._probe_postgres_sync", return_value=("active", "SELECT 1 ok"))
+@patch("devops.planes.monitoring._probe_hub_healthz_sync", return_value=(True, "http://localhost:8090/healthz"))
+@patch("devops.planes.infrastructure._probe_hub_healthz_sync", return_value=(True, "http://localhost:8090/healthz"))
+def test_probed_planes_active_when_checks_pass(
+    _mock_infra: Any,
+    _mock_monitoring: Any,
+    _mock_pg: Any,
+) -> None:
+    response = run_operate(
+        _project(),
+        plane_names=("infrastructure", "monitoring", "database"),
+    )
+    assert response.status == "ok"
+    planes = {p["plane"]: p for p in response.data["operate_report"]["planes"]}
+    assert planes["infrastructure"]["status"] == "active"
+    assert planes["monitoring"]["status"] == "active"
+    assert planes["database"]["status"] == "active"
+    assert planes["infrastructure"]["metadata"]["details"]["probe"] == "hub_healthz"
+    assert planes["database"]["metadata"]["details"]["probe"] == "postgres"
+
+
+@patch("devops.planes.database._probe_postgres_sync", return_value=("error", "Connection refused"))
+@patch("devops.planes.monitoring._probe_hub_healthz_sync", return_value=(False, "URLError: refused"))
+@patch("devops.planes.infrastructure._probe_hub_healthz_sync", return_value=(False, "URLError: refused"))
+def test_probe_failures_yield_warning_fail_soft(
+    _mock_infra: Any,
+    _mock_monitoring: Any,
+    _mock_pg: Any,
+) -> None:
+    response = run_operate(
+        _project(),
+        plane_names=("infrastructure", "monitoring", "database"),
+    )
+    assert response.status == "warning"
+    assert "operate_started_at" in response.data
+    planes = {p["plane"]: p for p in response.data["operate_report"]["planes"]}
+    assert planes["infrastructure"]["status"] == "error"
+    assert planes["monitoring"]["status"] == "error"
+    assert planes["database"]["status"] == "error"
+
+
+@patch("devops.planes.infrastructure._probe_hub_healthz_sync", return_value=(True, "http://localhost:8090/healthz"))
+def test_stub_planes_remain_unknown_without_probes(_mock_hub: Any) -> None:
+    response = run_operate(
+        _project(),
+        plane_names=("deployment", "alerting"),
+    )
+    assert response.status == "ok"
+    planes = {p["plane"]: p for p in response.data["operate_report"]["planes"]}
+    assert planes["deployment"]["status"] == "unknown"
+    assert planes["alerting"]["status"] == "unknown"

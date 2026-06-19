@@ -39,6 +39,8 @@ import json
 import logging
 import os
 import subprocess
+import urllib.error
+import urllib.request
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from typing import Any, ClassVar, Literal
@@ -128,6 +130,70 @@ def _db_url() -> str | None:
     """Return ``SPINE_DB_URL`` or None — DB writes are best-effort."""
     url = os.environ.get("SPINE_DB_URL", "").strip()
     return url or None
+
+
+def _hub_healthz_url() -> str:
+    """Hub liveness URL for monitoring/infrastructure plane probes."""
+    base = (
+        os.environ.get("SPINE_HUB_URL", "").strip()
+        or os.environ.get("BASE", "").strip()
+        or "http://localhost:8090"
+    )
+    return f"{base.rstrip('/')}/healthz"
+
+
+def _probe_hub_healthz_sync(*, timeout_s: float = 5.0) -> tuple[bool, str]:
+    """Return ``(ok, detail)`` after GET ``/healthz``."""
+    url = _hub_healthz_url()
+    try:
+        with urllib.request.urlopen(url, timeout=timeout_s) as resp:
+            if resp.status != 200:
+                return False, f"HTTP {resp.status} from {url}"
+            return True, url
+    except urllib.error.HTTPError as exc:
+        return False, f"HTTP {exc.code} from {url}"
+    except Exception as exc:  # noqa: BLE001
+        return False, f"{type(exc).__name__}: {exc}"
+
+
+def _probe_postgres_sync() -> tuple[Literal["active", "error", "unknown"], str]:
+    """Return plane status + detail for the database control plane.
+
+    When ``SPINE_DB_URL`` is set, run ``SELECT 1``. Otherwise fall back to
+    checking whether the local ``spine-hub-postgres`` container is running.
+    """
+    url = _db_url()
+    if url:
+        try:
+            proc = subprocess.run(
+                ["psql", url, "-At", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-c", "SELECT 1"],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if proc.stdout.strip() == "1":
+                return "active", "SELECT 1 ok"
+            return "error", f"unexpected SELECT 1 result: {proc.stdout.strip()!r}"
+        except Exception as exc:  # noqa: BLE001
+            return "error", f"{type(exc).__name__}: {exc}"
+    try:
+        proc = subprocess.run(
+            [
+                "docker", "ps",
+                "--filter", "name=^/spine-hub-postgres$",
+                "--format", "{{.Names}}",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return "unknown", f"postgres probe skipped: {exc}"
+    if proc.returncode == 0 and proc.stdout.strip() == "spine-hub-postgres":
+        return "active", "spine-hub-postgres container running"
+    return "unknown", "no SPINE_DB_URL and spine-hub-postgres not running"
 
 
 def _psql(sql: str, params_json: str | None = None) -> str:

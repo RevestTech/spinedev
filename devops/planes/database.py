@@ -14,15 +14,31 @@ Supported actions
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
-from devops.planes.base import ControlPlane, PlaneName, utcnow_iso
+from devops.planes.base import (
+    ControlPlane,
+    PlaneName,
+    PlaneStatus,
+    _probe_postgres_sync,
+    utcnow_iso,
+)
 
 
 class DatabaseControlPlane(ControlPlane):
     """DB ops plane — Flyway / backup / restore-test scaffold."""
 
     name: PlaneName = "database"
+
+    async def status(self, project_id: str | None = None) -> PlaneStatus:
+        status_str, detail = await asyncio.to_thread(_probe_postgres_sync)
+        return PlaneStatus(
+            plane_name=self.name,
+            project_id=project_id,
+            status=status_str,
+            details={"probe": "postgres", "detail": detail},
+        )
 
     @classmethod
     def _supported_actions(cls) -> tuple[str, ...]:

@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import os
 import unittest
+from unittest.mock import patch
 
 from devops.planes import (
     AlertingControlPlane,
@@ -133,10 +134,15 @@ class PlaneInvokeStubTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.status, "stub_implementation")
 
     async def test_status_call_returns_planestatus(self) -> None:
-        plane = MonitoringControlPlane()
-        status = await plane.status(project_id=None)
+        with patch(
+            "devops.planes.monitoring._probe_hub_healthz_sync",
+            return_value=(True, "http://localhost:8090/healthz"),
+        ):
+            plane = MonitoringControlPlane()
+            status = await plane.status(project_id=None)
         self.assertIsInstance(status, PlaneStatus)
         self.assertEqual(status.plane_name, "monitoring")
+        self.assertEqual(status.status, "active")
 
 
 if __name__ == "__main__":  # pragma: no cover
