@@ -2,7 +2,7 @@
 
 **Audit date:** YYYY-MM-DD  
 **Auditor:**  
-**Prior audit:** [REALITY-AUDIT-PRIOR-DATE.md](./REALITY-AUDIT-PRIOR-DATE.md) (or N/A)
+**Prior audit:** `REALITY-AUDIT-PRIOR-DATE.md` (prior sprint artifact, or N/A)
 
 ## Method
 

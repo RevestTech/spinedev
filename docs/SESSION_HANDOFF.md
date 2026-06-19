@@ -1,265 +1,156 @@
-# Session handoff — 2026-05-29
+# Session handoff — 2026-06-02
 
-> **Resume here.** Authoritative live state for the current session.
-> Updated continuously per [`spine_continuous_handoff` memory rule](../../.claude/projects/-Users-khashsarrafi-Projects-Apps-SpineDevelopment/memory/feedback_continuous_handoff.md).
+> **Resume here.** Authoritative live state when you return.
 >
-> **Operational queue:** [`MASTER_TODO.md`](MASTER_TODO.md) — current task table + statuses.
-> **Strategic plan:** [`ECC_BORROWS.md`](ECC_BORROWS.md) — 9 borrows from `affaan-m/ecc` adapted into Spine.
-> **Design decisions:** [`V3_DESIGN_DECISIONS.md`](V3_DESIGN_DECISIONS.md) — `#7a`/`#7b`/`#12a`/`#30a` ratified this session.
-> **Older context:** prior session (2026-05-23/24) notes archived inline below.
+> **Operational queue:** [`MASTER_TODO.md`](MASTER_TODO.md) (task table — update when priorities shift)
+> **SPA hang fix (deep dive):** [`SPA_PROJECT_WORKSPACE_HANG.md`](SPA_PROJECT_WORKSPACE_HANG.md)
+> **Sprint 0 / G0 gate:** [`todo/gates/G0-charter.md`](../todo/gates/G0-charter.md)
+> **fc-sdlc status:** [`fc-sdlc-STATUS.md`](fc-sdlc-STATUS.md)
 
 ---
 
-## Where we left off (2026-05-29, current session)
+## Where we left off (2026-06-02)
 
-User asked Claude to look at `affaan-m/ecc` and identify what to borrow for
-Spine. Outcome: 9 borrows identified, 4 V3 ratifications landed, P0s
-implemented and tested. User reframed priorities: **Spine itself is the
-product; Booger is disposable dogfood** — don't anchor the queue on Booger
-unblock.
+**Primary work this session:** Fixed the Hub SPA **project workspace page hang** (task **SPA-HANG**). User confirmed **“ok now it works”** after staged boot landed.
 
-**Critical reminder from user:** keep this file + `MASTER_TODO.md` updated
-continuously so an IDE crash doesn't lose progress. See
-[`feedback_continuous_handoff`](../../.claude/projects/-Users-khashsarrafi-Projects-Apps-SpineDevelopment/memory/feedback_continuous_handoff.md).
+**Not finished:** SPA-HANG changes are **uncommitted**. G0 human sign-off is still pending. Sprint 0 golden-path project for manual SPA testing may still be stuck at `build_in_progress`.
 
 ---
 
-## Done this session (uncommitted)
+## SPA-HANG — fixed, uncommitted
 
-### Docs
-- `docs/ECC_BORROWS.md` — new design note, 9 borrows with target subsystem + ratification need
-- `docs/V3_DESIGN_DECISIONS.md` — header note updated; quick index extended (`#7a`, `#7b`, `#12a`, `#30a`); four annotation sub-sections added inline
+### Symptom (was)
+- `http://localhost:8090/spa/projects/<id>` → Chrome **“Page Unresponsive”**
+- Pipeline stuck on **“Loading actions”** despite fast API (`GET .../recovery` ~150ms)
 
-### P0 — B1 (recursive decision ledger + promotion gate)
-- `shared/audit/decision_ledger.py` — new module: `LedgerEntry` (hash-chained JSONL), `PromotionGate.evaluate()` (default-deny; tiers paper/preview/internal/production/destructive), `DecisionLedger` API (append / tail / iter / verify_chain), shadow `AuditRecord` for chain-of-trust
-- `shared/audit/tests/__init__.py` — new
-- `shared/audit/tests/test_decision_ledger.py` — 14 tests covering append + hash chain + tamper detection + per-tier gate + ID validation + `SPINE_DECISION_LEDGER_ROOT` env override
-- Storage default: `~/.spine/decision_ledger/<project_id>/<run_id>.jsonl`
+### Root cause
+Client **main-thread starvation**: layout SSE + recovery bind + **terminal history bulk load** + synchronous `activity.set()` all fired together on first paint. Playwright proved terminal fetch + SSE overlap caused the hang (not slow backend).
 
-### P0 — B2 (MCP tool response envelope)
-- `shared/mcp/schemas/envelopes.py`:
-  - `ToolStatus` extended → `ok | warning | error | refusal | stub_implementation`
-  - New `Artifact` model + `ArtifactType` literal (`file_path | kg_node | run_id | audit_hash | url | ledger_entry`)
-  - `ToolResponse` extended with `summary`, `next_actions`, `artifacts` (all additive — backcompat preserved)
-  - `check_envelope_convention()` — soft validator returning violation list
-- `shared/mcp/schemas/__init__.py` — exports updated
+### Fix (staged boot)
+1. Layout skips `decisions.connect()` on `/projects/{uuid}`
+2. Project page disconnects SSE on mount
+3. Await recovery GET → `wsPipelineBootReady` → mount runtime
+4. SSE reconnect +600ms; terminal load +1200ms (pipeline tab only)
+5. Activity log: manual **“Load prior activity”**; batched non–role_log SSE updates
 
-### P1 — B5 (spine status --markdown handoff generator)
-- `orchestrator/cli/__init__.py` — new
-- `orchestrator/cli/status_markdown.py` — new Python module: `collect_state` (git / db / ledger / smoke collectors with fail-soft degradation), `render_markdown` (handoff-shaped output), `compute_exit_code` (0 green / 1 warnings / 2 failures), `main` entry point
-- `orchestrator/cli/tests/__init__.py` + `test_status_markdown.py` — 17 tests covering renderer sections, exit codes, collector injection, ledger walk, smoke parser
-- `orchestrator/bin/spine` — `cmd_status` extended: `--markdown`, `--write PATH`, `--exit-code`, `--ledger-root R`. Default (terse phase-count) preserved. Help text updated.
-- Env: `SPINE_DECISION_LEDGER_ROOT` documented
+Full detail: [`SPA_PROJECT_WORKSPACE_HANG.md`](SPA_PROJECT_WORKSPACE_HANG.md)
 
-### P1 — B4 (bounded iterative retrieval)
-- `shared/runtime/bounded_retrieval.py` — new module: `Need` / `ResolvedNeed` / `Seed` (immutable; `augment()` returns a new instance) / `RetrievalOutcome` / `run_bounded_retrieval()` (4-phase loop, default `max_cycles=3`, emits `cycle_exhausted` warning when bound is hit)
-- Wire encoding: roles signal needs via B2 envelope's `next_actions` entries prefixed with `need:` (e.g. `need:kg_node:auth-design|context for AuthN`). Non-need lines pass through unchanged.
-- Resolver-exception safe: a raising resolver records `ResolvedNeed(success=False, error=...)` and the loop continues — the role can decide whether to refuse (per #12) or carry on
-- Provider-agnostic: the module never calls an LLM; `role_callable` is supplied by the caller (Claude Code / Cursor / charter daemon)
-- `shared/runtime/tests/test_bounded_retrieval.py` — 11 tests covering encoding round-trip, immutability, loop bound, resolver failure, accumulation across cycles
-- **Not yet wired into `build_dispatcher.py`** — the existing fat-brief path stays the default for backward compatibility; B4 is the opt-in contract every dispatcher (build / plan / verify) can compose with
+### Verify before commit
+```bash
+bash tools/hub-up.sh --rebuild
+cd shared/ui/spa && npm test                                    # 105 pass
+cd shared/ui/spa && npx playwright test \
+  e2e/project-workspace-hang.spec.ts e2e/booger-workspace.spec.ts   # 3 pass
+```
 
-### P1 — B3 (instinct schema for Smart Spine #27)
-- `learning/instinct.py` — new module: `Instinct` (confidence bounded to `[CONFIDENCE_FLOOR=0.3, CONFIDENCE_CEILING=0.9]`; fingerprint = SHA-256 of normalised `pattern + trigger`), `InstinctRecord` (observation with project/run/actor/audit_hash chain link), `InstinctStore` (per-`(project, run)` JSONL, thread-safe append), `check_promotion()` (aggregates across projects; default threshold = 2 distinct projects + avg conf ≥ 0.5), `promote_to_lesson_payload()` (bridges to existing `learning.contribute_lesson` so Tier 1b/2 promotion still routes through the existing consent + anonymizer wiring)
-- Storage: `~/.spine/instincts/<project_id>/<run_id>.jsonl` (mirrors B1 ledger shape); env override `SPINE_INSTINCT_ROOT`
-- `learning/tests/test_instinct.py` — 13 tests covering confidence bounds, fingerprint stability under whitespace/case, store round-trip, promotion thresholds (project count + avg confidence), payload bridge to lesson
-
-### P2 — B6 (pass@k eval contract for charter regressions)
-- `verify/charter_evals/__init__.py` — public surface
-- `verify/charter_evals/harness.py` — `CapabilityEval` (yaml-loadable), `EvalCriterion` (required/forbidden substrings), `run_capability_eval()` (N trials via injected `role_callable`), `pass_at_k()` (aggregate + meets_target boolean), `evaluate_charter()` (per-eval pass@k; overall fails on any regression — V3 #7a is a regression gate, not an average)
-- Default targets: `target_k=5`, `target_pass_rate=0.8`
-- Provider-agnostic; the harness never calls an LLM directly
-- `verify/charter_evals/tests/test_harness.py` — 12 tests covering criterion shapes, trial run + failed-criteria recording, role exception handling, pass@k thresholds, role/charter mismatch rejection
-
-### P2 — B7 (SPINE_HOOK_PROFILE runtime gating)
-- `shared/runtime/hook_profile.py` — Python helper: `active_profile()` / `disabled_hooks()` / `is_hook_active(name, minimum_profile=...)` / `explain(...)`. Profile levels: `minimal=1 < standard=2 < strict=3`. Env vars: `SPINE_HOOK_PROFILE` and `SPINE_DISABLED_HOOKS` (csv).
-- `tools/_hook_profile.sh` — bash counterpart with same semantics: `spine_hook_active_profile`, `spine_hook_is_active <name> [<min>]`, `spine_hook_explain`. Bash 3.2 safe.
-- `shared/runtime/tests/test_hook_profile.py` — 16 tests covering env defaults, case-insensitivity, profile-level gating, disabled override, invalid input
-
-### P2 — B8 (search-first contract in Engineer + Architect charters)
-- `shared/charters/engineer.md` — new section `## Pre-implementation contract (V3 #7b)` after Hard Rules: 4-step preflight (tool-availability / parallel search / adopt-extend-build matrix / cite or refuse). `build-custom` without citation is a refusal-class event under #12.
-- `shared/charters/architect.md` — same section adapted for ADR / TRD / interface-spec drafting (TOGAF Architecture Repository, prior ADRs, public reference architectures).
-- Exempts trivial fixes, typo corrections, rollback / revert ops.
-
-### P3 — B9 (Agentic-OS layer table in ARCHITECTURE.md)
-- `docs/ARCHITECTURE.md` — new sub-section `### Layer model` under §2 listing the 7-layer Spine runtime model (Kernel / Charters / Commands / Daemons / Workspace / Audit / Instincts) with `Lives in` paths and persistence posture. Adapted from ECC `agentic-os` skill.
-
-### Memory updates (auto-memory tree)
-- `spine_booger_disposable.md` — Booger is throwaway; Spine is the product
-- `ecc_borrows.md` — 9 borrows tracker
-- `feedback_continuous_handoff.md` — keep handoff/todo files updated continuously
-- `MEMORY.md` — index updated
-
----
-
-## Verification (current state)
-
-| Check | Result |
+### Test project (Playwright / manual)
+| Field | Value |
 |-------|--------|
-| `shared/audit/tests/test_decision_ledger.py` | **14 PASS** |
-| `shared/mcp/tests/` (full suite) | **66 PASS** |
-| `orchestrator/cli/tests/test_status_markdown.py` | **17 PASS** |
-| `shared/runtime/tests/test_bounded_retrieval.py` | **11 PASS** |
-| `learning/tests/test_instinct.py` | **13 PASS** |
-| `shared/runtime/tests/test_hook_profile.py` | **16 PASS** |
-| `verify/charter_evals/tests/test_harness.py` | **12 PASS** |
-| **Full session sweep (P0 + P1 + P2 + P3)** | **149 PASS** |
-| `spine status --markdown --write FILE --exit-code` (manual) | renders, writes, exits 1 (warnings, DB down) |
-| `tools/smoke-test.sh` (Hub down) | 35 PASS / 4 FAIL — all 4 are Postgres-container-not-running; pre-existing, not caused by these changes |
-| Git working tree | New + modified, **uncommitted** on `main` |
+| UUID | `3f2a6e0e-15a3-44cd-9bc1-c06880199342` |
+| Name | Sprint 0 verification walkthrough |
+| Phase | `build_in_progress` (stuck) |
+| Recovery actions | 5 (when API healthy) |
 
-Full smoke (99 PASS contract) requires Hub up — run `bash tools/hub-up.sh`
-then re-smoke before commit.
+If browser still hangs after code changes: **Cmd+Shift+R** + rebuild Hub (stale `/_app` bundle).
 
 ---
 
-## V3 ratifications landed
+## Git state (2026-06-02)
 
-| # | Theme | Source borrow |
-|---|-------|---------------|
-| `#7a` | Charters bind to pass@k regression evals when touched | B6 |
-| `#7b` | Engineer + Architect bind to `search-first` pre-implementation contract | B8 |
-| `#12a` | Recursive confidence ≠ live promotion; decision ledger + freshness/replay gates | B1 (implemented) |
-| `#30a` | Typed MCP envelope (status/summary/next_actions/artifacts); verify-class extends with citations | B2 (implemented) |
+```
+Branch: main (ahead of origin/main by 1 commit)
+Uncommitted: SPA-HANG fix + docs (see below)
+Untracked: .cursor/settings.json (do not commit unless intentional)
+```
 
----
+**Modified / new (SPA-HANG batch):**
+- `shared/ui/spa/src/routes/+layout.svelte`
+- `shared/ui/spa/src/routes/projects/[project_id]/+page.svelte`
+- `shared/ui/spa/src/lib/stores/projectWorkspace.ts`
+- `shared/ui/spa/src/lib/stores/decisions.ts`
+- `shared/ui/spa/src/lib/components/ProjectWorkspaceRuntime.svelte`
+- `shared/ui/spa/src/lib/components/ProjectPipelinePanel.svelte`
+- `shared/ui/spa/src/lib/components/PipelineActivityLog.svelte`
+- `shared/ui/spa/src/lib/stores/__tests__/projectWorkspace.test.ts`
+- `shared/ui/spa/e2e/booger-workspace.spec.ts`
+- `shared/ui/spa/e2e/project-workspace-hang.spec.ts` (new)
+- `docs/SPA_PROJECT_WORKSPACE_HANG.md` (new)
+- `docs/SPINE_MASTER.md`, `shared/ui/spa/README.md`
 
-## In progress
+**Suggested next commit message:**
+```
+fix(spa): staged boot to stop project workspace hang
 
-**Nothing in progress.** This session ran a **15-agent parallel batch** per `docs/PARALLEL_WORK_PLAN.md` after completing the borrow + follow-up waves. **326 tests pass; 6 new commits on origin/main from the batch (21 total this session).**
-
-15-agent batch outcomes:
-- **A1–A6 (six B10 layer checks):** L02 session_history, L04 distillation, L05 active_recall, L07 tool_execution, L08 tool_interpretation, L10 transport — all native checks landed under `verify/agent_audit/checks/`. 81 new tests across the six modules. `DEFAULT_CHECKS` wired; live audit on repo: overall=warning, **zero regressions**, six layers `instrumentation_pending` (waiting on signal-injection from runtime).
-- **B1 introspection (Agent B1):** `verify/agent_audit/introspection.py` — `IntrospectionTrace` + `build_introspection_trace()` for tracing one dispatch end-to-end. 12 tests.
-- **B2 Anthropic role callable (Agent B2):** `verify/charter_evals/anthropic_callable.py` — lazy SDK import, typed errors, API key by argument per V3 #9. 8 tests.
-- **C1/C2/C3 capability evals (3 agents):** qa + planner + auditor each got 3 starter evals. Loader recognises all 5 roles now (was engineer + architect only).
-- **D1 pgvector design (Agent D1):** `docs/PGVECTOR_KG_DESIGN.md` — V40 Flyway migration sketch, capability table, HNSW/IVFFlat fallback rubric.
-- **D2 operating-loop gap analysis (Agent D2):** `docs/OPERATING_LOOP_GAP.md` — 7-item P0 wiring slate dependency-ordered (auditor runner, decision-ledger writes, record_instinct hook, watcher rules, operate_runner, product_runner, hygiene gate).
-- **D3 Hub-up + smoke (Agent D3):** smoke is **99 PASS / 0 FAIL / 1 WARN / 0 SKIP / 3 INFO — exact CLAUDE.md contract**. Hub-up worked first try. `spine doctor` exits 1 due to vault env-loader needing the Day-0 wizard.
-- **E1 waste audit (Agent E1):** `docs/WASTE_AUDIT_2026-05-29.md` — 14 findings + Top 5 wins. Two monolith files flagged (`_post_ack.py` 2237 LOC, `kg.py` 1832 LOC); `shared/cost/*` and `shared/eval/*` have zero test coverage across 12 modules; 10 MCP tool modules still on pre-B2 envelope.
-
-**Key independent findings:**
-- L10 transport check (Agent A6) flagged that **SPA components don't render** `summary` / `next_actions` / `artifacts` yet — that's the real B2 transport gap and it was found by the audit, not by the user. Pairs with E1 finding #11.
-
-**Operating-loop slate — ALL 7 P0 ITEMS DONE (2026-05-30):**
-- ✅ **#1 auditor runner** — Cite-or-Refuse enforced in-process; the `not_implemented_in_runner` branch is dead.
-- ✅ **#2 decision-ledger writes** — Conductor + QA write at `_run_text_role` success; auditor writes on both refusal + verdict.
-- ✅ **#3 record_instinct hook** — `complete_directive` records on every success; all 8 runtimes inherit.
-- ✅ **#4 watcher rules** — `verify_approved → acceptance → released → operate` reachable end-to-end.
-- ✅ **#5 operate_runner** — 8 control planes fanned out; `operate_kickoff` rule fires once `deploy_result` lands.
-- ✅ **#6 product runner** — Charter-grounded PRD generation registered; `prd_md` produced for downstream roles.
-- ✅ **#7 hygiene gate** — Conductor refuses when `.spine/work/<uuid>/` carries uncleaned state.
-
-**Operating loop now runs end-to-end on a single project** from intake through operate, with all-AI dispatch, decision-ledger writes on every promotion-class role, Cite-or-Refuse enforced for verify-class roles, and Smart Spine instincts captured automatically.
-
-**Test totals:** **391 tests pass**; 29 commits on `origin/main` this session.
-
-**Loop validation 2026-05-30 (live Hub + real LLM):** Every slate item validated end-to-end on project `a81f7f2c-de77-480b-ac7d-76da78885d06` ("loop-validation-2026-05-30", id 48). LLM intake chat works (product role's SVPG discoverer discipline visible — refuses to draft PRD without substance). Planner produced `roadmap_md` in ~40s. Auditor runner produces refusal envelope when no evidence + verdict envelope with citations when evidence supplied. Both writes land in `~/.spine/decision_ledger/${PROJECT_UUID}/` with `chain_ok=True`. B5 `spine status --markdown` surfaces the new entries. Operate runner fans out cleanly. Full matrix in [`docs/LOOP_VALIDATION_2026-05-30.md`](LOOP_VALIDATION_2026-05-30.md).
-- D2 found that **auditor still returns `not_implemented_in_runner`** in `build/runtime/hub_role_runner.py` and the **decision ledger has zero writers** in production code. These are the two highest-leverage operating-loop fixes.
+Serialize recovery paint before SSE bind and terminal bulk load.
+Add Playwright regression and SPA_PROJECT_WORKSPACE_HANG.md.
+```
 
 ---
 
-## Reboot routine (~2 min)
+## Sprint 0 / G0 (broader context)
+
+| Item | Status |
+|------|--------|
+| Smoke `99 PASS / 0 FAIL` | Done (2026-06-01 evidence in G0 doc) |
+| `npm run sdlc:run-qa` | Pass |
+| §9 automated walkthrough → `released` | Done on project `65eed349-…` (2026-06-01) |
+| **G0 human sign-off** | **Pending** — PO + Eng lead names/dates in [`todo/gates/G0-charter.md`](../todo/gates/G0-charter.md) |
+| Hub SPA manual golden path | Optional after SPA-HANG; workspace page was the blocker |
+
+---
+
+## Next steps when you return (priority order)
+
+1. **Commit SPA-HANG** — run verify commands above, then commit (user must ask explicitly per git rules).
+2. **G0 sign-off** — fill Go + names in `todo/gates/G0-charter.md` if Sprint 0 scope is accepted.
+3. **Manual smoke** — open `http://localhost:8090/spa/projects/3f2a6e0e-…`, confirm recovery actions in ~2s, no tab freeze.
+4. **Optional follow-ups**
+   - Re-add Path A/B tabs with **lazy import only** (removed 2026-05-30; eager chunks caused freezes)
+   - Wire B2 envelope fields (`summary`, `next_actions`, `artifacts`) in SPA components (audit finding from 2026-05-29)
+   - Expand PM QA to full `pytest shared/` (G0 risk row)
+
+---
+
+## Do not regress (SPA-HANG contract)
+
+1. No layout `decisions.connect()` on project workspace URLs
+2. No eager `wsLoadTerminal` on activity-log mount
+3. No duplicate `wsLoadRecoveryNow` on runtime/recovery-controls mount
+4. Non–role_log SSE → `scheduleFrameCommit`, not sync `activity.set`
+5. `wsBind` only when `$wsPipelineBootReady`
+
+---
+
+## Reboot routine (~3 min)
 
 ```bash
 cd ~/Projects/Apps/SpineDevelopment
 
-# Sanity — uncommitted state from this session
-git status --short
-git diff --stat \
-  docs/ECC_BORROWS.md docs/V3_DESIGN_DECISIONS.md \
-  shared/audit/decision_ledger.py shared/mcp/schemas/envelopes.py \
-  orchestrator/cli/status_markdown.py orchestrator/bin/spine
+git status -sb
+git diff --stat shared/ui/spa docs/SPA_PROJECT_WORKSPACE_HANG.md
 
-# Re-run this session's tests (149 should pass)
-.venv/bin/python -m pytest \
-  shared/audit/tests \
-  shared/mcp/tests \
-  shared/runtime/tests/test_bounded_retrieval.py \
-  shared/runtime/tests/test_hook_profile.py \
-  orchestrator/cli/tests \
-  learning/tests/test_instinct.py \
-  verify/charter_evals/tests \
-  -q
+bash tools/hub-up.sh --rebuild
+bash tools/smoke-test.sh                    # target: 99 PASS / 0 FAIL
 
-# Try the new handoff generator
-bash orchestrator/bin/spine status --markdown --write /tmp/handoff.md --exit-code
-echo "exit=$?  (1 expected when Hub is down)"
+cd shared/ui/spa
+npm test
+npx playwright test e2e/project-workspace-hang.spec.ts e2e/booger-workspace.spec.ts
 
-# (Optional, when Hub is back up) full smoke
-bash tools/hub-up.sh
-bash tools/smoke-test.sh          # target: 99 PASS / 0 FAIL / 1 WARN / 0 SKIP / 3 INFO
+open 'http://localhost:8090/spa/projects/3f2a6e0e-15a3-44cd-9bc1-c06880199342'
 ```
 
----
-
-## Files touched this session
-
-```
-docs/ECC_BORROWS.md                                  # NEW — design note
-docs/V3_DESIGN_DECISIONS.md                          # MODIFIED — #7a/#7b/#12a/#30a annotations
-docs/SESSION_HANDOFF.md                              # THIS FILE
-docs/MASTER_TODO.md                                  # MODIFIED — live task table
-shared/audit/decision_ledger.py                      # NEW — B1
-shared/audit/tests/__init__.py                       # NEW
-shared/audit/tests/test_decision_ledger.py           # NEW — 14 tests
-shared/mcp/schemas/envelopes.py                      # MODIFIED — B2
-shared/mcp/schemas/__init__.py                       # MODIFIED — exports
-orchestrator/cli/__init__.py                         # NEW — B5
-orchestrator/cli/status_markdown.py                  # NEW — B5
-orchestrator/cli/tests/__init__.py                   # NEW
-orchestrator/cli/tests/test_status_markdown.py       # NEW — 17 tests
-orchestrator/bin/spine                               # MODIFIED — wires --markdown / --write / --exit-code
-shared/runtime/bounded_retrieval.py                  # NEW — B4
-shared/runtime/tests/test_bounded_retrieval.py       # NEW — 11 tests
-learning/instinct.py                                 # NEW — B3
-learning/tests/test_instinct.py                      # NEW — 13 tests
-verify/charter_evals/__init__.py                     # NEW — B6
-verify/charter_evals/harness.py                      # NEW — B6
-verify/charter_evals/tests/__init__.py               # NEW
-verify/charter_evals/tests/test_harness.py           # NEW — 12 tests
-shared/runtime/hook_profile.py                       # NEW — B7
-shared/runtime/tests/test_hook_profile.py            # NEW — 16 tests
-tools/_hook_profile.sh                               # NEW — B7 bash counterpart
-shared/charters/engineer.md                          # MODIFIED — B8 pre-implementation contract
-shared/charters/architect.md                         # MODIFIED — B8 pre-implementation contract
-docs/ARCHITECTURE.md                                 # MODIFIED — B9 layer model table
-
-# Auto-memory tree (outside repo)
-~/.claude/projects/.../memory/MEMORY.md              # MODIFIED — index
-~/.claude/projects/.../memory/spine_booger_disposable.md   # NEW
-~/.claude/projects/.../memory/ecc_borrows.md               # NEW
-~/.claude/projects/.../memory/feedback_continuous_handoff.md  # NEW
-```
+PM dashboard (if running): `http://localhost:5190`
 
 ---
 
-## Booger (downgraded to P3)
+## Prior sessions (archived pointers)
 
-Per user 2026-05-29: "booger is just a test application... we need the spine
-project to work." Booger is throwaway dogfood. State as of 2026-05-25 (from
-prior session's notes):
-
-| Field | Value |
-|-------|--------|
-| UUID | `c94d5f8c-5c7a-40a1-9da9-e25fcca63c88` |
-| Phase | `build_in_progress` |
-| Stuck | yes (`fix_loop_exhausted` + `no_pending_decisions`) |
-
-Do **not** treat Booger unblock as gating. If a Spine capability gap surfaces
-only by exercising Booger, fix the gap in `shared/`; don't ship Booger-only
-patches.
+| Session | Topic | Doc |
+|---------|--------|-----|
+| 2026-05-29 | ECC borrows B1–B10, operating loop P0 slate | git history of this file |
+| 2026-05-23/25 | Project workspace refactor, Booger e2e | `docs/OVERNIGHT_HANDOFF.md` |
+| 2026-06-01 | G0 evidence, fc-sdlc Sprint 0 | `docs/fc-sdlc-STATUS.md` |
 
 ---
 
-## Prior session (2026-05-23/25) — archived inline
-
-Project-scoped nav, intake transcript persistence, project CRUD, hung-site
-performance fixes, workspace runtime refactor (`projectWorkspace.ts`,
-`uiFrameScheduler.ts`, extracted leaf components), Playwright e2e for Booger
-workspace. SPA unit tests `60 PASS` at end of that session. Full detail kept
-in git history of this file before 2026-05-29.
-
----
-
-*Last updated: 2026-05-29 (late) — 10 ECC borrows (B1–B10) + 4 V3 ratifications + 8 follow-ups landed, committed, and pushed to origin/main. **225 tests pass; 15 new commits on origin/main.***
+*Last updated: 2026-06-02 — SPA-HANG fixed and verified; changes uncommitted; G0 sign-off pending.*

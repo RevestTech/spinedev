@@ -1,0 +1,5 @@
+audit.verdict_issued
+
+Current verdict references prior verdict_id=v-2026-05-14-007 via prior_audit_row_hash=sha256:deadbeef… and audit_chain_hash=sha256:feedface… per Hard Rule 4 hash-chain hygiene.
+
+Rollback for release_id=42: PASS-WITH-CAVEATS — DB migration caveat tracked; chain queryable by audited role.

@@ -47,7 +47,7 @@ resp="$(curl -sS -X POST "${HUB_URL}/api/v2/projects" \
 
 if [[ -z "${resp}" ]]; then
   echo "[spine-on-spine] Hub unreachable at ${HUB_URL}. Start Hub first:"
-  echo "  export ANTHROPIC_API_KEY='sk-ant-...'"
+  echo "  # Export ANTHROPIC_API_KEY from vault (see docs/HUB_OPERATIONS_GUIDE.md)"
   echo "  bash tools/hub-up.sh --rebuild"
   exit 1
 fi

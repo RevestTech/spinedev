@@ -3,10 +3,10 @@
 > **Pre-v3 document — preserved for historical context.** This file describes the host
 > requirements for the v1/v2 file-bus orchestration framework (running bash daemons on
 > macOS/Linux/WSL2). The v3 product is a containerized **Hub** with a different deployment shape
-> (per [`docs/V3_DESIGN_DECISIONS.md`](docs/V3_DESIGN_DECISIONS.md) **#17**). For current
-> deployment requirements see [`docs/DEPLOYMENT_SHAPES.md`](docs/DEPLOYMENT_SHAPES.md) and
-> [`docs/HUB_OPERATIONS_GUIDE.md`](docs/HUB_OPERATIONS_GUIDE.md); for launch readiness see
-> [`docs/V1_SHIP_CHECKLIST.md`](docs/V1_SHIP_CHECKLIST.md).
+> (per [`docs/V3_DESIGN_DECISIONS.md`](../V3_DESIGN_DECISIONS.md) **#17**). For current
+> deployment requirements see [`docs/DEPLOYMENT_SHAPES.md`](../DEPLOYMENT_SHAPES.md) and
+> [`docs/HUB_OPERATIONS_GUIDE.md`](../HUB_OPERATIONS_GUIDE.md); for launch readiness see
+> [`docs/V1_SHIP_CHECKLIST.md`](../V1_SHIP_CHECKLIST.md).
 
 What your computer needs to run SpineDevelopment.
 

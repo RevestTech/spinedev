@@ -1,0 +1,6 @@
+audit.refused
+
+verdict=refused
+refusal_reason: deploy.completed events absent for release_id=99 in window 2026-05-29T14:00Z — query returned empty set; cannot attest production deploy.
+
+Missing evidence: deploy.completed audit rows.

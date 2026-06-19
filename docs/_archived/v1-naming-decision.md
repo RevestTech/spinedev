@@ -1,13 +1,13 @@
 # Naming & Branding — Decision Record
 
 > **Naming / branding remains DEFERRED in the v3 product.** Per
-> [`V3_DESIGN_DECISIONS.md`](V3_DESIGN_DECISIONS.md) Deferred-items table ("Naming / branding —
+> [`V3_DESIGN_DECISIONS.md`](../V3_DESIGN_DECISIONS.md) Deferred-items table ("Naming / branding —
 > defer until positioning validated with first users") and **#26** (business-ops deferred until
 > product exists). The exploration below pre-dates the v3 lock and is preserved as historical
 > analysis. **Do not treat the recommendation as final** — the canonical name in the v3 build
 > remains the working name "Spine"; any rebrand decision is post-launch.
 
-> ADR-style decision doc for the project name and brand mark. Implements `STORY-5.1.3` in [`docs/BACKLOG.md`](BACKLOG.md). Status: **Proposed — pending user sign-off.**
+> ADR-style decision doc for the project name and brand mark. Implements `STORY-5.1.3` in [`todo/BACKLOG.md`](../../todo/BACKLOG.md). Status: **Proposed — pending user sign-off.**
 
 ---
 

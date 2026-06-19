@@ -6,6 +6,7 @@ import {
   wsFeed,
   wsRunState,
   wsRecovery,
+  wsRecoveryLoading,
   wsTerminal,
   __testQueueActivityEvent,
   __testSetWorkspaceActivityReady,
@@ -107,5 +108,11 @@ describe('projectWorkspace SSE batching', () => {
     __testFlushFrameCommits();
     expect(get(wsRecovery)?.stuck).toBe(true);
     expect(get(wsRecovery)?.actions?.length).toBe(1);
+  });
+
+  it('clears recovery loading when an in-flight GET is invalidated by wsUnbind', async () => {
+    wsRecoveryLoading.set(true);
+    wsUnbind();
+    expect(get(wsRecoveryLoading)).toBe(false);
   });
 });

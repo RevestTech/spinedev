@@ -42,11 +42,13 @@
     updateProject,
   } from '$lib/projectLifecycle';
   import { yieldMainThread } from '$lib/yieldMainThread';
+  import { flushFrameCommitsForBoot } from '$lib/uiFrameScheduler';
   import { dispatchInFlightActive } from '$lib/projectRecoveryUtils';
   import {
     wsRecovery,
+    wsRecoveryLoading,
+    wsRecoveryError,
     wsRunState,
-    wsBind,
     wsUnbind,
     wsResetTransient,
     wsSetMetadataPatchHandler,
@@ -54,11 +56,33 @@
     scheduleLoadRecovery,
     wsLoadTerminal,
     wsLoadRecoveryNow,
-    wsWaitForRecoverySnapshot,
     wsDispatchRecovery,
+    wsMarkPipelineBootReady,
+    wsResetPipelineBoot,
+    wsPipelineBootReady,
   } from '$lib/stores/projectWorkspace';
 
   $: projectId = $page.params.project_id;
+
+  function ensureSseConnectedAfterBoot(): void {
+    if (ssePausedForWorkspaceBoot) {
+      decisions.connect();
+      ssePausedForWorkspaceBoot = false;
+    }
+  }
+
+  /** Terminal history only after recovery + SSE — eager load locked the tab (SPA-HANG). */
+  $: if (
+    $wsPipelineBootReady &&
+    workspaceTab === 'pipeline' &&
+    projectId &&
+    terminalLoadedFor !== projectId
+  ) {
+    terminalLoadedFor = projectId;
+    window.setTimeout(() => {
+      void wsLoadTerminal(projectId);
+    }, 1200);
+  }
 
   interface ProjectFull {
     id: number;
@@ -75,6 +99,9 @@
   let projectLoading = false;
   /** Pipeline/runtime mounts only after bind + recovery snapshot (prevents main-thread freeze). */
   let workspaceReady = false;
+  /** Layout SSE paused while GET /recovery runs — concurrent SSE starves the main thread. */
+  let ssePausedForWorkspaceBoot = false;
+  let terminalLoadedFor: string | null = null;
   let projectError: string | null = null;
   let workspaceLoadPromise: Promise<void> | null = null;
   /** Suppress duplicate initial load when SvelteKit afterNavigate follows onMount. */
@@ -210,24 +237,6 @@
     };
   })();
 
-  async function waitForDecisionsLoaded(): Promise<void> {
-    if (!get(decisions).loading) return;
-    await new Promise<void>((resolve) => {
-      let settled = false;
-      const finish = () => {
-        if (settled) return;
-        settled = true;
-        unsub();
-        clearTimeout(timer);
-        resolve();
-      };
-      const unsub = decisions.subscribe((s) => {
-        if (!s.loading) finish();
-      });
-      const timer = window.setTimeout(finish, 8000);
-    });
-  }
-
   function pipelineStuckSnapshot(): boolean {
     const recovery = get(wsRecovery);
     const activeRole = get(wsRunState);
@@ -252,9 +261,6 @@
     else if (pipelineStuckSnapshot()) workspaceTab = 'pipeline';
     initialWorkspaceTabSet = true;
     validateWorkspaceTab();
-    if (workspaceTab === 'pipeline' && projectId) {
-      void wsLoadTerminal(projectId);
-    }
   }
 
   function allowedWorkspaceTabs(): WorkspaceTabId[] {
@@ -303,8 +309,12 @@
       void ensureCodeTabLoaded();
       startDeployPollIfNeeded();
     }
-    if (tab === 'pipeline' && projectId) {
-      void wsLoadTerminal(projectId);
+    if (tab === 'pipeline' && projectId && get(wsPipelineBootReady) && terminalLoadedFor !== projectId) {
+      terminalLoadedFor = projectId;
+      void (async () => {
+        await yieldMainThread();
+        await wsLoadTerminal(projectId);
+      })();
     }
   }
 
@@ -497,9 +507,13 @@
       if (isNewProject) {
         workspaceReady = false;
         lastLoadedProjectId = id;
+        terminalLoadedFor = null;
         project = null;
         wsUnbind();
         wsRecovery.set(null);
+        wsResetPipelineBoot();
+        decisions.disconnect();
+        ssePausedForWorkspaceBoot = true;
         workspaceTabPinned = false;
         initialWorkspaceTabSet = false;
         workspaceTab = 'pipeline';
@@ -514,6 +528,7 @@
     wsSetArtifactsRefreshHandler(() => {
       if (workspaceTab === 'artifacts') scheduleProjectRefresh(true);
     });
+    const booting = opts.initial || isNewProject;
     try {
       if (shouldRefreshProject) {
         const ok = await loadProject(includeArtifacts, { reveal: false });
@@ -522,29 +537,38 @@
           syncProjectDecisionKeys();
           restoreIntakeFromMetadata(project);
         }
-        await waitForDecisionsLoaded();
+      }
+      // Release the workspace shell as soon as summary is painted. Recovery
+      // loads in the background — PipelineRecoveryControls already shows its
+      // own spinner. Blocking here on wsWaitForRecoverySnapshot + SSE frame
+      // flushes froze the entire tab (main thread busy-loop).
+      if (project) {
+        workspaceReady = true;
+        projectLoading = false;
+        await tick();
         await yieldMainThread();
       }
-      if (opts.initial || isNewProject) {
-        await Promise.race([
-          (async () => {
-            await wsLoadRecoveryNow(id);
-            await wsWaitForRecoverySnapshot(id, 4000);
-          })(),
-          new Promise<void>((resolve) => setTimeout(resolve, 12_000)),
-        ]);
-        await yieldMainThread();
-      }
-      if (!(opts.initial || isNewProject)) {
+      if (booting && project) {
+        try {
+          await Promise.race([
+            wsLoadRecoveryNow(id),
+            new Promise<void>((resolve) => setTimeout(resolve, 8000)),
+          ]);
+          await flushFrameCommitsForBoot();
+          await yieldMainThread();
+          await tick();
+          wsMarkPipelineBootReady();
+          window.setTimeout(() => ensureSseConnectedAfterBoot(), 600);
+        } catch {
+          wsMarkPipelineBootReady();
+          ensureSseConnectedAfterBoot();
+        }
+      } else if (!booting) {
         scheduleLoadRecovery(id, true);
       }
       if (shouldRefreshProject && project) {
         syncInitialWorkspaceTab();
       }
-      await tick();
-      await yieldMainThread();
-      workspaceReady = true;
-      projectLoading = false;
       if (
         project?.current_phase === 'intake' &&
         transcript.length === 0 &&
@@ -552,9 +576,15 @@
       ) {
         void kickoff();
       }
+    } catch (err) {
+      projectError =
+        projectError ?? ((err as Error).message || 'Failed to prepare workspace');
+      if (project) workspaceReady = true;
+      ensureSseConnectedAfterBoot();
     } finally {
       workspaceLoadInFlight = false;
       projectLoading = false;
+      if (project) workspaceReady = true;
     }
   }
 
@@ -628,9 +658,32 @@
   }
 
   onMount(async () => {
+    decisions.disconnect();
+    ssePausedForWorkspaceBoot = true;
     await tick();
     skipNextInitialNavigate = true;
-    await loadWorkspace($page.params.project_id, { initial: true });
+    const id = $page.params.project_id;
+    // Safety net: never leave the full-page boot spinner up if async boot stalls.
+    const bootWatchdog = window.setTimeout(() => {
+      if (project && !workspaceReady) {
+        workspaceReady = true;
+        projectLoading = false;
+        if (id) {
+          void wsLoadRecoveryNow(id).finally(() => {
+            wsMarkPipelineBootReady();
+            window.setTimeout(() => ensureSseConnectedAfterBoot(), 600);
+          });
+        } else {
+          wsMarkPipelineBootReady();
+          ensureSseConnectedAfterBoot();
+        }
+      }
+    }, 5000);
+    try {
+      await loadWorkspace(id, { initial: true });
+    } finally {
+      window.clearTimeout(bootWatchdog);
+    }
   });
 
   afterNavigate(async ({ to, from }) => {
@@ -651,6 +704,7 @@
     stopDeployPoll();
     stopFastPoll();
     if (workspaceRefreshTimer !== null) clearTimeout(workspaceRefreshTimer);
+    ensureSseConnectedAfterBoot();
     wsUnbind();
     wsSetMetadataPatchHandler(null);
     wsSetArtifactsRefreshHandler(null);
@@ -908,7 +962,9 @@
     <p class="text-sm text-surface-400">Loading recovery actions and activity stream…</p>
   </div>
 {:else if project}
-  <ProjectWorkspaceRuntime projectId={project.project_id} matchKeys={projectMatchKeys()} />
+  {#if $wsPipelineBootReady}
+    <ProjectWorkspaceRuntime projectId={project.project_id} matchKeys={projectMatchKeys()} />
+  {/if}
   <div class="project-workspace">
   <ProjectWorkspaceChrome
     projectPhase={project.current_phase}

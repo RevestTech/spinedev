@@ -138,4 +138,4 @@ make team-up      # bring up the agent team
 make team-status  # see what's in flight
 ```
 
-Full instructions: [`INSTALL.md`](../INSTALL.md). Architecture deep-dive: [`docs/ARCHITECTURE.md`](ARCHITECTURE.md). Why each design choice: [`docs/research/COMPETITIVE_LANDSCAPE.md`](research/COMPETITIVE_LANDSCAPE.md). Honest comparison vs the field: [`docs/comparison.md`](comparison.md).
+Full instructions: [`INSTALL.md`](../../INSTALL.md). Architecture deep-dive: [`docs/ARCHITECTURE.md`](../ARCHITECTURE.md). Why each design choice: [`docs/research/COMPETITIVE_LANDSCAPE.md`](../research/COMPETITIVE_LANDSCAPE.md). Honest comparison vs the field: [`docs/comparison.md`](../comparison.md).

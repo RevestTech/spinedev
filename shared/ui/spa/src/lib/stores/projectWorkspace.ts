@@ -17,7 +17,7 @@ import type { TerminalLine } from '$lib/terminalLine';
 import { PIPELINE_COPY, recoveryActionInfo } from '$lib/projectPipelineCopy';
 import { toasts } from '$lib/stores/toasts';
 import { yieldMainThread } from '$lib/yieldMainThread';
-import { flushFrameCommitsForBoot, scheduleFrameCommit } from '$lib/uiFrameScheduler';
+import { scheduleFrameCommit, flushFrameCommitsForBoot } from '$lib/uiFrameScheduler';
 import {
   decisionActivity,
   decisionRoleLogBatch,
@@ -88,6 +88,8 @@ export const wsRecoveryLoading = writable(false);
 export const wsRecoveryError = writable<string | null>(null);
 export const wsLastRecoveryPulseAt = writable(0);
 export const wsDispatchUiStale = writable(false);
+/** False until GET /recovery has painted — gates SSE bind + activity log (SPA-HANG). */
+export const wsPipelineBootReady = writable(false);
 
 let boundProjectId: string | null = null;
 let projectMatchKeys = new Set<string>();
@@ -124,6 +126,14 @@ export function wsSetMetadataPatchHandler(handler: MetadataPatchHandler | null):
 
 export function wsSetArtifactsRefreshHandler(handler: ArtifactsRefreshHandler | null): void {
   artifactsRefreshHandler = handler;
+}
+
+export function wsMarkPipelineBootReady(): void {
+  wsPipelineBootReady.set(true);
+}
+
+export function wsResetPipelineBoot(): void {
+  wsPipelineBootReady.set(false);
 }
 
 function matchesProject(evProject: string | undefined | null): boolean {
@@ -410,6 +420,7 @@ async function flushSseQueue(): Promise<void> {
 }
 
 export function wsResetTransient(): void {
+  wsResetPipelineBoot();
   wsTerminal.set([]);
   wsFeed.set([]);
   wsRunState.set({ ...initialRunState });
@@ -446,11 +457,16 @@ function detachWorkspaceListeners(): void {
 }
 
 export function wsBind(projectId: string, extraKeys: string[] = []): void {
-  if (boundProjectId === projectId && activityUnsub) return;
+  const nextKeys = new Set([projectId, ...extraKeys.filter(Boolean)]);
+  if (boundProjectId === projectId && activityUnsub) {
+    projectMatchKeys = nextKeys;
+    return;
+  }
   detachWorkspaceListeners();
   boundProjectId = projectId;
-  projectMatchKeys = new Set([projectId, ...extraKeys.filter(Boolean)]);
-  workspaceActivityReady = false;
+  projectMatchKeys = nextKeys;
+  const hadRecovery = Boolean(get(wsRecovery));
+  workspaceActivityReady = hadRecovery;
   let skipActivityReplay = true;
   activityUnsub = decisionActivity.subscribe((ev) => {
     if (skipActivityReplay) {
@@ -468,7 +484,6 @@ export function wsBind(projectId: string, extraKeys: string[] = []): void {
     }
     queueMicrotask(() => handleRoleLogBatch(batch));
   });
-  if (get(wsRecovery)) workspaceActivityReady = true;
 }
 
 export function wsUnbind(): void {
@@ -480,6 +495,7 @@ export function wsUnbind(): void {
   recoveryLoadPending = false;
   workspaceActivityReady = false;
   wsRecoveryLoading.set(false);
+  wsResetPipelineBoot();
 }
 
 export function wsAppendTerminal(line: TerminalLine): void {
@@ -493,7 +509,11 @@ export async function wsLoadTerminal(projectId: string): Promise<void> {
       `/api/v2/projects/${projectId}/activity/terminal?limit=120`
     );
     if (res.lines) {
-      wsTerminal.set(res.lines.slice(-120));
+      const lines = res.lines.slice(-120);
+      scheduleFrameCommit(() => {
+        wsTerminal.set(lines);
+      });
+      await flushFrameCommitsForBoot();
     }
   } catch {
     /* best-effort */
@@ -563,16 +583,17 @@ export async function wsLoadRecoveryNow(projectId: string): Promise<void> {
       if (!busy && !started) wsRecoveryError.set(msg);
       workspaceActivityReady = true;
     } finally {
-      if (gen === recoveryLoadGeneration) {
-        wsRecoveryLoading.set(false);
-      }
       const pending = recoveryLoadPending;
       recoveryLoadPending = false;
       recoveryLoadPromise = null;
       // Never await a follow-up load here — SSE can set recoveryLoadPending repeatedly
       // and would keep the caller's promise open forever (workspace boot hang).
-      if (pending) {
+      if (pending && gen === recoveryLoadGeneration) {
         void wsLoadRecoveryNow(projectId);
+      } else {
+        // Always clear the spinner when this load ends — stale generations must not
+        // leave wsRecoveryLoading true forever (stuck "Loading actions").
+        wsRecoveryLoading.set(false);
       }
     }
   })();
@@ -580,7 +601,7 @@ export async function wsLoadRecoveryNow(projectId: string): Promise<void> {
   return recoveryLoadPromise;
 }
 
-/** Block until GET /recovery data is in wsRecovery (or error/timeout) before mounting pipeline UI. */
+/** Optional wait for GET /recovery — not used on workspace boot (was freezing the tab). */
 export async function wsWaitForRecoverySnapshot(
   projectId: string,
   timeoutMs = 5000
@@ -593,8 +614,7 @@ export async function wsWaitForRecoverySnapshot(
     if ((recovery?.actions?.length ?? 0) > 0) return;
     if (recovery != null && !get(wsRecoveryLoading)) return;
     if (get(wsRecoveryError)) return;
-    await yieldMainThread();
-    await flushFrameCommitsForBoot();
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
   }
 }
 

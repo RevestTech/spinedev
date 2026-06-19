@@ -1,0 +1,9 @@
+QA defect report — REQ-CART-3 (cart subtotal recomputes on quantity change).
+
+Executed test reference: tests/cart/test_subtotal.py lines 42-58 (integration, functional).
+
+reproduction: set quantity to 0 on line item A; observe subtotal panel.
+expected: subtotal recomputes to 0.00 immediately.
+actual: subtotal remains at prior value until full page refresh.
+
+Build / commit: abc1234 on main.

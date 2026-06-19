@@ -278,6 +278,19 @@ needs the hub-switcher UX (per design decision #4 / #10).
 
 ---
 
+## Troubleshooting
+
+### Project workspace tab freezes (“Loading actions” / Page Unresponsive)
+
+See **[`docs/SPA_PROJECT_WORKSPACE_HANG.md`](../../../docs/SPA_PROJECT_WORKSPACE_HANG.md)** — root cause, staged boot fix, and Playwright regression tests.
+
+```bash
+bash tools/hub-up.sh --rebuild
+cd shared/ui/spa && npx playwright test e2e/project-workspace-hang.spec.ts e2e/booger-workspace.spec.ts
+```
+
+---
+
 ## Open items left for future waves
 
 - **`/api/v2/auth/whoami`** doesn't exist yet — `+layout.ts` probes

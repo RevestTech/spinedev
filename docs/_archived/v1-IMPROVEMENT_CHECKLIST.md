@@ -2,10 +2,10 @@
 
 > **Pre-v3 document — preserved for historical context.** This checklist tracked v1.x maintainer
 > backlog items for the file-bus orchestration framework. The v3 product (containerized Hub) has its
-> own canonical launch backlog at [`docs/V1_SHIP_CHECKLIST.md`](V1_SHIP_CHECKLIST.md) — see that
+> own canonical launch backlog at [`docs/V1_SHIP_CHECKLIST.md`](../V1_SHIP_CHECKLIST.md) — see that
 > file (not this one) for active v1.0 ship gating. For current Spine v3 status see
-> [`STATUS.md`](STATUS.md); for design decisions see
-> [`V3_DESIGN_DECISIONS.md`](V3_DESIGN_DECISIONS.md).
+> [`STATUS.md`](../STATUS.md); for design decisions see
+> [`V3_DESIGN_DECISIONS.md`](../V3_DESIGN_DECISIONS.md).
 >
 > **v1.4.4:** **`make selftest`** + **`lib/tests/test-*.sh`**. **v1.4.3:** **`## Long job:`** extension-only + **`costs.csv` `outcome`**. **v1.4.2:** documentation + **`EXTENSIONS`**. **v1.4.0:** Program-delivery framework. **Post–ADR-001 (template):** **13-manager** roster (`engineering-*` top-level roles retired — use **`engineer`** + workers). **v1.3.4:** knowledge-only install + ADR scaffolding. Remaining checklist rows still apply for future hardening.
 

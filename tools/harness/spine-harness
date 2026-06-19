@@ -1,0 +1,224 @@
+#!/usr/bin/env bash
+# spine-harness — Harness Lite CLI (portable SDLC harness, no Hub required).
+# See tools/harness/README.md and Handoff.md.
+set -euo pipefail
+
+HARNESS_TOOL_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SPINE_HOME="${SPINE_HOME:-$(cd "${HARNESS_TOOL_ROOT}/../.." && pwd)}"
+# shellcheck source=lib/harness_common.sh
+source "${HARNESS_TOOL_ROOT}/lib/harness_common.sh"
+
+HARNESS_PROJECT_ROOT="."
+HARNESS_PROJECT_EXPLICIT=0
+HARNESS_SYMLINK_SKILLS=0
+HARNESS_MARKDOWN=0
+
+_usage() {
+  cat <<'EOF'
+spine harness — portable SDLC harness (Harness Lite)
+
+Usage:
+  spine-harness init [--project PATH] [--symlink-skills]
+  spine-harness start <mode> [--project PATH]
+  spine-harness loop <interval> <mode> [--project PATH]
+  spine-harness status [--markdown] [--project PATH]
+  spine-harness verify [--roles qa,auditor] [--run-qa] [--markdown]
+  spine-harness audit [--gates all|docs,drift,...] [--markdown]
+  spine-harness stop [--project PATH]
+
+Modes: bootstrap | feature | sprint-close | release-gate | watch
+
+Examples:
+  spine-harness init --project .
+  spine-harness start feature
+  spine-harness loop 5m release-gate
+  spine-harness status --markdown
+  spine-harness stop
+EOF
+}
+
+_cmd_init() {
+  local py
+  py="$(_harness_py)"
+  "$py" "${HARNESS_TOOL_ROOT}/lib/harness_state.py" \
+    --project "${HARNESS_PROJECT_ROOT}" init
+  if [[ "${HARNESS_SYMLINK_SKILLS}" -eq 1 ]]; then
+    local skills_dst="${HARNESS_PROJECT_ROOT}/.cursor/skills"
+    mkdir -p "$(dirname "${skills_dst}")"
+    if [[ -L "${skills_dst}/harness-orchestrator" || -d "${skills_dst}/harness-orchestrator" ]]; then
+      echo "harness: skills symlink already present under ${skills_dst}"
+    else
+      mkdir -p "${skills_dst}"
+      for skill in harness-orchestrator harness-audit-wave harness-fix-wave harness-verify-wave; do
+        ln -sf "${HARNESS_TOOL_ROOT}/skills/${skill}" "${skills_dst}/${skill}"
+      done
+      echo "harness: symlinked skills → ${skills_dst}"
+    fi
+  fi
+  echo "harness: initialized at $(_harness_state_dir)"
+}
+
+_wave_for_mode() {
+  case "$1" in
+    sprint-close) printf '%s\n' audit ;;
+    release-gate) printf '%s\n' audit ;;
+    bootstrap)    printf '%s\n' audit ;;
+    *)            printf '%s\n' "" ;;
+  esac
+}
+
+_cmd_start() {
+  local mode="${1:-}"
+  [[ -z "${mode}" ]] && _harness_die "start requires <mode>"
+  _harness_valid_mode "${mode}" || _harness_die "unknown mode: ${mode}"
+  if [[ ! -f "$(_harness_state_file)" ]]; then
+    _cmd_init
+  fi
+  local py wave
+  py="$(_harness_py)"
+  wave="$(_wave_for_mode "${mode}")"
+  if [[ -n "${wave}" ]]; then
+    "$py" "${HARNESS_TOOL_ROOT}/lib/harness_state.py" \
+      --project "${HARNESS_PROJECT_ROOT}" set-mode "${mode}" --wave "${wave}"
+  else
+    "$py" "${HARNESS_TOOL_ROOT}/lib/harness_state.py" \
+      --project "${HARNESS_PROJECT_ROOT}" set-mode "${mode}"
+  fi
+  case "${mode}" in
+    watch)
+      bash "${HARNESS_TOOL_ROOT}/loop-bridge.sh" start \
+        --project "${HARNESS_PROJECT_ROOT}" \
+        --mode watch \
+        --interval 30m \
+        --dynamic
+      ;;
+    feature)
+      bash "${HARNESS_TOOL_ROOT}/loop-bridge.sh" start \
+        --project "${HARNESS_PROJECT_ROOT}" \
+        --mode feature \
+        --event git \
+        --dynamic
+      ;;
+    release-gate)
+      bash "${HARNESS_TOOL_ROOT}/loop-bridge.sh" start \
+        --project "${HARNESS_PROJECT_ROOT}" \
+        --mode release-gate \
+        --interval 5m
+      ;;
+    sprint-close)
+      echo "harness: sprint-close armed — run audit-wave skill (Phase 1) via foreground agent"
+      echo "harness: skill → tools/harness/skills/harness-audit-wave/SKILL.md"
+      ;;
+    bootstrap)
+      echo "harness: bootstrap — run orchestrator skill once, then: spine-harness start watch"
+      echo "harness: skill → tools/harness/skills/harness-orchestrator/SKILL.md"
+      ;;
+  esac
+}
+
+_cmd_loop() {
+  local interval="${1:-}" mode="${2:-}"
+  [[ -z "${interval}" || -z "${mode}" ]] && _harness_die "loop requires <interval> <mode>"
+  _harness_valid_mode "${mode}" || _harness_die "unknown mode: ${mode}"
+  if [[ ! -f "$(_harness_state_file)" ]]; then
+    _cmd_init
+  fi
+  local py
+  py="$(_harness_py)"
+  "$py" "${HARNESS_TOOL_ROOT}/lib/harness_state.py" \
+    --project "${HARNESS_PROJECT_ROOT}" set-mode "${mode}"
+  bash "${HARNESS_TOOL_ROOT}/loop-bridge.sh" start \
+    --project "${HARNESS_PROJECT_ROOT}" \
+    --mode "${mode}" \
+    --interval "${interval}"
+}
+
+_cmd_status() {
+  local py args=(status)
+  [[ "${HARNESS_MARKDOWN}" -eq 1 ]] && args+=(--markdown)
+  py="$(_harness_py)"
+  "$py" "${HARNESS_TOOL_ROOT}/lib/harness_state.py" \
+    --project "${HARNESS_PROJECT_ROOT}" "${args[@]}"
+}
+
+_cmd_verify() {
+  local py
+  py="$(_harness_py)"
+  if [[ "${HARNESS_MARKDOWN}" -eq 1 ]]; then
+    SPINE_HOME="${SPINE_HOME}" "$py" "${HARNESS_TOOL_ROOT}/lib/verify_wave.py" \
+      --project "${HARNESS_PROJECT_ROOT}" --markdown --write-status "$@"
+  else
+    SPINE_HOME="${SPINE_HOME}" "$py" "${HARNESS_TOOL_ROOT}/lib/verify_wave.py" \
+      --project "${HARNESS_PROJECT_ROOT}" "$@"
+  fi
+}
+
+_cmd_audit() {
+  local py
+  py="$(_harness_py)"
+  if [[ "${HARNESS_MARKDOWN}" -eq 1 ]]; then
+    SPINE_HOME="${SPINE_HOME}" "$py" "${HARNESS_TOOL_ROOT}/lib/audit_wave.py" \
+      --project "${HARNESS_PROJECT_ROOT}" --markdown "$@"
+  else
+    SPINE_HOME="${SPINE_HOME}" "$py" "${HARNESS_TOOL_ROOT}/lib/audit_wave.py" \
+      --project "${HARNESS_PROJECT_ROOT}" "$@"
+  fi
+}
+
+_cmd_stop() {
+  local py loop_pid
+  py="$(_harness_py)"
+  if [[ -f "$(_harness_state_file)" ]]; then
+    while IFS= read -r loop_pid; do
+      [[ -z "${loop_pid}" ]] && continue
+      if kill -0 "${loop_pid}" 2>/dev/null; then
+        kill "${loop_pid}" 2>/dev/null || true
+        echo "harness: stopped pid=${loop_pid}"
+      fi
+    done < <("$py" "${HARNESS_TOOL_ROOT}/lib/harness_state.py" \
+      --project "${HARNESS_PROJECT_ROOT}" dump-loop-pids 2>/dev/null || true)
+  fi
+  bash "${HARNESS_TOOL_ROOT}/loop-bridge.sh" stop --project "${HARNESS_PROJECT_ROOT}"
+  if [[ -f "$(_harness_state_file)" ]]; then
+    "$py" "${HARNESS_TOOL_ROOT}/lib/harness_state.py" \
+      --project "${HARNESS_PROJECT_ROOT}" unregister-loops --all
+  fi
+  echo "harness: stopped"
+}
+
+main() {
+  local cmd="${1:-help}"
+  shift || true
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --project)
+        mkdir -p "${2:?}"
+        HARNESS_PROJECT_ROOT="$(cd "${2}" && pwd)"
+        HARNESS_PROJECT_EXPLICIT=1
+        shift 2
+        ;;
+      --symlink-skills) HARNESS_SYMLINK_SKILLS=1; shift ;;
+      --markdown) HARNESS_MARKDOWN=1; shift ;;
+      -h|--help) _usage; exit 0 ;;
+      *) break ;;
+    esac
+  done
+  if [[ "${HARNESS_PROJECT_EXPLICIT}" -eq 1 ]]; then
+    HARNESS_PROJECT_ROOT="$(cd "${HARNESS_PROJECT_ROOT}" && pwd)"
+  else
+    HARNESS_PROJECT_ROOT="$(_harness_repo_root "${HARNESS_PROJECT_ROOT}")"
+  fi
+  case "${cmd}" in
+    init) _cmd_init ;;
+    start) _cmd_start "${1:-}" ;;
+    loop) _cmd_loop "${1:-}" "${2:-}" ;;
+    status) _cmd_status ;;
+    verify) _cmd_verify "$@" ;;
+    audit) _cmd_audit "$@" ;;
+    stop) _cmd_stop ;;
+    help|-h|--help|"") _usage ;;
+    *) _harness_die "unknown command: ${cmd} (try: spine-harness help)" ;;
+  esac
+}
+
+main "$@"

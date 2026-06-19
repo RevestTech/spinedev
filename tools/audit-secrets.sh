@@ -23,7 +23,7 @@ cd "${REPO_ROOT}"
 readonly PATTERN='ANTHROPIC_API_KEY|OPENAI_API_KEY|SPINE_[A-Z_]+_KEY|SPINE_[A-Z_]+_PASSWORD|SPINE_[A-Z_]+_SECRET|SPINE_[A-Z_]+_TOKEN'
 
 # Path-based exclusions: docs that intentionally enumerate the pattern.
-readonly PATH_EXCLUDE='vault-refs|TRIAGE|BUILD_SEQUENCE|DESIGN_DECISIONS|SECURITY_GUIDE|LICENSING_GUIDE|FEDERATION_GUIDE|HUB_OPERATIONS_GUIDE|DEPLOYMENT_SHAPES|README|CHANGELOG|RELEASE_NOTES|V1_SHIP_CHECKLIST|STATUS.md|legal/|chatsession|audit-secrets.sh|^./.agents/|^./.venv/|^./node_modules/'
+readonly PATH_EXCLUDE='vault-refs|TRIAGE|BUILD_SEQUENCE|DESIGN_DECISIONS|SECURITY_GUIDE|LICENSING_GUIDE|FEDERATION_GUIDE|HUB_OPERATIONS_GUIDE|DEPLOYMENT_SHAPES|README|CHANGELOG|RELEASE_NOTES|V1_SHIP_CHECKLIST|STATUS.md|legal/|chatsession|audit-secrets.sh|^./.agents/|^./.venv/|^./node_modules/|^./.spine/work/'
 
 # Hits that look like value assignments (the only category that's a real leak).
 #   FOO=value           — bash export / docker compose env entry
@@ -88,6 +88,16 @@ while IFS= read -r line; do
   case "${code}" in
     \#*|\;*|//\ *|\*\ *) continue ;;
   esac
+
+  # Skip log lines (operational messages referencing flag names, not assignments).
+  if [[ "${code}" =~ ^[[:space:]]*log[[:space:]] ]]; then
+    continue
+  fi
+
+  # Skip bash boolean flag checks (`[[ "$VAR" == "1" ]]`) — not secret assignments.
+  if [[ "${code}" =~ \=\=[[:space:]]*\"[01]\" ]]; then
+    continue
+  fi
 
   # Skip `os.environ.get(...)` / `os.getenv(...)` / `environ.pop(...)` —
   # these are env-var NAME usages, not value assignments. The `=` we

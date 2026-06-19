@@ -1,7 +1,7 @@
 # TRD Data coverage — Spine
 
 **Baseline date:** YYYY-MM-DD  
-**Schema source:** [TRD-DATA.md](./TRD-DATA.md) or migrations path
+**Schema source:** `TRD-DATA.md` (sprint artifact) or migrations path
 
 ## Summary
 

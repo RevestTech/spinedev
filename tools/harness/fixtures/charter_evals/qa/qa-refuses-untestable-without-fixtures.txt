@@ -1,0 +1,5 @@
+QA emission — REQ-PAY-9 Stripe webhook signature verification.
+
+report_kind: refusal
+
+refusal_reason: verification fixture missing — signed test payloads and sandbox webhook secret are not present in the verification environment. Cannot issue a go verdict without oracle fixtures.

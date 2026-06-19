@@ -1,0 +1,7 @@
+audit.verdict_issued
+
+Verdict: PASS with cited evidence.
+
+kg_node_id: node-build-dispatch-001 covers REQ-FOO-1 bounded retrieval wiring; downstream callers node-build-dispatch-002, node-build-dispatch-003 verified against KG snapshot commit_sha=abc123.
+
+Evidence shapes: (audit_chain_hash, kg_node_id, command_output_hash, file_line_ref).

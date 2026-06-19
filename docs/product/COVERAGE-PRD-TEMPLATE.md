@@ -1,7 +1,7 @@
 # PRD coverage — Spine
 
 **Baseline date:** YYYY-MM-DD  
-**Prior baseline:** [COVERAGE-PRD-PRIOR-DATE.md](./COVERAGE-PRD-PRIOR-DATE.md) (or N/A)
+**Prior baseline:** `COVERAGE-PRD-PRIOR-DATE.md` (prior sprint artifact, or N/A)
 
 ## Summary
 

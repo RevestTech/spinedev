@@ -1,7 +1,8 @@
 # Overnight handoff — 2026-05-23
 
-> **Operational queue:** [`MASTER_TODO.md`](MASTER_TODO.md) (updated 2026-05-25).
-> **Latest session narrative:** [`SESSION_HANDOFF.md`](SESSION_HANDOFF.md) (2026-05-24).
+> **Resume here for current work:** [`SESSION_HANDOFF.md`](SESSION_HANDOFF.md) (**2026-06-02** — SPA project workspace hang fixed, uncommitted).
+> **Operational queue:** [`MASTER_TODO.md`](MASTER_TODO.md)
+> **SPA hang fix detail:** [`SPA_PROJECT_WORKSPACE_HANG.md`](SPA_PROJECT_WORKSPACE_HANG.md)
 
 > Written while Khash sleeps. Agent continued as founder proxy.
 

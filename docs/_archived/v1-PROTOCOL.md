@@ -3,11 +3,11 @@
 > **Pre-v3 document — preserved for historical context.** This protocol describes the v1/v2
 > "file-bus orchestration framework" (managers + workers under `.planning/orchestration/` with
 > `scripts/roles.sh`). The v3 product is a containerized **Hub** per
-> [`docs/V3_DESIGN_DECISIONS.md`](docs/V3_DESIGN_DECISIONS.md) **#3**, not a file-bus framework. For
-> current Spine v3 status see [`docs/STATUS.md`](docs/STATUS.md); for design decisions see
-> [`docs/V3_DESIGN_DECISIONS.md`](docs/V3_DESIGN_DECISIONS.md); for launch readiness see
-> [`docs/V1_SHIP_CHECKLIST.md`](docs/V1_SHIP_CHECKLIST.md); for the per-repo Claude Code primer see
-> [`CLAUDE.md`](CLAUDE.md).
+> [`docs/V3_DESIGN_DECISIONS.md`](../V3_DESIGN_DECISIONS.md) **#3**, not a file-bus framework. For
+> current Spine v3 status see [`docs/STATUS.md`](../STATUS.md); for design decisions see
+> [`docs/V3_DESIGN_DECISIONS.md`](../V3_DESIGN_DECISIONS.md); for launch readiness see
+> [`docs/V1_SHIP_CHECKLIST.md`](../V1_SHIP_CHECKLIST.md); for the per-repo Claude Code primer see
+> [`CLAUDE.md`](../../CLAUDE.md).
 
 The contract every agent in the team follows. Drop this file at `.planning/orchestration/AGENT_TEAM_PROTOCOL.md` in any project that adopts the pattern. It is the source of truth — every agent reads it before participating.
 

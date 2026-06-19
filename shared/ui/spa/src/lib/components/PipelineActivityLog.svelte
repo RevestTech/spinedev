@@ -6,14 +6,30 @@
   import RoleTerminal from '$lib/components/RoleTerminal.svelte';
   import { PIPELINE_COPY, dispatchKindLabel } from '$lib/projectPipelineCopy';
   import { dispatchInFlightActive, isDispatchStale } from '$lib/projectRecoveryUtils';
+  import { get } from 'svelte/store';
+  import { page } from '$app/stores';
   import {
     wsRecovery,
     wsRunState,
     wsRecoveryBusy,
     wsTerminal,
     wsFeed,
+    wsLoadTerminal,
     type FeedEvent,
   } from '$lib/stores/projectWorkspace';
+
+  let historyLoadBusy = false;
+
+  async function loadHistory() {
+    const id = get(page).params.project_id;
+    if (!id || historyLoadBusy) return;
+    historyLoadBusy = true;
+    try {
+      await wsLoadTerminal(id);
+    } finally {
+      historyLoadBusy = false;
+    }
+  }
 
   function pipelineRoleInfo(role: string) {
     const r = PIPELINE_COPY.roles[role as keyof typeof PIPELINE_COPY.roles];
@@ -102,6 +118,16 @@
   </div>
   <div class="min-h-0 flex-1">
     <RoleTerminal {lines} active={terminalActive} title={terminalTitle} emptyMessage={terminalEmptyMessage} />
+    {#if lines.length === 0 && !terminalActive}
+      <button
+        type="button"
+        class="btn-secondary mt-2 text-sm"
+        disabled={historyLoadBusy}
+        on:click={loadHistory}
+      >
+        {historyLoadBusy ? 'Loading…' : 'Load prior activity'}
+      </button>
+    {/if}
   </div>
   {#if feed.length > 0}
     <details class="mt-3 rounded-lg border border-surface-700/60 bg-surface-950/30 px-3 py-2">

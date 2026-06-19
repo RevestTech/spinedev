@@ -1,0 +1,7 @@
+Test plan — REQ-AUTH-12 password reset via email link.
+
+integration level: API + mailer stub (functional).
+system level: end-to-end reset flow (functional).
+acceptance level: product sign-off scenario (functional).
+
+Defect severity rubric: blocker if reset link invalid; major if mail delayed; minor for copy issues; trivial for cosmetic.

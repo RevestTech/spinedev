@@ -1,7 +1,7 @@
 # TRD API coverage — Spine
 
 **Baseline date:** YYYY-MM-DD  
-**Spec source:** [TRD-API.md](./TRD-API.md) (or OpenAPI path)
+**Spec source:** `TRD-API.md` (sprint artifact — create alongside this template)
 
 ## Summary
 

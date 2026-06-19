@@ -8,11 +8,18 @@
 <script lang="ts">
   import '../app.css';
   import { onMount } from 'svelte';
+  import { afterNavigate } from '$app/navigation';
   import { page } from '$app/stores';
   import Topbar from '$lib/components/Topbar.svelte';
   import Sidebar from '$lib/components/Sidebar.svelte';
   import ErrorBanner from '$lib/components/ErrorBanner.svelte';
   import { normalizePathname } from '$lib/navActive';
+
+  /** Project workspace pauses layout SSE during boot — avoid connecting before +page disconnect. */
+  function projectWorkspaceOwnsSse(pathname: string): boolean {
+    const p = normalizePathname(pathname);
+    return /^\/projects\/[^/]+$/.test(p);
+  }
   import { toasts } from '$lib/stores/toasts';
   import { decisions } from '$lib/stores/decisions';
   import { hubInbox } from '$lib/stores/hubInbox';
@@ -24,13 +31,27 @@
 
   // SSE + initial load: open once at the layout level so multiple panels
   // share the stream + topbar pending-count badge reflects DB truth.
+  function syncLayoutSse(pathname: string): void {
+    if (!data.user) return;
+    if (projectWorkspaceOwnsSse(pathname)) {
+      decisions.disconnect();
+    } else {
+      decisions.connect();
+    }
+  }
+
   onMount(() => {
     if (data.user) {
       void decisions.load();
       void hubInbox.load();
-      decisions.connect();
+      syncLayoutSse(window.location.pathname);
     }
     return () => decisions.disconnect();
+  });
+
+  afterNavigate(({ to }) => {
+    if (!to || !data.user) return;
+    syncLayoutSse(to.url.pathname);
   });
 
   $: liveConnected = $decisions.liveConnected;

@@ -172,7 +172,7 @@ bash scripts/team.sh clean dry-run all  # preview without changes
 
 **Auto-bounded growth.** The daemon truncates logs > 5MB on every poll cycle, so even without explicit cleanup the team's footprint can't grow unboundedly. Costs are 1 row of CSV per invocation (text — won't bloat). Worker archive grows by one timestamped dir per aggregate cycle and is pruned on demand.
 
-The full hygiene contract is in [PROTOCOL.md Section 15](PROTOCOL.md).
+The full hygiene contract is in [PROTOCOL.md Section 15](v1-PROTOCOL.md).
 
 ---
 

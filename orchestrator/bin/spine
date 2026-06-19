@@ -203,6 +203,12 @@ _help_for() { case "$1" in
   intake)   echo "spine intake <project_id> [--template T] [--actor A]";;
   build-brief)  echo "spine build brief <project_id>";;
   build-report) echo "spine build report <project_id> --artifact <path> [--actor A]";;
+  harness-init)   echo "spine harness init [--project PATH] [--symlink-skills]";;
+  harness-start)  echo "spine harness start <mode> [--project PATH]";;
+  harness-loop)   echo "spine harness loop <interval> <mode> [--project PATH]";;
+  harness-status) echo "spine harness status [--markdown] [--project PATH]";;
+  harness-verify) echo "spine harness verify [--roles qa,auditor] [--run-qa] [--markdown] [--project PATH]";;
+  harness-stop)   echo "spine harness stop [--project PATH]";;
   *) return 1 ;;
 esac; }
 
@@ -661,6 +667,12 @@ AuditManager(secrets={})
   return $rc
 }
 
+cmd_harness() {
+  local harness_bin="${SPINE_HOME}/tools/harness/spine-harness"
+  [[ -x "$harness_bin" ]] || _die 64 "harness CLI missing: $harness_bin (run from Spine repo root)"
+  exec "$harness_bin" "$@"
+}
+
 cmd_help() {
   local topic="${REST_ARGS[0]:-}"
   [[ -n "$topic" ]] && { _help_for "$topic" >&2 || _die 64 "no help topic '$topic' (try: spine help)"; return 0; }
@@ -684,6 +696,15 @@ Build handoff (STORY-7.2.2 / 7.2.3):
   spine build brief  <project_id>
   spine build report <project_id> --artifact <path> [--actor A]
 
+Harness Lite (portable SDLC — no Hub required):
+  spine harness init [--project PATH] [--symlink-skills]
+  spine harness start <mode> [--project PATH]
+  spine harness loop <interval> <mode> [--project PATH]
+  spine harness status [--markdown] [--project PATH]
+  spine harness verify [--roles qa,auditor] [--run-qa] [--markdown] [--project PATH]
+  spine harness stop [--project PATH]
+  Modes: bootstrap | feature | sprint-close | release-gate | watch
+
 Portfolio / ops:  spine status | spine doctor | spine help [<topic>]
   spine status [--markdown [--write PATH] [--exit-code] [--ledger-root R]]
               # Default: phase-count table.
@@ -703,7 +724,7 @@ EOF
 main() {
   local cmd="${1:-help}"; shift || true
   local sub=""
-  [[ "$cmd" == "project" || "$cmd" == "build" ]] && { sub="${1:-}"; shift || true; }
+  [[ "$cmd" == "project" || "$cmd" == "build" || "$cmd" == "harness" ]] && { sub="${1:-}"; shift || true; }
   _parse_flags "$@"
   case "$cmd" in
     project) case "$sub" in
@@ -719,6 +740,11 @@ main() {
         report) cmd_build_report ;;
         ""|help|-h|--help) cmd_help ;;
         *) _die 64 "unknown build subcommand: $sub (try: spine help)" ;;
+      esac ;;
+    harness) case "$sub" in
+        init|start|loop|status|verify|audit|stop) cmd_harness "$sub" "${REST_ARGS[@]}" ;;
+        ""|help|-h|--help) cmd_help ;;
+        *) _die 64 "unknown harness subcommand: $sub (try: spine help)" ;;
       esac ;;
     status) cmd_status ;; doctor) cmd_doctor ;; intake) cmd_intake ;;
     help|-h|--help|"") cmd_help ;;

@@ -108,7 +108,7 @@ function emitActivity(evt: DecisionActivityEvent): void {
     enqueueRoleLog(evt);
     return;
   }
-  activity.set(evt);
+  scheduleFrameCommit(() => activity.set(evt));
 }
 
 function scheduleReconnect(generation: number): void {

@@ -4,6 +4,7 @@
   import { decisions } from '$lib/stores/decisions';
   import {
     wsRecovery,
+    wsPipelineBootReady,
     wsSetSseLive,
     wsBind,
     scheduleLoadRecovery,
@@ -21,6 +22,20 @@
 
   let sseLive = false;
   let recoverySnapshot: RecoveryStatus | null = null;
+  let boundProjectId: string | null = null;
+  let boundMatchSig = '';
+
+  function matchSig(keys: string[]): string {
+    return keys.filter(Boolean).join('\0');
+  }
+
+  function bindWorkspace(id: string, keys: string[]): void {
+    const sig = matchSig(keys);
+    if (boundProjectId === id && boundMatchSig === sig) return;
+    boundProjectId = id;
+    boundMatchSig = sig;
+    wsBind(id, keys);
+  }
 
   function startFallbackPoll() {
     if (fallbackPollHandle !== null || !projectId) return;
@@ -64,8 +79,8 @@
     }
   }
 
-  $: if (projectId) {
-    queueMicrotask(() => wsBind(projectId, matchKeys));
+  $: if (projectId && $wsPipelineBootReady) {
+    bindWorkspace(projectId, matchKeys);
   }
 
   onMount(() => {

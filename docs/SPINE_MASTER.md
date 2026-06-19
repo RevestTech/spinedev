@@ -186,6 +186,7 @@ one API handler calling LLM is not the product.
 | **Learning** | Smart Spine 3-tier (#27) | `learning/` | Scaffold |
 | **Recovery** | 12-layer DR (#31) | `recovery/` | Scaffold |
 | **Migration** | Export/import (#33) | `migration/` | Scaffold |
+| **Harness Lite** | Portable SDLC on any repo (no Hub) | `tools/harness/`, `Handoff.md` | **Wired** — `spine harness init|audit|verify` |
 
 **Honest status:** Golden-path **scaffolding is wired** (orchestrator bridge,
 hub runners, KG retrieve, TRON verify, engineer hybrid + squad). Still need a
@@ -231,6 +232,7 @@ Read in this order. Do **not** treat overlapping docs as equal authority.
 | 4 | `docs/V3_BUILD_SEQUENCE.md` | Historical wave execution order |
 | 5 | `docs/V1_SHIP_CHECKLIST.md` | Customer launch / ops gates only |
 | 6 | Operational guides | `HUB_OPERATIONS_GUIDE`, `DEPLOYMENT_SHAPES`, etc. |
+| — | `docs/SPA_PROJECT_WORKSPACE_HANG.md` | Hub SPA project page freeze — staged boot fix + Playwright regression |
 
 ### Historical / deprecated — do not extend
 
