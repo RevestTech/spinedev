@@ -18,8 +18,8 @@ Go / no-go checkpoints for delivery. Each gate requires an **approval artifact**
 
 | Gate | Status | Notes |
 |------|--------|-------|
-| G0 | **Open** | Fill charter and sign |
-| G1 | **Open** | — |
+| G0 | **Signed — Go** | 2026-06-19 — [`G0-charter.md`](./G0-charter.md) |
+| G1 | **Signed — Go** | 2026-06-19 — [`G1-requirements.md`](./G1-requirements.md) |
 | G2 | **Open** | — |
 | G3 | **Open** | — |
 | G4 | **Open** | — |
