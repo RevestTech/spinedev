@@ -9,6 +9,8 @@
 #
 # This script categorizes every grep hit and only fails on confirmed
 # value leaks. Run as part of V1_SHIP_CHECKLIST.md §4 launch gate.
+# Production vault path population (separate concern) is tracked in
+# docs/VAULT_PATHS_CHECKLIST.md (SPINE-018).
 #
 # Exit codes:
 #   0 — clean (zero value leaks)
@@ -104,6 +106,10 @@ while IFS= read -r line; do
   # split on is the Python assignment to the LHS variable, but the RHS
   # is a function call that READS the env var, not a value literal.
   if [[ "${code}" =~ os\.(environ\.(get|pop)|getenv)\( ]]; then
+    continue
+  fi
+  # pytest monkeypatch env helpers — delenv/getenv/popenv reference names only.
+  if [[ "${code}" =~ monkeypatch\.(delenv|getenv|popenv)\( ]]; then
     continue
   fi
   # Same for shell `${VAR:-default}` patterns where VAR is the secret name.

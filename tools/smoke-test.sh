@@ -1080,6 +1080,12 @@ phase12_bootstrap() {
   else
     _warn boot.docker_build "tools/docker-build-smoke.sh failed — check .github/workflows/docker-build.yml"
   fi
+  # SPINE-018 — secret-value grep audit (V1 §4; prod vault paths: docs/VAULT_PATHS_CHECKLIST.md).
+  if bash "$REPO_ROOT/tools/audit-secrets.sh" >/dev/null 2>&1; then
+    _info boot.audit_secrets "tools/audit-secrets.sh OK (0 confirmed value leaks)"
+  else
+    _warn boot.audit_secrets "tools/audit-secrets.sh failed — fix value leaks per V1_SHIP_CHECKLIST §4"
+  fi
 }
 
 # ─── cleanup + formatters ────────────────────────────────────────────
