@@ -26,13 +26,13 @@ byoc_validate_credentials() {
   if ! command -v curl >/dev/null 2>&1; then
     BYOC_DIE_CODE=2 byoc_die "curl required for Railway provisioner"
   fi
-  if [[ -z "${SPINE_BYOC_CREDENTIALS_REF:-}" ]]; then
-    _rw_log "no --credentials-ref set; expecting RAILWAY_API_TOKEN in env."
-    [[ -n "${RAILWAY_API_TOKEN:-}" ]] || { _rw_log "FAIL: no RAILWAY_API_TOKEN in env."; return 3; }
-  fi
   if [[ "${BYOC_STUB_CALLS:-0}" == "1" || "${BYOC_DRY_RUN:-0}" == "1" ]]; then
     _rw_log "STUB: would POST { me { id email } } to $_RW_GRAPHQL_ENDPOINT"
     return 0
+  fi
+  if [[ -z "${SPINE_BYOC_CREDENTIALS_REF:-}" ]]; then
+    _rw_log "no --credentials-ref set; expecting RAILWAY_API_TOKEN in env."
+    [[ -n "${RAILWAY_API_TOKEN:-}" ]] || { _rw_log "FAIL: no RAILWAY_API_TOKEN in env."; return 3; }
   fi
   # Real: resolve the token IN A SUBSHELL and pipe into curl via --header @-.
   # The token never lands in this shell's env.

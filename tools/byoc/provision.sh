@@ -274,8 +274,10 @@ prompt_if_blank SPINE_BYOC_ADMIN_EMAIL  "Initial admin email"
 # mode, we accept that the operator may have pre-loaded an environment
 # (e.g. assumed role via okta-aws-cli), but we will WARN.
 if [[ -z "$SPINE_BYOC_CREDENTIALS_REF" ]]; then
-  if (( BYOC_INTERACTIVE == 0 )); then
+  if (( BYOC_INTERACTIVE == 0 && BYOC_DRY_RUN == 0 )); then
     BYOC_DIE_CODE=2 byoc_die "non-interactive mode requires --credentials-ref=vault://… per #9"
+  elif (( BYOC_DRY_RUN == 1 )); then
+    byoc_warn "dry-run: no --credentials-ref set; credential validation will be stubbed."
   else
     byoc_warn "no --credentials-ref set; assuming caller pre-loaded delegated-role creds in the env."
   fi

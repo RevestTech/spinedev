@@ -1068,6 +1068,12 @@ phase12_bootstrap() {
   else
     _warn boot.dr_dryrun "tools/dr-test.sh --dry-run failed — check recovery/ wiring"
   fi
+  # SPINE-016 — BYOC provision dry-run (AWS + Railway; no cloud API calls).
+  if bash "$REPO_ROOT/tools/byoc/tests/test_provision_dry_run.sh" >/dev/null 2>&1; then
+    _info boot.byoc_dryrun "tools/byoc/tests/test_provision_dry_run.sh OK (AWS + Railway dry-run)"
+  else
+    _warn boot.byoc_dryrun "BYOC provision dry-run failed — check tools/byoc/ wiring"
+  fi
   # SPINE-017 — multi-arch Docker publish pipeline (static grep; no docker build).
   if bash "$REPO_ROOT/tools/docker-build-smoke.sh" --quiet >/dev/null 2>&1; then
     _info boot.docker_build "tools/docker-build-smoke.sh OK (buildx amd64+arm64 + cosign in docker-build.yml)"
