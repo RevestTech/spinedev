@@ -1,29 +1,24 @@
 # Orchestrator loop prompt
 
-Sprint 1 Phase 2 **complete** (2026-06-19).
+**Phase 3 engineering-prep complete** (2026-06-19).
 
 ## Done
 
-SPINE-004–015 (all Phase 2 rows)
+- Phase 2: SPINE-004–015
+- Phase 3: SPINE-016–020
 
-## Phase 3 — open
+## Next (human / ops — not agent backlog)
 
-| ID | Title |
-|----|-------|
-| SPINE-019 | Timed DR drill RTO ≤ 30m |
-| SPINE-020 | Design partner onboarding E2E |
+See `docs/V1_SHIP_CHECKLIST.md` §1–7. Engineering code is **complete**; remaining gates are vendor vault, Shamir custodians, live BYOC apply, design partners (3), legal, SOC2, pen-test, `spine.dev` infra.
 
-## Done Phase 3 (engineering-prep)
+## Each tick (if new engineering items land)
 
-SPINE-016, 017, 018
-
-## Each tick
-
-1. Read `todo/BACKLOG.md` Phase 3
-2. Work one SPINE-01x item
-3. Smoke 99/0 · commit · push
+1. Read `todo/BACKLOG.md` and `docs/V1_SHIP_CHECKLIST.md`
+2. Work one AI-drivable unchecked item (ops-blocked → document hold, do not spin)
+3. Smoke **99 PASS / 0 FAIL** · commit · push
 
 ## Holds
 
 - H-REAUDIT — human sign-off before customer ship
-- V1_SHIP_CHECKLIST §6–7 — marketing/legal human-only
+- H-PM — PM `:5190` service external
+- V1 §2–3, §6–7 — marketing/legal/custodian human-only

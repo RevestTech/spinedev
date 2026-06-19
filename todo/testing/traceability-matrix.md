@@ -14,6 +14,8 @@ Map requirements to implementation and tests. Update as items enter Build.
 | SPINE-002 | CI pipeline | `.github/workflows/ci.yml` | CI workflow | G2 | Partial |
 | SPINE-003 | Hub project route tests | `shared/api/routes/` | `shared/api/tests/test_routes_projects.py` | G4 | Partial |
 | HARNESS-P10 | Harness Lite loop-bridge | `tools/harness/` | `tools/harness/tests/test_loop_bridge.py` | G4 | Done |
+| SPINE-019 | DR timed drill RTO gate | `recovery/`, `tools/dr-test.sh` | `tools/test_dr_rto_gate.sh` | G6 | Done |
+| SPINE-020 | Design partner onboarding | `docs/DESIGN_PARTNER_ONBOARDING.md` | `tools/design-partner-smoke.sh` | G5 | Done |
 
 **Status values:** Planned · Partial · Done · Deferred (link ticket)
 

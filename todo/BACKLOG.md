@@ -94,6 +94,8 @@
 - [x] **SPINE-016** BYOC AWS+Railway dry-run smoke gate (2026-06-19, `0d57e5c`)
 - [x] **SPINE-017** Multi-arch docker-build smoke gate (2026-06-19, `76627df`)
 - [x] **SPINE-018** Vault paths production checklist (2026-06-19, `cfb9705`)
+- [x] **SPINE-019** DR timed drill RTO gate (2026-06-19, `5446fdd`)
+- [x] **SPINE-020** Design partner onboarding runbook + smoke (2026-06-19, `eac7068`)
 
 ---
 

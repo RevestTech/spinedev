@@ -1086,6 +1086,18 @@ phase12_bootstrap() {
   else
     _warn boot.audit_secrets "tools/audit-secrets.sh failed — fix value leaks per V1_SHIP_CHECKLIST §4"
   fi
+  # SPINE-019 — DR RTO gate dry-run (full timed drill: docs/DR_TIMED_DRILL.md).
+  if bash "$REPO_ROOT/tools/test_dr_rto_gate.sh" >/dev/null 2>&1; then
+    _info boot.dr_rto_gate "tools/test_dr_rto_gate.sh OK (RTO gate wiring)"
+  else
+    _warn boot.dr_rto_gate "tools/test_dr_rto_gate.sh failed — check recovery/ RTO gate"
+  fi
+  # SPINE-020 — design partner laptop onboarding smoke (docs/DESIGN_PARTNER_ONBOARDING.md).
+  if bash "$REPO_ROOT/tools/design-partner-smoke.sh" >/dev/null 2>&1; then
+    _info boot.design_partner "tools/design-partner-smoke.sh OK (hub healthz + project create)"
+  else
+    _warn boot.design_partner "tools/design-partner-smoke.sh failed — check Hub + onboarding path"
+  fi
 }
 
 # ─── cleanup + formatters ────────────────────────────────────────────
