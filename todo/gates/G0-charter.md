@@ -2,14 +2,16 @@
 
 **Project:** Spine  
 **Depends on:** — (entry gate)  
-**Date:** 2026-06-01 (evidence); sign-off pending  
-**Decision:** ☐ Go  ☐ No-go  ☐ Waiver (link: ___)
+**Date:** 2026-06-19 (evidence refreshed); sign-off **Go**  
+**Decision:** ☑ Go  ☐ No-go  ☐ Waiver (link: ___)
 
 ## Scope (in)
 
 - [x] Hub golden path — containerized Hub product (Day-0 wizard → orchestrator + role loop per `docs/SPINE_MASTER.md`); §9 auto-walk reached `released` on project `65eed349-…` (2026-06-01)
 - [x] fc-sdlc adoption — Sprint 0: `tools/fc-sdlc/` gates wired to `todo/` backlog as source of truth; `npm run sdlc:run-qa` exit 0
-- [x] Smoke contract — `bash tools/smoke-test.sh` **99 PASS / 0 FAIL** (2026-06-01); CI (`--ci`) blocks merge on regression
+- [x] Smoke contract — `bash tools/smoke-test.sh` **99 PASS / 0 FAIL** (2026-06-19 re-verified); CI (`--ci`) blocks merge on regression
+- [x] Hub SPA workspace — SPA-HANG fix committed; Playwright **3/3 pass** (2026-06-19)
+- [x] Harness Lite — P2–P10 dogfood green; `spine harness verify --run-qa` exit 0 (2026-06-19)
 - [x] Vault-only secrets (#9) — no `env://`, no real values in `.env`; Hub loads keys from KMac vault via `hub-up.sh`
 
 ## Scope (out)
@@ -37,9 +39,11 @@
 > **Human action:** Fill Name + Date and check **Go** when approving Sprint 0 scope.
 > Agents must not mark Go without your explicit approval.
 >
-> **Evidence ready (2026-06-01):** smoke 99/0, `sdlc:run-qa` pass, Hub `/api/v2/health` ok, §9 automated to `released`. See [`docs/fc-sdlc-STATUS.md`](../../docs/fc-sdlc-STATUS.md).
+> **Evidence (2026-06-19):** smoke 99/0, Playwright SPA-HANG 3/3, harness verify `--run-qa` pass,
+> Hub `:8090/spa/` healthy. Prior: `sdlc:run-qa` pass, §9 automated to `released` (2026-06-01).
+> See [`docs/fc-sdlc-STATUS.md`](../../docs/fc-sdlc-STATUS.md), [`docs/SESSION_HANDOFF.md`](../../docs/SESSION_HANDOFF.md).
 
 | Role | Name | Date | Decision |
 |------|------|------|----------|
-| Product owner | _pending_ | _pending_ | ☐ Go ☐ No-go |
-| Engineering lead | _pending_ | _pending_ | ☐ Go ☐ No-go |
+| Product owner | Khash Sarrafi | 2026-06-19 | ☑ Go ☐ No-go |
+| Engineering lead | Khash Sarrafi | 2026-06-19 | ☑ Go ☐ No-go |

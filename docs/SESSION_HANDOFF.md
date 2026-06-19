@@ -17,7 +17,7 @@ background sentinel ticks log to `.spine/harness/loops/sentinel.log`.
 **SPA-HANG:** Committed (`91db96e`). Playwright regression **3/3 pass** (2026-06-19):
 `e2e/project-workspace-hang.spec.ts`, `e2e/booger-workspace.spec.ts`.
 
-**G0 human sign-off** still pending — PO + Eng lead in `todo/gates/G0-charter.md`.
+**G0 human sign-off** — **Go** (2026-06-19, Khash Sarrafi PO + Eng lead). See `todo/gates/G0-charter.md`.
 
 ---
 

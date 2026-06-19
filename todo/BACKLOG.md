@@ -19,7 +19,7 @@
 
 | Gate | Status | Blocker |
 |------|--------|---------|
-| G0 Charter | **Ready for sign-off** | Scope criteria met; evidence in [G0-charter.md](./gates/G0-charter.md) — awaiting PO + Eng lead Go |
+| G0 Charter | **Signed — Go** | PO + Eng lead sign-off 2026-06-19 — [`G0-charter.md`](./gates/G0-charter.md) |
 | G1 Requirements | Open | — |
 | G2 Architecture | Open | — |
 | G3 Build | Open | — |
