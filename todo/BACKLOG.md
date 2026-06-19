@@ -21,7 +21,7 @@
 |------|--------|---------|
 | G0 Charter | **Signed — Go** | PO + Eng lead sign-off 2026-06-19 — [`G0-charter.md`](./gates/G0-charter.md) |
 | G1 Requirements | **Signed — Go** | PO + Eng lead sign-off 2026-06-19 — [`G1-requirements.md`](./gates/G1-requirements.md) |
-| G2 Architecture | Open | — |
+| G2 Architecture | **Signed — Go** | Tech + Eng lead sign-off 2026-06-19 — [`G2-architecture.md`](./gates/G2-architecture.md) |
 | G3 Build | Open | — |
 | G4 Test | Open | — |
 | G5 Release | Open | — |
