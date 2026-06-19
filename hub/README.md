@@ -24,7 +24,7 @@ shapes consumes it.
 
 | Path | Purpose |
 |---|---|
-| `Dockerfile` | Multi-arch (amd64+arm64) Python 3.11 + uvicorn image; non-root user `spine`; healthcheck via `healthcheck.sh`. |
+| `Dockerfile` | Multi-arch (amd64+arm64) Python 3.11 + uvicorn image; non-root user `spine`; healthcheck via `healthcheck.sh`. CI publish: `.github/workflows/docker-build.yml` (buildx + cosign); gate: `bash tools/docker-build-smoke.sh`. |
 | `docker-compose.yml` | Laptop-shape compose: hub + bundled vault (OpenBao) + bundled keycloak (+ its own postgres) + spine postgres + flyway migrator. Shared `spine` bridge network so each service can talk by name. |
 | `entrypoint.sh` | Container PID-1 (under `tini`): wait-for-vault, wait-for-postgres, wait-for-keycloak, optional flyway run, bootstrap secrets adapter, exec `uvicorn shared.api.app:create_app --factory`. |
 | `healthcheck.sh` | Curl-based `/healthz` probe referenced by Dockerfile HEALTHCHECK. Exit codes documented in the file. |
