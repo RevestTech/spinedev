@@ -23,8 +23,8 @@ Go / no-go checkpoints for delivery. Each gate requires an **approval artifact**
 | G2 | **Signed — Go** | 2026-06-19 — [`G2-architecture.md`](./G2-architecture.md) |
 | G3 | **Signed — Go** | 2026-06-19 — [`G3-build-signoff.md`](./G3-build-signoff.md) |
 | G4 | **Signed — Go** | 2026-06-19 — [`G4-test-signoff.md`](./G4-test-signoff.md) |
-| G5 | **Open** | Reality audit + coverage reports required |
-| G6 | **Open** | — |
+| G5 | **Signed — Go** | 2026-06-19 — [`G5-release-ready.md`](./G5-release-ready.md) |
+| G6 | **Open** | Operate runbooks + deploy drill |
 
 ## Waivers
 

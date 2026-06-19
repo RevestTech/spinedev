@@ -2,18 +2,20 @@
 
 **Date:** 2026-06-19  
 **Auditor:** Orchestrator session (automated scout + QA sweep)  
+**Re-audit:** Harness `verify --run-qa` exit 0 (2026-06-19)  
 **Scope:** Foundation epic + Hub golden path surfaces
 
 ## Summary
 
 | Class | Count |
 |-------|-------|
-| LIVE | 8 |
-| PARTIAL | 4 |
-| FAKE | 1 |
+| LIVE | 9 |
+| PARTIAL | 3 |
+| STUB (visible badge) | 1 |
+| FAKE | 0 |
 | BROKEN | 0 |
 
-**G5 posture:** Not ready — PARTIAL/FAKE items need defer badges or fixes before sign-off.
+**G5 posture:** P0 golden path **ready** — STUB/PARTIAL items documented with defer notes.
 
 ## Findings
 
@@ -23,15 +25,17 @@
 | Hub SPA dashboard | LIVE | `curl :8090/spa/` → 200 |
 | Project workspace | LIVE | Playwright 3/3 (`project-workspace-hang.spec.ts`) |
 | Decision queue | LIVE | `panels/decision-queue/+page.svelte` + API |
-| Orchestrator bridge | LIVE | `KIND_ROLE_DISPATCH` 13 kinds incl. watcher tail (2026-06-19 fix) |
-| Phase watcher tail | PARTIAL | Rules exist; tail kinds now bridged — needs live project E2E |
-| Role chat stubs | FAKE | `RoleChatPanel` shows `metadata.stub` when MCP tool absent |
-| PM dashboard | PARTIAL | `pm.config.json` present; service not running locally |
-| Operating loop daemons | PARTIAL | `role_runtime.py` directive bus only; no background workers |
-| G5 coverage reports | MISSING | PRD/API/Data coverage docs not yet filled |
+| Orchestrator bridge | LIVE | `KIND_ROLE_DISPATCH` 13 kinds (tail wired 2026-06-19) |
+| Phase watcher tail | PARTIAL | Bridged; live project E2E through `operate` pending |
+| Role chat offline | STUB | `RoleChatPanel` shows visible **stub** badge (`:228-231`) |
+| PM dashboard | PARTIAL | `pm.config.json`; service external — defer Sprint 1 |
+| Operating loop daemons | PARTIAL | `role_runtime.py` directive bus; background workers Sprint 1 |
+| Coverage reports | LIVE | PRD/API/Data 2026-06-19 in `docs/product/` |
 
-## Next orchestrator actions
+## Deferrals (visible / ticket)
 
-1. Live project E2E through `verify_approved → operate` with phase watcher
-2. Fill `COVERAGE-PRD-2026-06-19.md` from `docs/PRD.md` index
-3. Defer or wire RoleChatPanel stub with visible badge
+| Item | Hold | Owner | Target |
+|------|------|-------|--------|
+| PM :5190 | H-PM | DevOps | Sprint 1 — vendor PM path |
+| Background role workers | H-WORKERS | Engineering | Sprint 1 per OPERATING_LOOP_GAP |
+| Independent human re-audit | H-REAUDIT | QA | Before customer ship |

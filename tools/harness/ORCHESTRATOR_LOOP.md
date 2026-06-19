@@ -17,11 +17,10 @@ You are the **Spine orchestrator**. Continue until program gates G5→G6 are sig
 **Fixed this session:** phase-watcher tail kinds (`auditor_approval`, `release_approval`, `operate_kickoff`) wired in `KIND_ROLE_DISPATCH`.
 
 **Not working / open:**
-- G5 — reality + coverage reports (`docs/product/REALITY-AUDIT-2026-06-19.md` started)
-- G6 — blocked on G5
-- PM service at :5190 (external path)
-- Background role worker daemons (partial — `role_runtime.py` only)
-- RoleChatPanel stub surfaces (FAKE-class)
+- **G6 Operate** — runbooks, deploy drill, observability
+- PM service at :5190 (external path, Sprint 1)
+- Background role worker daemons (Sprint 1)
+- Live project E2E through `operate` phase
 
 ## Current priority
 

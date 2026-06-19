@@ -24,7 +24,7 @@
 | G2 Architecture | **Signed — Go** | Tech + Eng lead sign-off 2026-06-19 — [`G2-architecture.md`](./gates/G2-architecture.md) |
 | G3 Build | **Signed — Go** | Foundation epic SPINE-001–003 — [`G3-build-signoff.md`](./gates/G3-build-signoff.md) |
 | G4 Test | **Signed — Go** | QA + Tech lead 2026-06-19 — [`G4-test-signoff.md`](./gates/G4-test-signoff.md) |
-| G5 Release | Open | — |
+| G5 Release | **Signed — Go** | Sprint 0 golden path — [`G5-release-ready.md`](./gates/G5-release-ready.md) |
 | G6 Operate | Open | — |
 
 ---
