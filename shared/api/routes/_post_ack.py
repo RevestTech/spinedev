@@ -33,6 +33,7 @@ from shared.api.routes._pipeline_bridge import (
     PHASE_ACCEPTANCE,
     PHASE_BUILD_COMPLETE,
     PHASE_BUILD_IN_PROGRESS,
+    PHASE_OPERATE,
     PHASE_PLAN_APPROVED,
     PHASE_PLAN_IN_PROGRESS,
     PHASE_RELEASED,
@@ -297,6 +298,19 @@ async def _orchestrate_hub_role(
     result_kind = data.get("result_kind") or approval_card_kind
 
     if result_kind == "deploy" or kind == "local_deploy_prompt":
+        if kind == "operate_kickoff":
+            op_extra = data.get("extra") if isinstance(data.get("extra"), dict) else {}
+            if op_extra.get("operate_started_at"):
+                await advance_lifecycle_phase(
+                    project_id, PHASE_OPERATE, actor, grant_gate=True,
+                )
+            _emit(
+                "role_finished",
+                project_uuid=project_id,
+                role=spec.role,
+                message="operate runner finished via orchestrator",
+            )
+            return True
         _emit("role_finished", project_uuid=project_id, role=spec.role,
               message="local deploy dispatched via orchestrator")
         return True

@@ -21,6 +21,9 @@
 | Design-partner smoke | **4 pass / 0 fail / 1 skip** | 2026-06-19 |
 | `make hygiene` | 0 paths to clean | 2026-06-19 |
 | Golden-path E2E (prior) | project `fe4c11c3-…` reached **operate** | 2026-06-19 |
+| Founder validation run | project `f758be7e-…` reached **operate** | 2026-06-19 |
+
+**Operate fix:** `OPERATE_KICKOFF` now routes through `run_operate` (not devops install / legacy brief). Recovery action `retry_operate` on `released` phase.
 
 **Next (human/ops):** `docs/V1_SHIP_CHECKLIST.md` §1–7 — vendor vault, Shamir, live BYOC, `spine.dev`, design partners, legal, SOC2.
 

@@ -115,7 +115,7 @@ def _error(code: str, message: str, *, retryable: bool = False) -> ToolResponse:
 _HUB_BUILD_DIRECTIVES = (
     "PRODUCE_CODE", "REMEDIATE", "INSTALL", "CODE_REVIEW", "DEPLOY",
     "INSTALL_AND_SMOKE", "REMEDIATE_FROM_REVIEW", "DEPLOY_LOCAL",
-    "EXECUTE_QA", "RUN_TESTS",
+    "EXECUTE_QA", "RUN_TESTS", "OPERATE",
 )
 _HUB_BUILD_ROLES = frozenset({
     "engineer", "devops", "devops_release", "security_engineer", "auditor", "qa",

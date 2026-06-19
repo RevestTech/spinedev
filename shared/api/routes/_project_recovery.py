@@ -37,6 +37,7 @@ RecoveryAction = Literal[
     "retry_code_review",
     "retry_devops",
     "retry_qa",
+    "retry_operate",
     "reset_fix_loop",
     "resume",
 ]
@@ -432,6 +433,13 @@ def _action_specs(project: dict[str, Any]) -> list[RecoveryActionSpec]:
                 description="Regenerate the test plan after environment setup completes.",
             ))
 
+    if phase == "released" and md.get("deploy_result") and not md.get("operate_started_at"):
+        specs.append(RecoveryActionSpec(
+            action="retry_operate",
+            label="Start operate monitoring",
+            description="Run the operate runner (released → operate) after deploy is acknowledged.",
+        ))
+
     if specs:
         specs.append(RecoveryActionSpec(
             action="resume",
@@ -482,6 +490,8 @@ def _pick_resume_action(project: dict[str, Any]) -> RecoveryAction | None:
     if phase.startswith("verify"):
         if not md.get("qa_md"):
             return "retry_qa"
+    if phase == "released" and md.get("deploy_result") and not md.get("operate_started_at"):
+        return "retry_operate"
     if phase.startswith("plan") or phase == "intake":
         if md.get("trd_md") and not md.get("sprint_plan_md"):
             return "retry_conductor"
@@ -493,6 +503,7 @@ def _pick_resume_action(project: dict[str, Any]) -> RecoveryAction | None:
     if not specs:
         return None
     for preferred in (
+        "retry_operate",
         "retry_engineer_remediate",
         "retry_engineer",
         "retry_code_review",
@@ -568,6 +579,11 @@ def _dispatch_params(
             "kind": "devops_approval",
             "approval_card_kind": "qa_approval",
             "next_phase": phase_bucket(PHASE_VERIFY_IN_PROGRESS),
+        }
+    if action == "retry_operate":
+        return {
+            "kind": "operate_kickoff",
+            "approval_card_kind": None,
         }
     raise ValueError(f"unknown recovery action: {action}")
 
