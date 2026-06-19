@@ -1,0 +1,51 @@
+---
+description: Canonical local workspace — use ~/dev/SpineDevelopment; never run Node/Docker from iCloud path
+alwaysApply: true
+---
+
+# Local dev workspace (Spine)
+
+## Canonical repo root
+
+**Always develop from:**
+
+```
+~/dev/SpineDevelopment
+```
+
+Resolved: `/Users/khashsarrafi/dev/SpineDevelopment`
+
+Do **not** run `npm`, `vite`, `vitest`, `docker compose`, or `hub-up.sh` from the iCloud-synced path (`~/Library/CloudStorage/...` or `~/Projects/Apps/SpineDevelopment` when it resolves to CloudStorage). Node fails with `ERR_INVALID_MODULE_SPECIFIER` there.
+
+iCloud copy is for sync/backup only. Copy changes via git or `rsync` — do not treat it as the runtime cwd.
+
+## Environment
+
+| Variable | Value |
+|----------|--------|
+| `SPINE_LOCAL_ROOT` | `~/dev/SpineDevelopment` |
+| Hub SPA | http://localhost:8090/spa/ |
+| PM dashboard | http://localhost:5190 |
+| Python | `.venv/bin/python` (create via `make bootstrap`) |
+
+## Quick commands
+
+```bash
+cd ~/dev/SpineDevelopment
+bash tools/hub-up.sh              # start Hub stack
+bash tools/smoke-test.sh          # 99 PASS contract
+bash tools/harness/spine-harness status --markdown
+bash tools/local-dev-setup.sh     # first-time or repair
+```
+
+## Docs (read order)
+
+1. `docs/SPINE_MASTER.md` — vision, gaps, registry
+2. `Handoff.md` — Harness Lite initiative
+3. `LOCAL_DEV.md` — this machine's local setup
+
+## Agent defaults
+
+- Shell cwd: `~/dev/SpineDevelopment` unless user specifies otherwise
+- Evidence QA before claiming tests pass (`bash tools/fc-sdlc/ci-test-full.sh` or `npm run pm:qa`)
+- PM check-in per `.cursor/rules/project-manager.mdc`

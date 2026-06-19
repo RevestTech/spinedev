@@ -1,0 +1,28 @@
+{
+  "plugins": {
+    "modern-web-guidance": {
+      "enabled": true
+    },
+    "sonatype-cursor-plugin": {
+      "enabled": true
+    },
+    "sourcegraph-cursor-plugin": {
+      "enabled": true
+    },
+    "orchestrate": {
+      "enabled": true
+    },
+    "twilio-developer-kit": {
+      "enabled": true
+    },
+    "harness": {
+      "enabled": true
+    },
+    "opensearch-agent-skills": {
+      "enabled": true
+    },
+    "azure": {
+      "enabled": true
+    }
+  }
+}

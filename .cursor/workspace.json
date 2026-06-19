@@ -1,0 +1,9 @@
+{
+  "canonicalRoot": "~/dev/SpineDevelopment",
+  "hubUrl": "http://localhost:8090/spa/",
+  "pmUrl": "http://localhost:5190",
+  "avoidPathFragments": [
+    "Library/CloudStorage/iCloudDrive",
+    "com~apple~CloudDocs"
+  ]
+}

@@ -1,0 +1,34 @@
+---
+description: Harness Lite ADR-008 workflow — audit, fix, verify waves under tools/harness/
+globs: tools/harness/**,Handoff.md,.spine/harness/**
+alwaysApply: false
+---
+
+# Harness Lite (in-repo)
+
+Implementation lives in `tools/harness/`. Orchestrator entry: `spine harness <subcommand>`.
+
+## Wave order (ADR-008)
+
+1. **Audit** — deterministic scanners only (`spine harness audit`)
+2. **Fix** — one wave, exclusive file scope (`harness-fix-wave` skill)
+3. **Verify** — charter evals + optional QA (`spine harness verify --run-qa`)
+
+Never mix audit and fix in the same wave.
+
+## Commands
+
+```bash
+bash tools/harness/dogfood.sh
+bash tools/harness/spine-harness status --markdown
+bash tools/harness/spine-harness audit --project . --all
+bash tools/harness/spine-harness verify --project . --run-qa
+```
+
+## Skills
+
+- `harness-orchestrator` — loop / gate coordination
+- `harness-audit-wave`, `harness-fix-wave`, `harness-verify-wave`
+- `spine-harness-session` — PM check-in + session bookends
+
+Spec: `Handoff.md`

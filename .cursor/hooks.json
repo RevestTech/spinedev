@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "command": ".cursor/hooks/session-context.sh"
+      }
+    ],
+    "beforeShellExecution": [
+      {
+        "command": ".cursor/hooks/guard-icloud-path.sh",
+        "matcher": "npm |node |vite|vitest|docker |hub-up|make bootstrap"
+      }
+    ],
+    "stop": [
+      {
+        "command": ".cursor/hooks/on-stop.sh",
+        "loop_limit": 0
+      }
+    ]
+  }
+}
