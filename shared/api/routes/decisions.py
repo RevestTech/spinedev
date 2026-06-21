@@ -555,6 +555,34 @@ async def get_decision(
     return card
 
 
+async def ack_decision_internal(
+    decision_id: str,
+    *,
+    actor: str,
+) -> tuple[DecisionCard, AuditRecord] | None:
+    """Programmatic ack for PipelineRunner and test harnesses."""
+    updated = await _STORE.atransition(decision_id, "acked", actor=actor)
+    if updated is None:
+        return None
+    rec = _audit_decision_event(
+        action="decision_acked",
+        decision_id=decision_id,
+        actor=actor,
+        project_id=updated.project_id,
+    )
+    try:
+        import asyncio as _asyncio
+        from shared.api.routes._post_ack import on_decision_acked
+
+        _asyncio.create_task(on_decision_acked(updated, actor=actor))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "post_ack_hook_failed",
+            extra={"decision_id": decision_id, "error": str(exc)},
+        )
+    return updated, rec
+
+
 @router.post("/{decision_id}/ack", response_model=DecisionActionResponse)
 async def ack_decision(
     decision_id: str,
@@ -562,22 +590,10 @@ async def ack_decision(
 ) -> DecisionActionResponse:
     """Acknowledge / approve a decision card."""
     actor = actor_label(user)
-    updated = await _STORE.atransition(decision_id, "acked", actor=actor)
-    if updated is None:
+    result = await ack_decision_internal(decision_id, actor=actor)
+    if result is None:
         raise HTTPException(404, detail={"error_code": "decision_not_found", "message": decision_id})
-    rec = _audit_decision_event(
-        action="decision_acked", decision_id=decision_id, actor=actor, project_id=updated.project_id
-    )
-    # Side-effect hooks tied to ack — fire-and-forget so the response
-    # lands fast. Each handler reads card.metadata.kind to decide what
-    # downstream work to kick off (phase advance + role dispatch).
-    try:
-        import asyncio as _asyncio
-        from shared.api.routes._post_ack import on_decision_acked
-        _asyncio.create_task(on_decision_acked(updated, actor=actor))
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("post_ack_hook_failed",
-                       extra={"decision_id": decision_id, "error": str(exc)})
+    updated, rec = result
     return DecisionActionResponse(
         decision_id=decision_id,
         status=updated.status,

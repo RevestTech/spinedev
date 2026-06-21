@@ -160,7 +160,10 @@ build_image() {
   if host_needs_prebuilt_spa; then
     build_spa_on_host
     echo "[hub-up] building image with host SPA via buildx --build-context"
+    # --network=host: Docker Desktop bridge often cannot reach deb.debian.org
+    # during apt-get in the runtime stage; host networking avoids flake.
     docker buildx build \
+      --network=host \
       --build-context spa-dist=shared/ui/spa/dist \
       -t "${IMAGE_TAG}" \
       -f hub/Dockerfile \
@@ -169,6 +172,7 @@ build_image() {
   else
     echo "[hub-up] building image with in-Docker spa-builder stage"
     docker buildx build \
+      --network=host \
       -t "${IMAGE_TAG}" \
       -f hub/Dockerfile \
       --load \

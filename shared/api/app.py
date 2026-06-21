@@ -278,6 +278,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     instinct_promotion_task: asyncio.Task[None] | None = None
     role_worker_stop: asyncio.Event | None = None
     role_worker_task: asyncio.Task[None] | None = None
+    pipeline_runner_stop: asyncio.Event | None = None
+    pipeline_runner_task: asyncio.Task[None] | None = None
     try:
         from shared.runtime.phase_watcher import (  # noqa: PLC0415
             run_phase_watcher,
@@ -332,6 +334,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception as exc:  # noqa: BLE001
         logger.warning("role_worker_start_failed", extra={"error": str(exc)})
 
+    try:
+        from shared.runtime.pipeline_runner import (  # noqa: PLC0415
+            pipeline_runner_enabled,
+            run_pipeline_runner,
+        )
+
+        if ok and pipeline_runner_enabled():
+            pipeline_runner_stop = asyncio.Event()
+            pipeline_runner_task = asyncio.create_task(
+                run_pipeline_runner(pipeline_runner_stop),
+            )
+            logger.info("pipeline_runner_task_started")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("pipeline_runner_start_failed", extra={"error": str(exc)})
+
     if ok:
         try:
             from shared.api.routes._project_recovery import (  # noqa: PLC0415
@@ -377,6 +394,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 await role_worker_task
             except Exception:  # noqa: BLE001
                 logger.warning("role_worker_task_stop_failed")
+        if pipeline_runner_stop is not None and pipeline_runner_task is not None:
+            pipeline_runner_stop.set()
+            try:
+                await pipeline_runner_task
+            except Exception:  # noqa: BLE001
+                logger.warning("pipeline_runner_task_stop_failed")
         if remote_mcp_client is not None:
             try:
                 await remote_mcp_client.aclose()

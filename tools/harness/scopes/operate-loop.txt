@@ -1,0 +1,16 @@
+# Wave 3 — operate-loop scope (Harness Lite sprint-close)
+# Lines are repo-relative paths. Tests run via scope_pytest.py; sources audited for presence.
+
+# --- Wave 1: recovery / remediate dead-ends ---
+shared/api/routes/_post_ack.py
+shared/api/routes/_project_recovery.py
+shared/api/routes/_role_dispatch_bridge.py
+
+# --- Wave 2: autonomous feature iteration ---
+shared/runtime/gate_policy.py
+shared/runtime/pipeline_runner.py
+
+# --- Tests (scoped pytest gate) ---
+shared/api/tests/test_operate_loop.py
+shared/api/tests/test_project_recovery.py
+shared/runtime/tests/test_phase_watcher_rules.py

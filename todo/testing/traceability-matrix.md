@@ -4,21 +4,25 @@ Map requirements to implementation and tests. Update as items enter Build.
 
 | REQ-ID | Feature | Module / path | Test file | Gate | Status |
 |--------|---------|---------------|-----------|------|--------|
-| REQ-INIT-1 | Plan pipeline — intake → PRD → TRD | `plan/`, `orchestrator/` | `orchestrator/cli/tests/` | G4 | Partial |
-| REQ-INIT-2 | Hub — containerized product | `hub/`, `shared/ui/spa/` | `tools/smoke-test.sh` | G4 | Partial |
-| REQ-INIT-5 | Vault-only secrets | `shared/secrets/`, `vault/` | `tools/smoke-test.sh` (vault phase) | G4 | Partial |
-| REQ-INIT-6 | Identity — Keycloak | `keycloak/`, `shared/identity/` | `tools/smoke-test.sh` | G4 | Partial |
-| REQ-INIT-7 | LLM-agnostic | `shared/llm/` | `shared/llm/tests/` | G4 | Partial |
-| REQ-INIT-13 | Verify — TRON + Cite-or-Refuse | `verify/`, `shared/mcp/tools/` | `verify/charter_evals/tests/` | G4 | Partial |
-| SPINE-001 | Local dev + smoke contract | `tools/smoke-test.sh`, `tools/hub-up.sh` | `tools/smoke-test.sh` | G2 | Done |
-| SPINE-002 | CI pipeline | `.github/workflows/ci.yml` | CI workflow | G2 | Partial |
-| SPINE-003 | Hub project route tests | `shared/api/routes/` | `shared/api/tests/test_routes_projects.py` | G4 | Partial |
-| HARNESS-P10 | Harness Lite loop-bridge | `tools/harness/` | `tools/harness/tests/test_loop_bridge.py` | G4 | Done |
-| SPINE-019 | DR timed drill RTO gate | `recovery/`, `tools/dr-test.sh` | `tools/test_dr_rto_gate.sh` | G6 | Done |
-| SPINE-020 | Design partner onboarding | `docs/DESIGN_PARTNER_ONBOARDING.md` | `tools/design-partner-smoke.sh` | G5 | Done |
+| REQ-INIT-1 | Hub Day-0 surfaces | `hub/`, `shared/ui/spa/` | `tools/smoke-test.sh` | G4 | Partial |
+| REQ-INIT-10 | KG retrieve/index | `build/kg/`, `shared/runtime/kg_role_context.py` | `shared/api/tests/test_post_ack_golden_path.py` | G4 | Partial |
+| SPINE-OP-01 | Security review blocked → remediate | `shared/api/routes/_post_ack.py`, `_role_dispatch_bridge.py` | `shared/api/tests/test_project_recovery.py` | G4 | Done |
+| SPINE-OP-02 | Auto-remediate retry on dispatch_in_flight | `shared/api/routes/_project_recovery.py` | `shared/api/tests/test_project_recovery.py` | G4 | Done |
+| SPINE-OP-03 | Dedupe auto-remediate schedules | `shared/api/routes/_project_recovery.py` | `shared/api/tests/test_project_recovery.py` | G4 | Done |
+| SPINE-OP-04 | Recovery API perf (async workspace scan) | `shared/api/routes/_project_recovery.py` | `shared/api/tests/test_project_recovery.py` | G4 | Done |
+| SPINE-OP-06 | devops ack → complete + promote feature | `shared/api/routes/_post_ack.py`, `_project_recovery.py` | `shared/api/tests/test_operate_loop.py` | G4 | Done |
+| SPINE-OP-07 | Promoted feature → PRODUCE_FEATURE | `shared/api/routes/_project_recovery.py`, `_role_dispatch_bridge.py` | `shared/api/tests/test_operate_loop.py` | G4 | Done |
+| SPINE-OP-08 | Persist operate_serve_url | `shared/api/routes/_post_ack.py` | `shared/api/tests/test_operate_loop.py` | G4 | Done |
+| SPINE-OP-09 | Phase watcher operate + full_auto | `shared/runtime/pipeline_runner.py`, `gate_policy.py` | `shared/runtime/tests/test_phase_watcher_rules.py` | G4 | Done |
+| SPINE-OP-10 | Operate loop unit coverage | `shared/api/tests/test_operate_loop.py` | same | G4 | Done |
+| SPINE-H-02 | Harness sprint-close operate scope | `tools/harness/sprint-close-operate-loop.sh` | `tools/harness/lib/scope_pytest.py` | G4 | Done |
+| SPINE-ACC-01 | Black-box operate acceptance | Hub API (read-only) | `tools/acceptance/operate_blackbox.py` | G5 | Planned |
+| SPINE-OP-05 | Hub rebuild + smoke (no hot-patch) | `tools/hub-up.sh`, `hub/` | `tools/smoke-test.sh` | G4/G5 | Pending |
 
 **Status values:** Planned · Partial · Done · Deferred (link ticket)
 
 *Add a row per backlog item in [BACKLOG.md](../BACKLOG.md) as items enter Build.*
 
-**Last updated:** 2026-06-19
+**Evidence rollup:** `bash tools/harness/wave4-ship-gates.sh` → `todo/gates/evidence/wave4-operate-loop-latest.md`
+
+**Last updated:** 2026-06-21

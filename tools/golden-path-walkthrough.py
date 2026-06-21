@@ -54,6 +54,26 @@ _INTAKE_PROFILES: dict[str, list[str]] = {
             "You have enough context — end intake with [INTAKE_COMPLETE] on its own line."
         ),
     ],
+    "jellybeans": [
+        (
+            "I am a customer who wants a website about jelly beans — fun, colorful, family-friendly. "
+            "Stack: Next.js 14 App Router, TypeScript, Tailwind CSS. Deployable with "
+            "`npm run dev` on localhost. Solo founder on a laptop."
+        ),
+        (
+            "Success: landing page hero about jelly beans, three feature cards (flavors, history, "
+            "fun facts), primary CTA to a /contact page. Contact page has a simple form UI "
+            "(no backend). package.json with dev script; bind to process.env.PORT."
+        ),
+        (
+            "Out of scope: e-commerce, accounts, CMS, database, payments, external APIs. "
+            "5-12 files max — ship in one session today."
+        ),
+        (
+            "No budget beyond today. Top risk is scope creep — jelly bean marketing site only. "
+            "You have enough context — end intake with [INTAKE_COMPLETE] on its own line."
+        ),
+    ],
 }
 
 
@@ -275,21 +295,45 @@ def main() -> None:
         "spine_on_spine": True,
         "greenfield": False,
         "description": (
-            "Sample marketing website — Next.js landing + contact (golden path website profile)."
-            if profile == "website"
-            else "Automated golden-path walkthrough — ack cards through gates."
+            "Customer jelly bean marketing website — Next.js landing + contact (jellybeans profile)."
+            if profile == "jellybeans"
+            else (
+                "Sample marketing website — Next.js landing + contact (golden path website profile)."
+                if profile == "website"
+                else "Automated golden-path walkthrough — ack cards through gates."
+            )
         ),
     }
     resume_uuid = os.environ.get("PROJECT_UUID", "").strip()
     if resume_uuid:
         project_uuid = resume_uuid
         print(f"[golden-path-walkthrough] Resuming project_uuid={project_uuid}")
+        md = _project_metadata(base, project_uuid)
+        phase = _current_phase(base, project_uuid)
+        if phase == "intake" and not md.get("intake_done"):
+            resume_name = str(md.get("name") or name)
+            print(
+                f"[golden-path-walkthrough] intake incomplete on resume — "
+                f"continuing intake chat for {resume_name}"
+            )
+            _run_intake(base, project_uuid, resume_name)
+            if not _wait_for_kind(base, project_uuid, "prd_approval", timeout_sec=360.0):
+                print(
+                    "[golden-path-walkthrough] WARN: prd_approval card not seen within timeout; "
+                    "continuing to ack whatever is pending"
+                )
     else:
         created = _request(base, "POST", "/api/v2/projects", create_body)
         if created.get("status") == "error":
             _fail(f"project create failed: {json.dumps(created)[:400]}")
         project_uuid = _project_uuid_from_create(created)
         print(f"[golden-path-walkthrough] Created project_uuid={project_uuid}")
+        uuid_file = os.environ.get("GOLDEN_PATH_UUID_FILE", "").strip()
+        if uuid_file:
+            from pathlib import Path
+
+            Path(uuid_file).parent.mkdir(parents=True, exist_ok=True)
+            Path(uuid_file).write_text(project_uuid + "\n", encoding="utf-8")
 
         # Ack intake briefing (no-op for chain) then run intake to seed PRD card.
         items = _fetch_pending_clean(base)

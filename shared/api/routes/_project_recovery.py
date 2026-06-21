@@ -28,6 +28,11 @@ from shared.api.routes._pipeline_bridge import (
 
 logger = logging.getLogger("spine.api.project_recovery")
 
+# Projects with an active auto-remediate scheduler (dedupe concurrent schedules).
+_AUTO_REMEDIATE_SCHEDULED: set[str] = set()
+_AUTO_REMEDIATE_MAX_ATTEMPTS = 12
+_AUTO_REMEDIATE_RETRY_DELAY_SECS = 5.0
+
 RecoveryAction = Literal[
     "retry_planner",
     "retry_architect",
@@ -38,6 +43,7 @@ RecoveryAction = Literal[
     "retry_devops",
     "retry_qa",
     "retry_operate",
+    "retry_feature",
     "reset_fix_loop",
     "resume",
 ]
@@ -47,6 +53,122 @@ _TERMINAL_PHASES = frozenset({"retro", "completed", "terminated"})
 # restart, worker crash, hung MCP call). Must stay below the SPA stale threshold.
 _INFLIGHT_STALE_SECONDS = 5 * 60
 MAX_CODE_FIX_ITERATIONS = 3
+
+
+def _schedule_hub_task(coro: Any) -> bool:
+    """Schedule ``coro`` on the Hub asyncio loop (works from sync post-ack paths)."""
+    try:
+        asyncio.get_running_loop().create_task(coro)
+        return True
+    except RuntimeError:
+        from shared.api.dependencies import get_hub_event_loop  # noqa: PLC0415
+
+        hub_loop = get_hub_event_loop()
+        if hub_loop is not None and hub_loop.is_running():
+            asyncio.run_coroutine_threadsafe(coro, hub_loop)
+            return True
+    logger.warning(
+        "hub_task_schedule_failed",
+        extra={"coro": getattr(coro, "__qualname__", repr(coro))},
+    )
+    return False
+
+
+def _pending_feature_request(md: dict[str, Any]) -> str | None:
+    """Latest operate-phase feature still awaiting engineer implementation."""
+    requests = md.get("feature_requests")
+    if isinstance(requests, list):
+        for entry in reversed(requests):
+            if not isinstance(entry, dict):
+                continue
+            if entry.get("status") == "requested":
+                feature = str(entry.get("feature") or "").strip()
+                if feature:
+                    return feature
+        # Do not fall back while a feature pass is already underway.
+        if any(
+            isinstance(entry, dict) and entry.get("status") == "in_progress"
+            for entry in requests
+        ):
+            return None
+    latest = str(md.get("latest_feature_request") or "").strip()
+    return latest or None
+
+
+def _feature_iteration_start_patch(md: dict[str, Any]) -> dict[str, Any]:
+    requests = list(md.get("feature_requests") or [])
+    for entry in reversed(requests):
+        if isinstance(entry, dict) and entry.get("status") == "requested":
+            entry["status"] = "in_progress"
+            break
+    return {
+        "feature_iteration_active": True,
+        "feature_requests": requests,
+    }
+
+
+def complete_active_feature_request_patch(md: dict[str, Any]) -> dict[str, Any]:
+    """Mark the in-progress operate feature as completed."""
+    requests = list(md.get("feature_requests") or [])
+    for entry in reversed(requests):
+        if isinstance(entry, dict) and entry.get("status") == "in_progress":
+            entry["status"] = "completed"
+            entry["completed_at"] = datetime.now(UTC).isoformat()
+            break
+    return {"feature_requests": requests}
+
+
+def promote_next_feature_request_patch(md: dict[str, Any]) -> dict[str, Any]:
+    """Promote the lowest-priority backlog feature to ``requested``."""
+    requests = list(md.get("feature_requests") or [])
+    backlog = [
+        entry for entry in requests
+        if isinstance(entry, dict) and entry.get("status") == "backlog"
+    ]
+    if not backlog:
+        return {}
+    backlog.sort(key=lambda e: int(e.get("priority") or 999))
+    next_title = str(backlog[0].get("title") or backlog[0].get("feature") or "")[:80]
+    for entry in requests:
+        if entry is backlog[0]:
+            entry["status"] = "requested"
+            entry["requested_at"] = datetime.now(UTC).isoformat()
+            break
+    return {"feature_requests": requests, "latest_feature_request": next_title or None}
+
+
+def operate_devops_ack_metadata_patch(prior_md: dict[str, Any]) -> dict[str, Any]:
+    """Metadata merged when ``devops_approval`` is acked during operate feature iteration."""
+    patch = complete_active_feature_request_patch(prior_md)
+    merged = {**prior_md, **patch}
+    patch.update(promote_next_feature_request_patch(merged))
+    patch["feature_iteration_active"] = False
+    patch["code_review_blocked"] = False
+    patch["last_role_failure"] = None
+    return patch
+
+
+async def dispatch_next_operate_feature(
+    project_id: str,
+    md: dict[str, Any],
+    *,
+    actor: str = "hub",
+) -> dict[str, Any]:
+    """Start engineer ``PRODUCE_FEATURE`` when a promoted feature is ``requested``."""
+    if not _pending_feature_request(md):
+        return {"ok": True, "skipped": True, "reason": "no_pending_feature"}
+    if md.get("recovery_dispatch_in_flight"):
+        return {
+            "ok": False,
+            "error": "dispatch_in_flight",
+            "message": "Cannot start next feature while recovery dispatch is in flight.",
+        }
+    return await recovery_dispatch(
+        project_id,
+        "retry_feature",
+        actor=actor,
+        auto_loop=True,
+    )
 
 
 def code_fix_iteration_count(metadata: dict[str, Any] | None) -> int:
@@ -440,6 +562,70 @@ def _action_specs(project: dict[str, Any]) -> list[RecoveryActionSpec]:
             description="Run the operate runner (released → operate) after deploy is acknowledged.",
         ))
 
+    if phase == "operate":
+        feature = _pending_feature_request(md)
+        if feature and not md.get("recovery_dispatch_in_flight"):
+            specs.append(RecoveryActionSpec(
+                action="retry_feature",
+                label="Implement feature request",
+                description=(
+                    "Send the engineer role the latest founder feature request "
+                    "and run review → install → redeploy."
+                ),
+            ))
+        if md.get("code_intro_md") or md.get("code_files"):
+            specs.append(RecoveryActionSpec(
+                action="retry_code_review",
+                label="Run security review",
+                description="Run security review on the latest feature code changes.",
+            ))
+        if (md.get("code_review_blocked") or md.get("code_review_md")) and (
+            md.get("code_intro_md") or md.get("code_files")
+        ):
+            n = code_fix_iteration_count(md)
+            exhausted = fix_loop_exhausted(project)
+            iter_note = (
+                f" (attempt {n + 1} of {MAX_CODE_FIX_ITERATIONS})"
+                if md.get("code_review_blocked") and not exhausted
+                else ""
+            )
+            label = (
+                "Fix security findings (auto re-review)"
+                if exhausted
+                else "Apply security remediation"
+            )
+            desc = (
+                "Run targeted engineer remediation from the latest security findings, "
+                "then automatically re-run security review — no full regen."
+                if exhausted
+                else (
+                    "Send the engineer role the latest security findings"
+                    f"{iter_note}. Security review re-runs automatically after remediation."
+                )
+            )
+            specs.append(RecoveryActionSpec(
+                action="retry_engineer_remediate",
+                label=label,
+                description=desc,
+            ))
+        if fix_loop_exhausted(project) or (
+            md.get("code_review_blocked") and code_fix_iteration_count(md) > 0
+        ):
+            specs.append(RecoveryActionSpec(
+                action="reset_fix_loop",
+                label="Reset fix loop",
+                description=(
+                    "Clear the remediation attempt counter and security block flag so "
+                    "automated fix passes can run again from zero."
+                ),
+            ))
+        if md.get("code_review_md") and not md.get("code_review_blocked"):
+            specs.append(RecoveryActionSpec(
+                action="retry_devops",
+                label="Run environment setup",
+                description="Install dependencies and smoke-test after feature changes.",
+            ))
+
     if specs:
         specs.append(RecoveryActionSpec(
             action="resume",
@@ -468,7 +654,7 @@ def _pick_resume_action(project: dict[str, Any]) -> RecoveryAction | None:
         if md.get("code_review_blocked") and md.get("code_review_md"):
             if fix_loop_exhausted(project):
                 if md.get("code_intro_md") or md.get("code_files"):
-                    return "retry_engineer_remediate"
+                    return "retry_code_review"
                 return None
             return "retry_engineer_remediate"
         if md.get("sprint_plan_md"):
@@ -477,7 +663,7 @@ def _pick_resume_action(project: dict[str, Any]) -> RecoveryAction | None:
     if md.get("code_review_blocked"):
         if fix_loop_exhausted(project):
             if md.get("code_intro_md") or md.get("code_files"):
-                return "retry_engineer_remediate"
+                return "retry_code_review"
             return None
         return "retry_engineer_remediate"
     if phase.startswith("build"):
@@ -492,6 +678,8 @@ def _pick_resume_action(project: dict[str, Any]) -> RecoveryAction | None:
             return "retry_qa"
     if phase == "released" and md.get("deploy_result") and not md.get("operate_started_at"):
         return "retry_operate"
+    if phase == "operate" and _pending_feature_request(md):
+        return "retry_feature"
     if phase.startswith("plan") or phase == "intake":
         if md.get("trd_md") and not md.get("sprint_plan_md"):
             return "retry_conductor"
@@ -503,6 +691,7 @@ def _pick_resume_action(project: dict[str, Any]) -> RecoveryAction | None:
     if not specs:
         return None
     for preferred in (
+        "retry_feature",
         "retry_operate",
         "retry_engineer_remediate",
         "retry_engineer",
@@ -585,6 +774,16 @@ def _dispatch_params(
             "kind": "operate_kickoff",
             "approval_card_kind": None,
         }
+    if action == "retry_feature":
+        feature = _pending_feature_request(md) or ""
+        feedback = "## Operate-phase feature request\n\n" + feature.strip()
+        if note:
+            feedback += f"\n\n## Founder note\n\n{note.strip()}"
+        return {
+            "kind": "feature_request",
+            "approval_card_kind": "code_approval",
+            "extra": {"extra_context": feedback[:12000]},
+        }
     raise ValueError(f"unknown recovery action: {action}")
 
 
@@ -659,7 +858,9 @@ async def recovery_status(project_id: str) -> dict[str, Any]:
         "reasons": reasons,
         "last_role_failure": md.get("last_role_failure"),
         "dispatch_in_flight": inflight,
-        "workspace_files_on_disk": _workspace_files_on_disk(project),
+        "workspace_files_on_disk": await asyncio.to_thread(
+            _workspace_files_on_disk, project,
+        ),
         "actions": [a.model_dump() for a in actions],
         "recommended_action": _pick_resume_action(project),
         "code_fix_iteration": code_fix_iteration_count(md),
@@ -718,12 +919,7 @@ async def publish_recovery_pulse(project_id: str, **extra: Any) -> None:
 
 def schedule_recovery_pulse(project_id: str, **extra: Any) -> None:
     """Fire-and-forget recovery pulse for sync callers (post-ack emit path)."""
-    try:
-        asyncio.get_running_loop().create_task(
-            publish_recovery_pulse(project_id, **extra),
-        )
-    except RuntimeError:
-        pass
+    _schedule_hub_task(publish_recovery_pulse(project_id, **extra))
 
 
 async def _run_recovery_orchestration(
@@ -737,7 +933,8 @@ async def _run_recovery_orchestration(
     project_uuid = project["project_uuid"]
     dispatch_params = dict(params)
     try:
-        if dispatch_params.get("kind") == "code_review_blocked":
+        kind = dispatch_params.get("kind")
+        if kind in ("code_review_blocked", "security_review_blocked"):
             md = project.get("metadata") or {}
             if not str(md.get("code_review_md") or "").strip():
                 scanned = await _orchestrate_hub_role(
@@ -752,10 +949,12 @@ async def _run_recovery_orchestration(
                         return
                     review_md = md.get("code_review_md") or ""
                     extra = dict(dispatch_params.get("extra") or {})
-                    extra["extra_context"] = (
-                        "## Code review findings (recovery scan)\n\n"
-                        + str(review_md)[:12000]
+                    heading = (
+                        "## Security review findings (recovery scan)\n\n"
+                        if kind == "security_review_blocked"
+                        else "## Code review findings (recovery scan)\n\n"
                     )
+                    extra["extra_context"] = heading + str(review_md)[:12000]
                     dispatch_params["extra"] = extra
 
         handled = await _orchestrate_hub_role(
@@ -841,6 +1040,19 @@ async def recovery_dispatch(
         md = {**md, "recovery_dispatch_in_flight": None}
         project = {**project, "metadata": md}
     inflight = md.get("recovery_dispatch_in_flight")
+    if (
+        auto_loop
+        and resolved == "retry_engineer_remediate"
+        and inflight
+        and not _dispatch_in_flight_stale(inflight)
+        and inflight.get("action") == "retry_engineer_remediate"
+    ):
+        return {
+            "ok": True,
+            "skipped": True,
+            "message": "Engineer remediate already in flight.",
+            "dispatch_in_flight": inflight,
+        }
     if inflight and not _dispatch_in_flight_stale(inflight):
         return {
             "ok": False,
@@ -923,6 +1135,11 @@ async def recovery_dispatch(
             "actor": actor,
             "started_at": datetime.now(UTC).isoformat(),
         },
+        **(
+            _feature_iteration_start_patch(md)
+            if resolved == "retry_feature"
+            else {}
+        ),
     })
 
     from shared.api.routes.decisions import publish_project_pulse  # noqa: PLC0415
@@ -963,28 +1180,88 @@ def schedule_auto_engineer_remediate(project_id: str, *, actor: str = "hub") -> 
     """Auto-dispatch engineer remediate after security review FAIL (under max iterations).
 
     Skips pending-decision guard so the loop is not blocked by the review card we
-    just enqueued — iteration is counted only when remediate completes.
+    just enqueued — iteration is counted only when remediate completes. Retries when
+    another recovery dispatch is still in flight; dedupes concurrent schedules.
     """
+    if project_id in _AUTO_REMEDIATE_SCHEDULED:
+        logger.info(
+            "auto_remediate_schedule_deduped",
+            extra={"project_id": project_id},
+        )
+        return
+    _AUTO_REMEDIATE_SCHEDULED.add(project_id)
+
+    async def _run_with_retry() -> None:
+        try:
+            for attempt in range(1, _AUTO_REMEDIATE_MAX_ATTEMPTS + 1):
+                result = await recovery_dispatch(
+                    project_id,
+                    "retry_engineer_remediate",
+                    actor=actor,
+                    auto_loop=True,
+                )
+                if result.get("ok"):
+                    return
+                if result.get("skipped"):
+                    return
+                if result.get("error") != "dispatch_in_flight":
+                    logger.warning(
+                        "auto_remediate_dispatch_failed",
+                        extra={
+                            "project_id": project_id,
+                            "attempt": attempt,
+                            "error": result.get("error"),
+                        },
+                    )
+                    return
+                if attempt < _AUTO_REMEDIATE_MAX_ATTEMPTS:
+                    await asyncio.sleep(_AUTO_REMEDIATE_RETRY_DELAY_SECS)
+            logger.warning(
+                "auto_remediate_retries_exhausted",
+                extra={
+                    "project_id": project_id,
+                    "max_attempts": _AUTO_REMEDIATE_MAX_ATTEMPTS,
+                },
+            )
+        finally:
+            _AUTO_REMEDIATE_SCHEDULED.discard(project_id)
+
+    if not _schedule_hub_task(_run_with_retry()):
+        _AUTO_REMEDIATE_SCHEDULED.discard(project_id)
+
+
+def schedule_auto_code_review(project_id: str, *, actor: str = "hub") -> None:
+    """Re-run security review when remediate iterations are exhausted."""
     async def _run() -> None:
+        project = await _load_project_full(project_id)
+        if project is None:
+            return
+        md = project.get("metadata") or {}
+        if fix_loop_exhausted(project) or code_fix_iteration_count(md) > 0:
+            await recovery_dispatch(
+                project_id,
+                "reset_fix_loop",
+                actor=actor,
+                auto_loop=True,
+            )
         await recovery_dispatch(
             project_id,
-            "retry_engineer_remediate",
+            "retry_code_review",
             actor=actor,
             auto_loop=True,
         )
 
-    try:
-        asyncio.get_running_loop().create_task(_run())
-    except RuntimeError:
-        pass
+    _schedule_hub_task(_run())
 
 
 def retry_action_for_dispatch_kind(kind: str) -> RecoveryAction | None:
     """Map a failed orchestrator ack kind → recovery action for role_failure cards."""
     return {
         "sprint_plan_approval": "retry_engineer",
+        "feature_request": "retry_feature",
         "code_approval": "retry_code_review",
         "code_review_blocked": "retry_engineer_remediate",
+        "security_review_blocked": "retry_engineer_remediate",
         "code_review_pass": "retry_devops",
         "devops_approval": "retry_qa",
         "prd_approval": "retry_planner",
@@ -1012,5 +1289,10 @@ __all__ = [
     "clear_orphaned_recovery_dispatches_on_startup",
     "publish_recovery_pulse",
     "schedule_auto_engineer_remediate",
+    "schedule_auto_code_review",
+    "complete_active_feature_request_patch",
+    "promote_next_feature_request_patch",
+    "operate_devops_ack_metadata_patch",
+    "dispatch_next_operate_feature",
     "schedule_recovery_pulse",
 ]

@@ -59,7 +59,7 @@ def test_action_specs_include_manual_remediate_when_exhausted() -> None:
     assert "retry_code_review" in actions
 
 
-def test_pick_resume_prefers_manual_remediate_when_exhausted() -> None:
+def test_pick_resume_prefers_code_review_when_exhausted() -> None:
     project = _build_project(
         metadata={
             "code_intro_md": "# Code",
@@ -68,7 +68,7 @@ def test_pick_resume_prefers_manual_remediate_when_exhausted() -> None:
             "code_fix_iteration": 3,
         },
     )
-    assert _project_recovery._pick_resume_action(project) == "retry_engineer_remediate"
+    assert _project_recovery._pick_resume_action(project) == "retry_code_review"
 
 
 def test_fix_loop_exhausted_allows_manual_remediate_dispatch(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -126,6 +126,93 @@ def test_retry_action_for_failed_engineer_remediate() -> None:
         _project_recovery.retry_action_for_dispatch_kind("code_review_blocked")
         == "retry_engineer_remediate"
     )
+    assert (
+        _project_recovery.retry_action_for_dispatch_kind("security_review_blocked")
+        == "retry_engineer_remediate"
+    )
+
+
+def test_security_review_blocked_has_orchestrator_bridge() -> None:
+    from shared.api.routes._role_dispatch_bridge import KIND_ROLE_DISPATCH
+
+    assert "security_review_blocked" in KIND_ROLE_DISPATCH
+    assert KIND_ROLE_DISPATCH["security_review_blocked"].directive == "REMEDIATE_FROM_REVIEW"
+
+
+def test_auto_remediate_dedupes_concurrent_schedules(monkeypatch: pytest.MonkeyPatch) -> None:
+    scheduled: list = []
+
+    def fake_schedule(coro):  # noqa: ANN001
+        scheduled.append(coro)
+        return True
+
+    monkeypatch.setattr(_project_recovery, "_schedule_hub_task", fake_schedule)
+    _project_recovery._AUTO_REMEDIATE_SCHEDULED.clear()
+
+    _project_recovery.schedule_auto_engineer_remediate("proj-a")
+    _project_recovery.schedule_auto_engineer_remediate("proj-a")
+
+    assert len(scheduled) == 1
+    assert "proj-a" in _project_recovery._AUTO_REMEDIATE_SCHEDULED
+
+
+def test_auto_remediate_retries_when_dispatch_in_flight(monkeypatch: pytest.MonkeyPatch) -> None:
+    dispatch = AsyncMock(
+        side_effect=[
+            {"ok": False, "error": "dispatch_in_flight"},
+            {"ok": True, "action": "retry_engineer_remediate"},
+        ],
+    )
+    monkeypatch.setattr(_project_recovery, "recovery_dispatch", dispatch)
+    monkeypatch.setattr(_project_recovery.asyncio, "sleep", AsyncMock())
+
+    def run_immediately(coro):  # noqa: ANN001
+        asyncio.run(coro)
+        return True
+
+    monkeypatch.setattr(_project_recovery, "_schedule_hub_task", run_immediately)
+    _project_recovery._AUTO_REMEDIATE_SCHEDULED.clear()
+
+    _project_recovery.schedule_auto_engineer_remediate(
+        "00000000-0000-0000-0000-00000000abcd",
+    )
+
+    assert dispatch.await_count == 2
+    assert "00000000-0000-0000-0000-00000000abcd" not in _project_recovery._AUTO_REMEDIATE_SCHEDULED
+
+
+def test_recovery_dispatch_skips_duplicate_auto_remediate(monkeypatch: pytest.MonkeyPatch) -> None:
+    from datetime import UTC, datetime
+
+    project = _build_project(
+        metadata={
+            "code_intro_md": "# Code",
+            "code_review_md": "# Blocked",
+            "code_review_blocked": True,
+            "recovery_dispatch_in_flight": {
+                "action": "retry_engineer_remediate",
+                "dispatch_kind": "code_review_blocked",
+                "started_at": datetime.now(UTC).isoformat(),
+            },
+        },
+    )
+    monkeypatch.setattr(
+        _project_recovery,
+        "_load_project_full",
+        AsyncMock(return_value=project),
+    )
+
+    result = asyncio.run(
+        _project_recovery.recovery_dispatch(
+            "00000000-0000-0000-0000-00000000abcd",
+            "retry_engineer_remediate",
+            actor="hub",
+            auto_loop=True,
+        )
+    )
+
+    assert result["ok"] is True
+    assert result.get("skipped") is True
 
 
 def test_recovery_status_clears_stale_inflight(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -369,3 +456,28 @@ def test_publish_recovery_pulse_emits_sse(monkeypatch: pytest.MonkeyPatch) -> No
     assert published[0]["project_uuid"] == "00000000-0000-0000-0000-00000000abcd"
     assert published[0]["pending_decisions"] == 1
     assert published[0]["workspace_files_on_disk"] == 12
+
+
+def test_complete_and_promote_feature_requests() -> None:
+    md = {
+        "feature_requests": [
+            {"status": "completed", "feature": "cart", "priority": 0},
+            {"status": "in_progress", "feature": "quiz", "priority": 1},
+            {"status": "backlog", "feature": "mix bag", "priority": 2},
+            {"status": "backlog", "feature": "gift", "priority": 3},
+        ],
+    }
+    done = _project_recovery.complete_active_feature_request_patch(md)
+    merged = {**md, **done}
+    assert merged["feature_requests"][1]["status"] == "completed"
+    promoted = _project_recovery.promote_next_feature_request_patch(merged)
+    requests = promoted["feature_requests"]
+    assert requests[2]["status"] == "requested"
+    assert requests[3]["status"] == "backlog"
+
+
+def test_feature_request_has_orchestrator_bridge() -> None:
+    from shared.api.routes._role_dispatch_bridge import KIND_ROLE_DISPATCH
+
+    assert "feature_request" in KIND_ROLE_DISPATCH
+    assert KIND_ROLE_DISPATCH["feature_request"].role == "engineer"

@@ -50,11 +50,6 @@ _WATCH_RULES: list[tuple[str, str, str]] = [
         "metadata ? 'devops_install_ok' AND NOT (metadata ? 'qa_md')",
         "devops_approval",
     ),
-    (
-        "verify_in_progress",
-        "metadata ? 'qa_md' AND NOT (metadata ? 'qa_execution_md')",
-        "qa_execution",
-    ),
     # D2 slate #4 — verify_approved → acceptance → released → operate.
     # Without these the loop dead-ends at QA. Each rule fires when the
     # phase's required artifact is in metadata and the next-phase's
@@ -78,6 +73,30 @@ _WATCH_RULES: list[tuple[str, str, str]] = [
             "AND NOT (metadata ? 'operate_started_at')"
         ),
         "operate_kickoff",
+    ),
+    (
+        "operate",
+        (
+            "metadata ? 'feature_requests' "
+            "AND (metadata->>'feature_iteration_active') IS DISTINCT FROM 'true' "
+            "AND (metadata->>'code_review_blocked') IS DISTINCT FROM 'true' "
+            "AND NOT (metadata ? 'recovery_dispatch_in_flight') "
+            "AND EXISTS ("
+            "  SELECT 1 FROM jsonb_array_elements("
+            "    COALESCE(metadata->'feature_requests', '[]'::jsonb)"
+            "  ) elem WHERE elem->>'status' = 'requested'"
+            ")"
+        ),
+        "feature_request",
+    ),
+    (
+        "operate",
+        (
+            "metadata ? 'code_intro_md' "
+            "AND NOT (metadata ? 'code_review_md') "
+            "AND (metadata->>'feature_iteration_active') = 'true'"
+        ),
+        "code_approval",
     ),
 ]
 

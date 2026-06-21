@@ -207,6 +207,49 @@ def _maybe_synthesize_prd_draft(
     template = intake_answers.get("template") or (
         (project.get("metadata") or {}).get("intake") or {}
     ).get("template")
+    if not template and intake_answers.get("source") == "intake_chat":
+        md = project.get("metadata") or {}
+        profile = str(md.get("golden_path_profile") or "").lower()
+        if profile in ("website", "jellybeans"):
+            template = "web-app"
+        else:
+            template = "cli-tool"
+        text = str(
+            intake_answers.get("transcript_text")
+            or md.get("description")
+            or "",
+        ).strip()
+        answers = {
+            "target_users": "Users described in intake transcript",
+            "primary_job": text[:1200] or f"Deliver {project.get('name', 'project')}",
+            "must_should_could": (
+                "MUST: meet success criteria from intake transcript\n"
+                "SHOULD: ship within stated constraints"
+            ),
+            "auth_model": "none_public",
+            "data_persistence": "Minimal — per intake scope",
+            "hosting_target": "undecided",
+            "rendering_model": "ssr_required" if template == "web-app" else "spa_acceptable",
+            "realtime_needs": "no",
+            "responsive_mobile": "responsive_basic",
+            "analytics_and_seo": ["marketing_seo"] if template == "web-app" else ["none"],
+        }
+        try:
+            prd = synthesize_prd_draft(
+                project_uuid=str(project.get("project_uuid") or ""),
+                project_name=str(project.get("name") or ""),
+                template_name=str(template),
+                answers=answers,
+                actor=actor,
+            )
+            prd_dump = prd.model_dump(mode="json")
+            from plan.artifacts.prd_v1 import PRDv1
+
+            PRDv1.model_validate(prd_dump)
+            return prd_dump, True
+        except Exception:
+            return {}, False
+
     if not template:
         source = intake_answers.get("source")
         if source not in (None, "intake_template"):

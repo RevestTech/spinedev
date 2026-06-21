@@ -25,6 +25,7 @@ from shared.api.dependencies import (
     get_mcp_client,
 )
 from shared.identity.models import User
+from shared.runtime.gate_policy import GatePolicyPreset, PipelineMode, metadata_patch_for_create
 
 logger = logging.getLogger("spine.api.projects")
 router = APIRouter(prefix="/api/v2/projects", tags=["projects"])
@@ -318,6 +319,19 @@ class ProjectCreate(BaseModel):
         description="Dogfood flag: engineer workspace targets Spine platform repo sandbox.",
     )
     description: Optional[str] = Field(default=None, max_length=2000)
+    pipeline_mode: Optional[PipelineMode] = Field(
+        default=None,
+        description="gate_checked (human acks) or autonomous (Hub PipelineRunner).",
+    )
+    gate_policy_preset: Optional[GatePolicyPreset] = Field(
+        default=None,
+        description="Preset auto/hold lists when pipeline_mode=autonomous.",
+    )
+    golden_path_profile: Optional[str] = Field(
+        default=None,
+        max_length=40,
+        description="Canned intake script profile (cli, website, jellybeans).",
+    )
 
 
 class ProjectUpdate(BaseModel):
@@ -403,6 +417,12 @@ async def create_project(
                     patch["spine_on_spine"] = True
                 if body.description:
                     patch["description"] = body.description
+                patch.update(metadata_patch_for_create(
+                    pipeline_mode=body.pipeline_mode,
+                    gate_policy_preset=body.gate_policy_preset,
+                ))
+                if body.golden_path_profile:
+                    patch["golden_path_profile"] = body.golden_path_profile.strip().lower()
                 async with pool.acquire() as conn:
                     await conn.execute(
                         "UPDATE spine_lifecycle.project SET metadata = "

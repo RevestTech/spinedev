@@ -1,38 +1,42 @@
 # G4 — Test Sign-off
 
 **Project:** Spine  
-**Depends on:** G3 Go (2026-06-19)  
-**Date:** 2026-06-19  
-**Decision:** ☑ Go  ☐ No-go  ☐ Waiver (link: ___)
+**Depends on:** G3 Go  
+**Date:** 2026-06-21 (evidence); sign-off pending  
+**Decision:** ☐ Go  ☐ No-go  ☐ Waiver (link: ___)
 
-## Exit criteria
+## Exit criteria (operate-loop program)
 
-- [x] Type-check / static analysis exits 0 — `tools/fc-sdlc/ci-typecheck.sh` exit 0
-- [x] Unit tests 100% pass — SPA 105 pass, API 37 pass, MCP 10 pass, harness 13 pass (2026-06-19)
-- [x] Integration tests pass for critical paths — smoke 99 PASS; Playwright SPA-HANG 3/3
-- [x] Traceability matrix updated — [`traceability-matrix.md`](../testing/traceability-matrix.md) (2026-06-19)
-- [x] Coverage meets project threshold — per QA-READINESS: tests green gate; full coverage audit deferred to Sprint 1
-- [x] Latest sprint cleanup report green — harness verify `--run-qa` exit 0; all 6 gates green
+- [x] Operate-loop scoped unit tests pass (Wave 3 harness)
+- [ ] Smoke contract **99 PASS / 0 FAIL** with `--ci` (run via wave4 rollup)
+- [x] Traceability matrix updated — SPINE-OP-* rows in [`traceability-matrix.md`](../testing/traceability-matrix.md)
+- [ ] Hub rebuild evidence (SPINE-OP-05) — `bash tools/hub-up.sh --rebuild`
+- [ ] Recovery API SLA ≤2s on live Hub (black-box or manual curl)
+- [ ] Human QA + tech lead sign-off below
 
 ## Test evidence
 
 | Check | Command | Last run | Result |
 |-------|---------|----------|--------|
-| Full QA | `tools/fc-sdlc/ci-test-full.sh` | 2026-06-19 | ☑ Pass |
-| Type-check | `tools/fc-sdlc/ci-typecheck.sh` | 2026-06-19 | ☑ Pass |
-| Smoke | `tools/smoke-test.sh` | 2026-06-19 | ☑ 99 PASS / 0 FAIL |
-| E2E | `npx playwright test e2e/project-workspace-hang.spec.ts` | 2026-06-19 | ☑ 3/3 |
-| Harness | `tools/harness/spine-harness verify --run-qa` | 2026-06-19 | ☑ Pass |
+| Scoped operate pytest | `python3 tools/harness/lib/scope_pytest.py --scope-file tools/harness/scopes/operate-loop.txt` | 2026-06-21 | ☐ Pass (run locally) |
+| Wave 3 sprint-close | `bash tools/harness/sprint-close-operate-loop.sh` | 2026-06-21 | ☐ Pass (run locally) |
+| Wave 4 rollup | `bash tools/harness/wave4-ship-gates.sh --smoke` | | ☐ Pass |
+| Smoke contract | `bash tools/smoke-test.sh --ci` | | ☐ Pass |
+| Operate unit tests | `.venv/bin/python -m pytest shared/api/tests/test_operate_loop.py shared/api/tests/test_project_recovery.py shared/runtime/tests/test_phase_watcher_rules.py -q` | | ☐ Pass |
+
+Automated evidence file: [`evidence/wave4-operate-loop-latest.md`](./evidence/wave4-operate-loop-latest.md)
 
 ## Holds (if any)
 
 | Hold ID | Description | Owner | Target resolution |
 |---------|-------------|-------|-------------------|
-| H1 | Full `pytest shared/` not in PM QA subset | QA | Sprint 1 per G0 risk row |
+| H-G4-01 | Hub rebuild not evidenced in CI/agent shell | DevOps | SPINE-OP-05 |
 
 ## Sign-off
 
+> **Human action:** Mark Go only after wave4 rollup + smoke pass on your machine.
+
 | Role | Name | Date | Decision |
 |------|------|------|----------|
-| QA lead | Khash Sarrafi | 2026-06-19 | ☑ Go ☐ No-go |
-| Tech lead | Khash Sarrafi | 2026-06-19 | ☑ Go ☐ No-go |
+| QA lead | _pending_ | _pending_ | ☐ Go ☐ No-go |
+| Tech lead | _pending_ | _pending_ | ☐ Go ☐ No-go |

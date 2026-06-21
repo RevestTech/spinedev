@@ -263,7 +263,14 @@ async def _run_engineer(
         + "\n\n---\n\n## Your charter\n\n" + _load_charter("engineer")
         + ("\n\n---\n\n" + "\n\n---\n\n".join(context_blocks) if context_blocks else "")
     )
-    user_msg = f"Generate the code for {project_name} now."
+    user_msg = (
+        f"Implement the requested feature in the EXISTING workspace for {project_name}. "
+        "Modify and add files as needed; preserve unrelated behavior."
+        if "PRODUCE_FEATURE" in directive.upper()
+        else f"Generate the code for {project_name} now."
+    )
+    if "PRODUCE_FEATURE" in directive.upper():
+        role_log(project_uuid, role, "Operate-phase feature implementation")
 
     from build.runtime.engineer_hybrid import (
         executor_available,
@@ -525,7 +532,7 @@ def run_build_hub_role(
     project = _load_project(project_id)
     upper = directive.upper()
 
-    if role == "engineer" or "PRODUCE_CODE" in upper or "REMEDIATE" in upper:
+    if role == "engineer" or "PRODUCE_CODE" in upper or "REMEDIATE" in upper or "PRODUCE_FEATURE" in upper:
         return asyncio.run(_run_engineer(
             project,
             extra_context=extra_context,

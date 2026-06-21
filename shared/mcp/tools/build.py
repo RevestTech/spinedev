@@ -113,7 +113,7 @@ def _error(code: str, message: str, *, retryable: bool = False) -> ToolResponse:
 # ── build_dispatch ─────────────────────────────────────────────────────
 
 _HUB_BUILD_DIRECTIVES = (
-    "PRODUCE_CODE", "REMEDIATE", "INSTALL", "CODE_REVIEW", "DEPLOY",
+    "PRODUCE_CODE", "PRODUCE_FEATURE", "REMEDIATE", "INSTALL", "CODE_REVIEW", "DEPLOY",
     "INSTALL_AND_SMOKE", "REMEDIATE_FROM_REVIEW", "DEPLOY_LOCAL",
     "EXECUTE_QA", "RUN_TESTS", "OPERATE",
 )

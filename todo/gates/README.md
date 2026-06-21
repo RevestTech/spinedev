@@ -18,13 +18,13 @@ Go / no-go checkpoints for delivery. Each gate requires an **approval artifact**
 
 | Gate | Status | Notes |
 |------|--------|-------|
-| G0 | **Signed — Go** | 2026-06-19 — [`G0-charter.md`](./G0-charter.md) |
-| G1 | **Signed — Go** | 2026-06-19 — [`G1-requirements.md`](./G1-requirements.md) |
-| G2 | **Signed — Go** | 2026-06-19 — [`G2-architecture.md`](./G2-architecture.md) |
-| G3 | **Signed — Go** | 2026-06-19 — [`G3-build-signoff.md`](./G3-build-signoff.md) |
-| G4 | **Signed — Go** | 2026-06-19 — [`G4-test-signoff.md`](./G4-test-signoff.md) |
-| G5 | **Signed — Go** | 2026-06-19 — [`G5-release-ready.md`](./G5-release-ready.md) |
-| G6 | **Signed — Go** | 2026-06-19 — [`G6-operate.md`](./G6-operate.md) |
+| G0 | **Ready** | Evidence in charter; human Go pending |
+| G1 | **Open** | — |
+| G2 | **Open** | — |
+| G3 | **Evidence ready** | Operate loop Waves 1–2 |
+| G4 | **Tooling ready** | [`wave4-ship-gates.sh`](../../tools/harness/wave4-ship-gates.sh) |
+| G5 | **Tooling ready** | [`operate_blackbox.py`](../../tools/acceptance/operate_blackbox.py) |
+| G6 | **Open** | — |
 
 ## Waivers
 

@@ -289,22 +289,17 @@ async def _synthesize_prd_and_seed_approval(
                          extra={"project_id": project_id})
 
 
-@router.post(
-    "/{project_id}/intake/chat",
-    response_model=IntakeChatResponse,
-    status_code=status.HTTP_200_OK,
-)
-async def intake_chat(
+async def execute_intake_turn(
+    *,
     project_id: str,
-    body: IntakeChatRequest,
-    user: Annotated[User, Depends(current_user)],
+    message: str,
+    transcript: list[TranscriptTurn],
+    project_name: str,
+    project_type: str,
+    greenfield: bool,
+    actor: str,
 ) -> IntakeChatResponse:
-    """One turn of the intake conversation. Calls the product role via
-    the configured LLM. Transcript is persisted to project metadata
-    after each turn so the SPA can restore on refresh.
-    """
-    actor = actor_label(user)
-
+    """One intake turn — shared by HTTP route and PipelineRunner."""
     try:
         product_charter = _load_charter("product")
     except FileNotFoundError as exc:
@@ -315,17 +310,16 @@ async def intake_chat(
 
     system_prompt = "\n\n---\n\n".join([
         _INTAKE_PROTOCOL,
-        f"## Project under intake\n\nName: **{body.project_name}**\n"
-        f"Type: **{body.project_type}**\n"
-        f"Greenfield: **{body.greenfield}**\n",
+        f"## Project under intake\n\nName: **{project_name}**\n"
+        f"Type: **{project_type}**\n"
+        f"Greenfield: **{greenfield}**\n",
         "## Your charter (product role)\n\n" + product_charter,
     ])
 
-    # Build the LLM messages from transcript + new user turn.
     messages = [
-        Message(role=turn.role, content=turn.content) for turn in body.transcript
+        Message(role=turn.role, content=turn.content) for turn in transcript
     ]
-    messages.append(Message(role="user", content=body.message))
+    messages.append(Message(role="user", content=message))
 
     try:
         resp = await call_async(LLMRequest(
@@ -351,33 +345,29 @@ async def intake_chat(
     reply = resp.content.strip()
     done = _INTAKE_COMPLETE_SENTINEL in reply
     if done:
-        # Strip the sentinel from the user-visible reply.
         reply = reply.replace(_INTAKE_COMPLETE_SENTINEL, "").strip()
-        # If the role returned ONLY the sentinel (no prose) the strip
-        # leaves an empty string — Pydantic min_length=1 then rejects
-        # TranscriptTurn(content=""). Substitute a sensible closing line.
         if not reply:
-            reply = ("Got it. I have enough to draft the PRD now — "
-                     "you'll see an approval card in the decision queue "
-                     "shortly.")
-        # Fire-and-forget PRD synthesis + approval card; non-blocking so
-        # the chat reply lands fast even when PRD generation is slow.
+            reply = (
+                "Got it. I have enough to draft the PRD now — "
+                "you'll see an approval card in the decision queue "
+                "shortly."
+            )
         import asyncio as _asyncio
+
         _asyncio.create_task(_synthesize_prd_and_seed_approval(
             project_id=project_id,
-            project_name=body.project_name,
-            project_type=body.project_type,
-            greenfield=body.greenfield,
-            transcript=list(body.transcript) + [
-                TranscriptTurn(role="user", content=body.message),
+            project_name=project_name,
+            project_type=project_type,
+            greenfield=greenfield,
+            transcript=list(transcript) + [
+                TranscriptTurn(role="user", content=message),
                 TranscriptTurn(role="assistant", content=reply),
             ],
             actor=actor,
         ))
 
-    # Updated transcript = previous + user turn + assistant reply.
-    new_transcript = list(body.transcript) + [
-        TranscriptTurn(role="user", content=body.message),
+    new_transcript = list(transcript) + [
+        TranscriptTurn(role="user", content=message),
         TranscriptTurn(role="assistant", content=reply),
     ]
 
@@ -392,4 +382,30 @@ async def intake_chat(
     )
 
 
-__all__ = ["router"]
+@router.post(
+    "/{project_id}/intake/chat",
+    response_model=IntakeChatResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def intake_chat(
+    project_id: str,
+    body: IntakeChatRequest,
+    user: Annotated[User, Depends(current_user)],
+) -> IntakeChatResponse:
+    """One turn of the intake conversation. Calls the product role via
+    the configured LLM. Transcript is persisted to project metadata
+    after each turn so the SPA can restore on refresh.
+    """
+    actor = actor_label(user)
+    return await execute_intake_turn(
+        project_id=project_id,
+        message=body.message,
+        transcript=list(body.transcript),
+        project_name=body.project_name,
+        project_type=body.project_type,
+        greenfield=body.greenfield,
+        actor=actor,
+    )
+
+
+__all__ = ["router", "execute_intake_turn", "TranscriptTurn"]

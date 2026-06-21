@@ -1393,6 +1393,7 @@ async def _dispatch_local_deploy(*, project: dict[str, Any]) -> None:
         return
 
     start_cmds: list[str] = md.get("devops_start_cmds") or []
+    operate_serve = str(project.get("current_phase") or "") == "operate"
     # For local review we ALWAYS prefer the dev server over a prod start
     # (prod `next start` / `vite preview` need a build first). Detect the
     # framework from package.json scripts + pick the dev script.
@@ -1403,7 +1404,9 @@ async def _dispatch_local_deploy(*, project: dict[str, Any]) -> None:
             scripts = (_json.loads(pkg_path.read_text()).get("scripts") or {})
         except Exception:  # noqa: BLE001
             scripts = {}
-        if "dev" in scripts:
+        if operate_serve and "build" in scripts and "start" in scripts:
+            start_cmds = ["npm run build && npm run start"]
+        elif "dev" in scripts and not operate_serve:
             # Next.js / Vite / Astro all expose `dev`; force dev for review.
             start_cmds = ["npm run dev"]
         elif not start_cmds:
@@ -1559,6 +1562,15 @@ async def _dispatch_local_deploy(*, project: dict[str, Any]) -> None:
         "deploy_local_port": port,
         "deploy_local_started": started,
         "deploy_local_running": bool(still_running),
+        **(
+            {
+                "operate_serve_url": f"http://localhost:{port}",
+                "operate_serve_port": port,
+                "operate_serve_started_at": datetime.now(UTC).isoformat(),
+            }
+            if operate_serve
+            else {}
+        ),
     })
 
     _emit("role_finished", project_uuid=project_id, role="devops_release",
@@ -1847,6 +1859,20 @@ async def _dispatch_engineer_codegen(*, project: dict[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 
 
+# Orchestrator bridge enqueues ``{role}_approval`` output cards; map them
+# onto the canonical dispatch-kind handlers below so auto-ack chains forward.
+_ROLE_OUTPUT_TO_DISPATCH_KIND: dict[str, str] = {
+    "planner_approval": "prd_approval",
+    "architect_approval": "roadmap_approval",
+    "conductor_approval": "trd_approval",
+    "engineer_approval": "sprint_plan_approval",
+    "verify_approval": "code_approval",
+    "devops_release_approval": "local_deploy_prompt",
+    "release_manager_approval": "qa_approval",
+    "auditor_approval": "qa_approval",
+}
+
+
 async def on_decision_acked(card: Any, *, actor: str) -> None:
     """Top-level hook called from the ack handler. Idempotent in that
     re-acking the same card re-fires the side-effect; the caller is
@@ -1854,6 +1880,8 @@ async def on_decision_acked(card: Any, *, actor: str) -> None:
     """
     md = getattr(card, "metadata", {}) or {}
     kind = md.get("kind")
+    if isinstance(kind, str) and kind in _ROLE_OUTPUT_TO_DISPATCH_KIND:
+        kind = _ROLE_OUTPUT_TO_DISPATCH_KIND[kind]
     # Card.project_id is a TEXT field on the model but a BIGINT column in
     # spine_lifecycle.decision_card (V36). The DB persistence drops the
     # UUID string. Recover from metadata.project_uuid that the enqueueing
@@ -1979,7 +2007,42 @@ async def on_decision_acked(card: Any, *, actor: str) -> None:
         )
         return
 
+    if kind == "security_review_blocked":
+        review_md = (project.get("metadata") or {}).get("code_review_md", "")
+        feedback = (
+            "## Security review found CRITICAL/HIGH issues\n\n"
+            + _fit_card_body(review_md, max_len=8000)
+        )
+        await _require_orchestrate_hub_role(
+            kind=kind, project=project, actor=actor,
+            approval_card_kind="code_approval",
+            next_phase=PHASE_VERIFY_IN_PROGRESS,
+            extra={"extra_context": feedback},
+            expected_role="engineer",
+        )
+        return
+
     if kind == "devops_approval":
+        phase = str(project.get("current_phase") or "")
+        prior_md = project.get("metadata") or {}
+        install_ok = prior_md.get("devops_install_ok") is not False
+        if phase == "operate" and prior_md.get("feature_iteration_active") and install_ok:
+            from shared.api.routes._project_recovery import (  # noqa: PLC0415
+                dispatch_next_operate_feature,
+                operate_devops_ack_metadata_patch,
+            )
+
+            patch = operate_devops_ack_metadata_patch(prior_md)
+            await _persist_metadata_patch(project_id, patch)
+            merged_md = {**prior_md, **patch}
+            project = {**project, "metadata": merged_md}
+            await _dispatch_local_deploy(project=project)
+            await dispatch_next_operate_feature(
+                project_id,
+                merged_md,
+                actor=actor,
+            )
+            return
         await advance_sequence(
             project_id,
             [(PHASE_BUILD_COMPLETE, False), (PHASE_VERIFY_IN_PROGRESS, False)],
@@ -2055,6 +2118,13 @@ async def on_decision_acked(card: Any, *, actor: str) -> None:
                 "acknowledged_by": actor,
             },
         })
+        project = await _load_project_full(project_id)
+        if project is not None and project.get("current_phase") == PHASE_RELEASED:
+            await _require_orchestrate_hub_role(
+                kind="operate_kickoff",
+                project=project,
+                actor=actor,
+            )
         return
 
     if kind == "host_deploy_instructions":

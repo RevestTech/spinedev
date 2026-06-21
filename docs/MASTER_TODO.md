@@ -1,128 +1,132 @@
 # Master TODO — operational queue
 
 > **Resume here.** Living task list for *what to do next* on Spine development.
-> Last updated: **2026-05-29**
+> Last updated: **2026-06-21**
 >
 > **Related docs (do not duplicate their role):**
 > - [`SESSION_HANDOFF.md`](SESSION_HANDOFF.md) — current-session state (authoritative on resume)
-> - [`ECC_BORROWS.md`](ECC_BORROWS.md) — 9 borrows from `affaan-m/ecc` with target subsystem + ratification need
-> - [`V3_DESIGN_DECISIONS.md`](V3_DESIGN_DECISIONS.md) — locked decisions (incl. new #7a/#7b/#12a/#30a)
 > - [`SPINE_MASTER.md`](SPINE_MASTER.md) — vision, gap matrix, execution tracker (§8)
-> - [`BACKLOG.md`](BACKLOG.md) — strategic INIT / EPIC / STORY backlog
+> - [`todo/BACKLOG.md`](../todo/BACKLOG.md) — gate-linked backlog (SPINE-### IDs)
 > - [`V1_SHIP_CHECKLIST.md`](V1_SHIP_CHECKLIST.md) — customer launch ops gates
+> - [`Handoff.md`](../Handoff.md) — Harness Lite dogfood architecture
 
 ---
 
 ## Active focus
 
-**Spine capability — ECC borrows.** P0s (B1 decision ledger + B2 MCP
-envelope) implemented and tested. P1s next. Per user 2026-05-29, Spine itself
-is the product and Booger is disposable dogfood — do not gate the queue on
-Booger.
+**Finish Spine — autonomous operate loop (Wave 1→4).**
+
+Spine is the product. Customer apps (Jelly Beans, Booger, etc.) are **black-box
+acceptance tests only** — never edit them manually to unblock platform work.
+
+**Execution model:** Orchestrator + virtual team (PM / Project Manager / Dev /
+QA) dogfoods Spine via **Harness Lite** + **spine-on-spine** on this repo.
 
 ---
 
-## Live task table
+## Virtual team (Spine finishes Spine)
 
-| # | Task | Status | Builds on | Files |
-|---|------|--------|-----------|-------|
-| 1 | Draft ECC borrows design note | **DONE** | — | `docs/ECC_BORROWS.md` |
-| 2 | **B1** — P0 decision ledger + promotion gate | **DONE** | — | `shared/audit/decision_ledger.py` (+ 14 tests) |
-| 3 | **B2** — P0 MCP tool response envelope | **DONE** | — | `shared/mcp/schemas/envelopes.py` (+ exports) |
-| 4 | **B3** — P1 instinct schema for Smart Spine #27 | **DONE** | B1 | `learning/instinct.py` (+ 13 tests) |
-| 5 | **B4** — P1 bounded iterative retrieval | **DONE** | B2 | `shared/runtime/bounded_retrieval.py` (+ 11 tests) |
-| 6 | **B5** — P1 `spine status --markdown` handoff generator | **DONE** | B1 | `orchestrator/cli/status_markdown.py` (+ 17 tests) + `orchestrator/bin/spine` |
-| 7 | **B6** — P2 pass@k eval contract for charter regressions | **DONE** | B1 | `verify/charter_evals/harness.py` (+ 12 tests) |
-| 8 | **B7** — P2 `SPINE_HOOK_PROFILE` runtime gating | **DONE** | — | `shared/runtime/hook_profile.py` (+ 16 tests) + `tools/_hook_profile.sh` |
-| 9 | **B8** — P2 `search-first` step in Engineer + Architect charters | **DONE** | B1 | `shared/charters/{engineer,architect}.md` |
-| 10 | **B9** — P3 Agentic-OS layer table in ARCHITECTURE.md | **DONE** | — | `docs/ARCHITECTURE.md` |
-| 11 | Land V3 ratifications (#7a/#7b/#12a/#30a) | **DONE** | — | `docs/V3_DESIGN_DECISIONS.md` |
+| Role | Mission |
+|------|---------|
+| **Orchestrator / Architect** | Gate sequence, architecture decisions, no customer-app edits |
+| **Product Manager** | Done = one `full_auto` feature iteration without manual recovery |
+| **Project Manager** | G0→G5 gates, `todo/BACKLOG.md`, daily blockers |
+| **Dev Squad A** | Operate loop: `_post_ack`, `_project_recovery`, `pipeline_runner` |
+| **Dev Squad B** | Hub reliability: asyncpg pool, `/recovery` SLA |
+| **Dev Squad C** | Harness Lite: `tools/harness/`, `.cursor/skills/harness-*` |
+| **QA** | `test_project_recovery.py`, smoke 99/0, operate-loop integration test |
+| **DevOps** | `hub-up.sh --rebuild` only — **no container-only patches** |
 
 ---
 
-## Next up (priority order)
+## Wave program
 
-| P | Task | Status |
-|---|------|--------|
-| **P0** | Commit P0 + P1 batch (1 doc PR; 5 code PRs for B1, B2, B3, B4, B5) | Pending (you) |
-| **P1** | **B3** instinct schema for #27 | **DONE** |
-| **P1** | **B4** bounded retrieval contract (not yet wired into `build_dispatcher.py`) | **DONE (module)** |
-| **P1** | **B5** `spine status --markdown` | **DONE** |
-| **P2** | **B6** pass@k eval contract for charter regressions | **DONE** |
-| **P2** | **B7** `SPINE_HOOK_PROFILE` runtime gating | **DONE** |
-| **P2** | **B8** `search-first` step in Engineer + Architect charters | **DONE** |
-| **P3** | **B9** ARCHITECTURE layer model | **DONE** |
-| **F1** | Commit the batch (10 Conventional Commits on main) | **DONE** |
-| **F2** | Wire B4 into `build/runtime/build_dispatcher.py` — opt-in `dispatch_build_bounded()` | **DONE** |
-| **F3** | Starter capability evals under `verify/charter_evals/{engineer,architect}/` + YAML loader | **DONE** |
-| **P2** | B6 / B7 / B8 (parallelisable) | Pending |
-| **P3** | B9 ARCHITECTURE layer table | Pending |
-| **P3** | Booger unblock — only if it exposes a Spine capability gap | Backlog (downgraded per user 2026-05-29) |
+### Wave 1 — Stop the bleeding (P0) — **DONE**
+
+| ID | Task | Status | Files |
+|----|------|--------|-------|
+| SPINE-OP-01 | `security_review_blocked` → engineer on ack | **DONE** | `_post_ack.py`, `_role_dispatch_bridge.py` |
+| SPINE-OP-02 | Auto-remediate retry when `dispatch_in_flight` | **DONE** | `_project_recovery.py` |
+| SPINE-OP-03 | Dedupe concurrent auto-remediate dispatches | **DONE** | `_project_recovery.py` |
+| SPINE-OP-04 | `/recovery` perf: off-thread workspace scan + hub task scheduling | **DONE** | `_project_recovery.py` |
+| SPINE-OP-05 | Tests for Wave 1 | **DONE** | `test_project_recovery.py` |
+| SPINE-OP-06 | Hub rebuild + verify `/recovery` <2s | **Pending** | `tools/hub-up.sh --rebuild` |
+
+### Wave 2 — Autonomous operate chain (P0) — **DONE**
+
+| ID | Task | Status |
+|----|------|--------|
+| SPINE-OP-07 | `devops_approval` → complete + promote + redeploy | **DONE** |
+| SPINE-OP-08 | Promoted feature → `PRODUCE_FEATURE` dispatch | **DONE** |
+| SPINE-OP-09 | Persist `operate_serve_url` from local deploy | **DONE** |
+| SPINE-OP-10 | Phase watcher rules for operate + `full_auto` | **DONE** |
+| SPINE-OP-11 | Integration tests for operate loop | **DONE** (unit) |
+| SPINE-OP-06 | Hub rebuild + smoke evidence | **Pending** |
+
+### Wave 3 — Harness dogfood (P1) — **Scaffolded** (run locally)
+
+| ID | Task | Status |
+|----|------|--------|
+| SPINE-H-01 | `spine harness init` on platform repo (spine-on-spine) | **DONE** (`sprint-close-operate-loop.sh` init step) |
+| SPINE-H-02 | Sprint-close audit → verify on operate-loop files | **DONE** (`bash tools/harness/sprint-close-operate-loop.sh`) |
+
+### Wave 4 — Ship gates — **Scaffolded** (run locally)
+
+| ID | Task | Status |
+|----|------|--------|
+| SPINE-G4-01 | G4 evidence rollup (pytest + harness + smoke) | **DONE** (`wave4-ship-gates.sh`) |
+| SPINE-G5-01 | Black-box operate acceptance (read-only Hub) | **DONE** (`tools/acceptance/operate_blackbox.py`) |
+| SPINE-G0-01 | Human G0 sign-off | **Pending** — [`todo/gates/G0-charter.md`](../todo/gates/G0-charter.md) |
+| SPINE-G4-02 | Human G4 sign-off | **Pending** — [`todo/gates/G4-test-signoff.md`](../todo/gates/G4-test-signoff.md) |
+| SPINE-G5-02 | Human G5 sign-off + black-box run | **Pending** — disposable project UUID |
+| SPINE-OP-05 | Hub rebuild + smoke evidence | **Pending** |
+
+| Gate | Criterion |
+|------|-----------|
+| G0 | Charter signed — `todo/gates/G0-charter.md` |
+| G4 | Traceability + pytest evidence — `bash tools/harness/wave4-ship-gates.sh --smoke` |
+| G5 | Smoke + black-box operate acceptance — `--project-uuid` on wave4 script |
 
 ---
 
-## Verification snapshot (2026-05-29)
+## Rules (non-negotiable)
 
-| Check | Result |
-|-------|--------|
-| `shared/audit/tests/test_decision_ledger.py` | **14 PASS** |
-| `shared/mcp/tests/` full suite | **66 PASS** |
-| `orchestrator/cli/tests/test_status_markdown.py` | **17 PASS** |
-| `shared/runtime/tests/test_bounded_retrieval.py` | **11 PASS** |
-| `learning/tests/test_instinct.py` | **13 PASS** |
-| `shared/runtime/tests/test_hook_profile.py` | **16 PASS** |
-| `verify/charter_evals/tests/test_harness.py` | **12 PASS** |
-| **Full session sweep** | **149 PASS** |
-| `spine status --markdown` round-trip | renders / writes / exits 1 when DB down (expected) |
-| `tools/smoke-test.sh` (Hub down) | 35 PASS / 4 FAIL — failures are Postgres-container-not-running, not caused by this session's changes |
-| Git | working tree dirty; nothing from this session committed |
-
-Full smoke requires `bash tools/hub-up.sh` first to reach the 99 PASS contract.
+1. **No edits** to `~/spine-projects/*` except engineer role output
+2. **No manual** `retry_engineer_remediate` except Wave 1 debug windows
+3. **No port babysitting** (19001/19002 monitors)
+4. **No container hot-patches** — git → rebuild → verify
+5. Jelly Beans / customer apps = acceptance test **after** Wave 2
 
 ---
 
-## Reboot / resume routine
+## Verification (run after Hub rebuild)
 
 ```bash
-cd ~/Projects/Apps/SpineDevelopment
+# Wave 4 — Ship gates (G4 + G5 evidence)
+bash tools/harness/wave4-ship-gates.sh --smoke
+bash tools/harness/wave4-ship-gates.sh --smoke --project-uuid '<disposable-operate-uuid>'
 
-# 1. See what's uncommitted from the last session
-git status --short
+# Wave 3 — Harness Lite (no Hub)
+bash tools/harness/sprint-close-operate-loop.sh
+# optional full smoke:
+bash tools/harness/sprint-close-operate-loop.sh --smoke
 
-# 2. Re-validate this session's work (149 tests should pass)
-.venv/bin/python -m pytest \
-  shared/audit/tests \
-  shared/mcp/tests \
-  shared/runtime/tests/test_bounded_retrieval.py \
-  shared/runtime/tests/test_hook_profile.py \
-  orchestrator/cli/tests \
-  learning/tests/test_instinct.py \
-  verify/charter_evals/tests \
-  -q
-
-# 3. Read the handoff (auto-generatable now: `spine status --markdown`)
-bash orchestrator/bin/spine status --markdown --write /tmp/handoff.md --exit-code
-cat docs/SESSION_HANDOFF.md
-
-# 4. (When ready) bring Hub back up and confirm full smoke
-bash tools/hub-up.sh
-bash tools/smoke-test.sh
+# Wave 2 platform tests + Hub
+bash tools/hub-up.sh --rebuild
+.venv/bin/python -m pytest shared/api/tests/test_operate_loop.py \
+  shared/api/tests/test_project_recovery.py \
+  shared/runtime/tests/test_phase_watcher_rules.py -q
+bash tools/smoke-test.sh   # expect 99 PASS / 0 FAIL
+curl -s --max-time 2 "http://localhost:8090/healthz" | jq .ok
+curl -s --max-time 10 "http://localhost:8090/api/v2/projects/<uuid>/recovery" | jq .ok
 ```
 
 ---
 
-## Tier map (where bigger work lives)
+## Prior work (ECC borrows) — complete
 
-| Tier | Doc | Use for |
-|------|-----|---------|
-| Operational queue | **This file** | What to do today / this session |
-| Live session state | [`SESSION_HANDOFF.md`](SESSION_HANDOFF.md) | Mid-session checkpoint; resume after crash |
-| Strategic borrows plan | [`ECC_BORROWS.md`](ECC_BORROWS.md) | 9 ECC borrows with sequencing |
-| Execution tracker | `SPINE_MASTER.md` §8 | P0/P1 wiring checkboxes |
-| Strategic backlog | `BACKLOG.md` | INIT / EPIC / STORY for releases |
-| Launch gates | `V1_SHIP_CHECKLIST.md` | Customer ship ceremony |
+B1–B9 ECC borrows landed 2026-05-29. See git history. Not blocking Wave 1.
 
 ---
 
-*Update this file whenever a task closes, a new one is added, or focus shifts.
-Keep in lockstep with the in-conversation TaskList so a crash recovers cleanly.*
+*Update this file when a wave task closes or focus shifts.*

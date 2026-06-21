@@ -45,6 +45,27 @@ def test_operate_rule_fires_on_released_with_deploy_result() -> None:
     assert "operate_started_at" in predicate
 
 
+def test_operate_feature_request_rule() -> None:
+    rule = _find_rule_by_kind("feature_request")
+    assert rule is not None
+    phase, predicate, _ = rule
+    assert phase == "operate"
+    assert "feature_requests" in predicate
+    assert "requested" in predicate
+    assert "feature_iteration_active" in predicate
+
+
+def test_operate_code_approval_rule_after_feature_start() -> None:
+    rule = _find_rule_by_kind("code_approval")
+    operate_rules = [r for r in _WATCH_RULES if r[0] == "operate" and r[2] == "code_approval"]
+    assert len(operate_rules) == 1
+    phase, predicate, kind = operate_rules[0]
+    assert phase == "operate"
+    assert kind == "code_approval"
+    assert "code_intro_md" in predicate
+    assert "feature_iteration_active" in predicate
+
+
 def test_each_rule_predicate_is_a_safe_jsonb_check() -> None:
     # All four post-verify rules must use the `metadata ? 'KEY'` pattern;
     # this catches accidental string interpolation that would open SQL

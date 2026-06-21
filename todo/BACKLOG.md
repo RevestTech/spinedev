@@ -1,17 +1,9 @@
 # Spine — Backlog
 
 **Cadence:** SDLC gates **G0→G6** ([gates/](./gates/)) · Tests required before **G4** ([testing/](./testing/))  
-**Source of truth:** This file lives in git. External ALM (Jira, Linear) mirrors IDs — never replaces this file.
+**Source of truth:** This file lives in git. External ALM mirrors IDs — never replaces this file.
 
----
-
-## How to use
-
-1. Work **top to bottom within each wave** unless blocked by **Depends**.
-2. Do not pass a **Gate** until the linked artifact in `todo/gates/` is signed.
-3. Every **Build** row must name a **test file**; add a traceability row in [traceability-matrix.md](./testing/traceability-matrix.md).
-4. IDs are stable: `SPINE-###` (configure prefix in [DELIVERY-MECHANISM.md](../docs/product/DELIVERY-MECHANISM.md)).
-5. PR title convention: `[SPINE-###] short description`
+**Program:** Finish autonomous operate loop. See [`docs/MASTER_TODO.md`](../docs/MASTER_TODO.md) for live queue.
 
 ---
 
@@ -19,17 +11,60 @@
 
 | Gate | Status | Blocker |
 |------|--------|---------|
-| G0 Charter | **Signed — Go** | 2026-06-19 |
-| G1 Requirements | **Signed — Go** | 2026-06-19 |
-| G2 Architecture | **Signed — Go** | 2026-06-19 |
-| G3 Build | **Signed — Go** | Foundation epic SPINE-001–003 |
-| G4 Test | **Signed — Go** | 2026-06-19 |
-| G5 Release | **Signed — Go** | Sprint 0 golden path |
-| G6 Operate | **Signed — Go** | Sprint 0 laptop baseline |
+| G0 Charter | **Ready for sign-off** | PO + Eng lead — [`G0-charter.md`](./gates/G0-charter.md) |
+| G1 Requirements | Open | — |
+| G2 Architecture | Open | — |
+| G3 Build | **Evidence ready** | Wave 1–2 operate loop code landed |
+| G4 Test | **Evidence tooling ready** | `wave4-ship-gates.sh` + human sign-off |
+| G5 Release | **Black-box tooling ready** | `operate_blackbox.py` + disposable project |
+| G6 Operate | Open | Deferred post-v1 unless BYOC in scope |
 
 ---
 
-## Phase 1 — Foundation (done)
+## Wave 1 — Operate loop reliability (P0)
+
+| ID | Title | Phase | P | Gate | Depends | Tests |
+|----|-------|-------|---|------|---------|-------|
+| SPINE-OP-01 | Security review blocked ack → engineer remediate | Build | P0 | G3 | — | `shared/api/tests/test_project_recovery.py` |
+| SPINE-OP-02 | Auto-remediate retry on dispatch_in_flight | Build | P0 | G3 | SPINE-OP-01 | `shared/api/tests/test_project_recovery.py` |
+| SPINE-OP-03 | Dedupe concurrent auto-remediate schedules | Build | P0 | G3 | SPINE-OP-02 | `shared/api/tests/test_project_recovery.py` |
+| SPINE-OP-04 | Recovery API perf (async workspace scan, hub task schedule) | Build | P0 | G3 | — | `shared/api/tests/test_project_recovery.py` |
+| SPINE-OP-05 | Hub rebuild — no container-only patches | DevOps | P0 | G3 | SPINE-OP-01..04 | `tools/smoke-test.sh` |
+
+---
+
+## Wave 2 — Autonomous operate chain (P0) — **DONE (code)**
+
+| ID | Title | Phase | P | Gate | Depends | Tests |
+|----|-------|-------|---|------|---------|-------|
+| SPINE-OP-06 | devops_approval → feature complete + promote + redeploy | Build | P0 | G3 | SPINE-OP-05 | `shared/api/tests/test_operate_loop.py` |
+| SPINE-OP-07 | Promoted feature → PRODUCE_FEATURE dispatch | Build | P0 | G3 | SPINE-OP-06 | `shared/api/tests/test_operate_loop.py` |
+| SPINE-OP-08 | Persist operate_serve_url from local deploy | Build | P0 | G3 | SPINE-OP-06 | `_post_ack.py` deploy path |
+| SPINE-OP-09 | Phase watcher: operate + full_auto rules | Build | P0 | G3 | SPINE-OP-07 | `shared/runtime/tests/test_phase_watcher_rules.py` |
+| SPINE-OP-10 | Operate loop unit tests | Verify | P0 | G4 | SPINE-OP-06..09 | `shared/api/tests/test_operate_loop.py` |
+
+---
+
+## Wave 3 — Harness Lite dogfood (P1)
+
+| ID | Title | Phase | P | Gate | Depends | Tests |
+|----|-------|-------|---|------|---------|-------|
+| SPINE-H-01 | spine harness init on platform repo | Build | P1 | G3 | SPINE-OP-05 | `sprint-close-operate-loop.sh` init |
+| SPINE-H-02 | Sprint-close on operate-loop scope | Verify | P1 | G4 | SPINE-H-01 | `bash tools/harness/sprint-close-operate-loop.sh` |
+
+---
+
+## Wave 4 — Ship gates (P0)
+
+| ID | Title | Phase | P | Gate | Depends | Tests |
+|----|-------|-------|---|------|---------|-------|
+| SPINE-G4-01 | G4 evidence rollup script | Verify | P0 | G4 | SPINE-H-02 | `bash tools/harness/wave4-ship-gates.sh --smoke` |
+| SPINE-G5-01 | Black-box operate acceptance tool | Verify | P0 | G5 | SPINE-OP-05 | `tools/acceptance/operate_blackbox.py` |
+| SPINE-ACC-01 | Run black-box on disposable project | Verify | P0 | G5 | SPINE-G5-01 | wave4 with `--project-uuid` |
+
+---
+
+## Foundation (existing)
 
 | ID | Title | Phase | P | Gate | Depends | Tests |
 |----|-------|-------|---|------|---------|-------|
@@ -39,70 +74,32 @@
 
 ---
 
-## Phase 2 — Operating loop closure (Sprint 1)
-
-*Closes `docs/OPERATING_LOOP_GAP.md` + live golden-path E2E.*
-
-| ID | Title | Phase | P | Gate | Depends | Tests |
-|----|-------|-------|---|------|---------|-------|
-| SPINE-004 | QA execution runner (sprint AC against engineer commit) | Build | P0 | G4 | SPINE-003 | `verify/runtime/tests/test_qa_execution_runner.py` |
-| SPINE-005 | Background role worker daemon (directive queue poller) | Build | P0 | G3 | SPINE-003 | `shared/runtime/tests/test_role_worker.py` |
-| SPINE-006 | Instinct promotion loop (Hub lifespan) | Build | P1 | G4 | SPINE-005 | `shared/runtime/tests/test_instinct_promotion_loop.py` |
-| SPINE-007 | Product runner HTTP path (Hub intake → product charter PRD) | Build | P0 | G4 | SPINE-003 | `plan/runtime/tests/test_product_runner.py` |
-| SPINE-008 | Charter eval CI gate on `shared/charters/*.md` changes | Build | P1 | G4 | SPINE-002 | `tools/smoke-test.sh` + charter eval |
-| SPINE-009 | Live golden-path E2E through `released → operate` | Test | P0 | G4 | SPINE-004,005 | `tools/golden-path-walkthrough.sh` + E2E report |
-| SPINE-010 | RoleChat live surface (replace STUB badge) | Build | P1 | G4 | SPINE-009 | Playwright role-chat spec |
-| SPINE-011 | PM dashboard wire or document Sprint 1 defer | Ops | P2 | G6 | — | `docs/PM_DASHBOARD.md` |
-| SPINE-012 | Weekly DR drill automation (H-DR-DRILL) | Ops | P2 | G6 | SPINE-002 | `tools/dr-test.sh` CI job |
-| SPINE-013 | Operate planes 2–8 real impl (beyond heartbeat stub) | Build | P1 | G6 | SPINE-009 | `devops/runtime/tests/test_operate_runner.py` |
-| SPINE-014 | Independent human re-audit (H-REAUDIT) | QA | P1 | G5 | SPINE-009 | `docs/product/REALITY-AUDIT-*.md` |
-| SPINE-015 | Founder walkthrough — non-engineer golden path | Test | P0 | G5 | SPINE-009 | `docs/FOUNDER_WALKTHROUGH.md` |
-
----
-
-## Phase 3 — Customer ship (V1)
-
-*Engineering-prep only; many items in `docs/V1_SHIP_CHECKLIST.md` are human/ops.*
-
-| ID | Title | Phase | P | Gate | Depends | Tests |
-|----|-------|-------|---|------|---------|-------|
-| SPINE-016 | BYOC provision smoke (AWS + Railway dry-run) | Ops | P0 | G6 | SPINE-012 | `tools/byoc/` integration test |
-| SPINE-017 | Multi-arch Docker publish pipeline | Ops | P0 | G6 | SPINE-002 | `.github/workflows/docker-build.yml` |
-| SPINE-018 | All vault paths real-values audit (not InMemory) | Security | P0 | G6 | SPINE-016 | `bash tools/audit-secrets.sh` |
-| SPINE-019 | Timed DR drill RTO ≤ 30m | Ops | P1 | G6 | SPINE-012 | `tools/dr-test.sh` timed run |
-| SPINE-020 | Design partner onboarding E2E (no founder) | Test | P0 | G5 | SPINE-015 | V1 checklist §6 |
-
----
-
 ## Done
 
-- [x] **SPINE-001** Local dev stack + smoke contract (Sprint 0, 2026-06-19)
-- [x] **SPINE-002** CI pipeline main workflow (Sprint 0, 2026-06-19)
-- [x] **SPINE-003** Hub project route unit tests (Sprint 0, 2026-06-19)
-- [x] **SPINE-004** QA execution runner (2026-06-19, `846ef8f`)
-- [x] **SPINE-005** Background role worker daemon (2026-06-19, `846ef8f`)
-- [x] **SPINE-006** Instinct promotion loop (2026-06-19, `53856ab`)
-- [x] **SPINE-007** Product runner HTTP path (2026-06-19, `846ef8f`)
-- [x] **SPINE-008** Charter eval smoke gate (2026-06-19, `1294533`)
-- [x] **SPINE-009** Golden-path E2E through `released → operate` (2026-06-19, project `fe4c11c3-...`)
-- [x] **SPINE-010** Live role-chat dev mode (2026-06-19, `57538c1`)
-- [x] **SPINE-011** PM dashboard integration guide (2026-06-19, `09efc74`)
-- [x] **SPINE-012** DR drill automation — nightly.yml + smoke dry-run (2026-06-19)
-- [x] **SPINE-013** Operate plane health probes (2026-06-19, `ededf07`)
-- [x] **SPINE-014** Sprint 1 reality re-audit (2026-06-19, `ddb988f`)
-- [x] **SPINE-015** Founder walkthrough doc (2026-06-19, `fe20407`)
-- [x] **SPINE-016** BYOC AWS+Railway dry-run smoke gate (2026-06-19, `0d57e5c`)
-- [x] **SPINE-017** Multi-arch docker-build smoke gate (2026-06-19, `76627df`)
-- [x] **SPINE-018** Vault paths production checklist (2026-06-19, `cfb9705`)
-- [x] **SPINE-019** DR timed drill RTO gate (2026-06-19, `5446fdd`)
-- [x] **SPINE-020** Design partner onboarding runbook + smoke (2026-06-19, `eac7068`)
+- [x] **SPINE-OP-01** Security review blocked ack handler (2026-06-21)
+- [x] **SPINE-OP-02** Auto-remediate retry (2026-06-21)
+- [x] **SPINE-OP-03** Auto-remediate dedupe (2026-06-21)
+- [x] **SPINE-OP-04** Recovery perf + hub task scheduling (2026-06-21)
+- [x] **SPINE-OP-06** devops operate ack → complete + promote (2026-06-21)
+- [x] **SPINE-OP-07** Promoted feature → PRODUCE_FEATURE dispatch (2026-06-21)
+- [x] **SPINE-OP-08** Persist operate_serve_url (2026-06-21)
+- [x] **SPINE-OP-09** Phase watcher operate rules (2026-06-21)
+- [x] **SPINE-OP-10** Operate loop unit tests (2026-06-21)
+- [x] **SPINE-H-01** Harness init + sprint-close entry (2026-06-21)
+- [x] **SPINE-H-02** Operate-loop scoped audit/verify script (2026-06-21)
+- [x] **SPINE-G4-01** Wave 4 ship-gates rollup (2026-06-21)
+- [x] **SPINE-G5-01** operate_blackbox.py (2026-06-21)
 
 ---
 
-## Suggested / icebox
+## Icebox
 
 | ID | Title | Notes |
 |----|-------|-------|
-| SPINE-ICE-01 | Federation hub-to-hub operate events | After Smart Spine loop closed |
-| SPINE-ICE-02 | Voice / mobile v1.1+ | `V1_SHIP_CHECKLIST.md` §8 |
-| SPINE-ICE-03 | Full Grafana observability stack | H-OBS-STACK |
+| SPINE-ACC-JB | Jelly Beans acceptance | Explicitly **not** platform work |
+
+---
+
+## PR convention
+
+`[SPINE-OP-##] short description`
