@@ -4,14 +4,13 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 from uuid import uuid4
 
 from tron.agents.base import (
     BaseISO,
     ISOConfig,
     ISOSpecialization,
-    LLMProvider,
     ToolResult,
 )
 from tron.infra.llm.client import LLMClient, LLMMessage, LLMRequest
@@ -140,7 +139,7 @@ If none: []
     def _parse_llm_response(self, raw: str, blueprint: Blueprint) -> List[FindingOutput]:
         text = raw.strip()
         if text.startswith("```"):
-            lines = [l for l in text.split("\n") if not l.strip().startswith("```")]
+            lines = [ln for ln in text.split("\n") if not ln.strip().startswith("```")]
             text = "\n".join(lines).strip()
         for i, c in enumerate(text):
             if c in "[{":

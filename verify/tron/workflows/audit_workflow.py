@@ -54,6 +54,7 @@ with workflow.unsafe.imports_passed_through():
         run_compliance_agent,
         run_documentation_agent,
         verify_findings_with_sandbox,
+        deep_verify_follow_up_findings,
         synthesize_findings,
         mark_audit_run_failed,
     )
@@ -237,6 +238,14 @@ class AuditWorkflow:
             verification_result.rejected_count,
             verification_result.unverified_count,
             verification_result.skipped_count,
+        )
+
+        # ── Phase 2.6: SEC-5 optional second sandbox pass (top-N unverified) ──
+        await workflow.execute_activity(
+            deep_verify_follow_up_findings,
+            args=[audit_input, agent_results],
+            start_to_close_timeout=timedelta(minutes=5),
+            retry_policy=_QUICK_RETRY,
         )
 
         # ── Phase 3-5: Synthesis + Storage + Events ───────────────────

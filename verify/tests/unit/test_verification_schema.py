@@ -14,7 +14,6 @@ Covers:
 
 from __future__ import annotations
 
-from datetime import datetime
 from uuid import uuid4
 
 import pytest
@@ -30,7 +29,6 @@ from tron.schemas.verification import (
     FindingBatch,
     VulnerabilityType,
     SeverityLevel,
-    CrossValidationStatus,
     ExecutionOutcome,
     ConsensusLevel,
 )
@@ -257,8 +255,9 @@ class TestFindingOutputValidators:
         )
         repr_str = repr(finding)
         assert "FindingOutput" in repr_str
-        assert "OPEN_REDIRECT" in repr_str
-        assert "MEDIUM" in repr_str
+        # Repr uses enum values (lowercase) rather than names.
+        assert "open_redirect" in repr_str
+        assert "medium" in repr_str
         assert "redirect.py:15" in repr_str
 
 
@@ -356,7 +355,8 @@ class TestCrossValidationResult:
         )
         repr_str = repr(result)
         assert "CrossValidationResult" in repr_str
-        assert "ConsensusLevel.CONFIRMED" in repr_str
+        # Repr uses enum value (lowercase) rather than "ConsensusLevel.CONFIRMED".
+        assert "confirmed" in repr_str
 
 
 class TestSandboxExecutionResult:

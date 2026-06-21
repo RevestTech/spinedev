@@ -24,17 +24,12 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional
-from uuid import uuid4
 
 from tron.infra.sandbox.client import SandboxClient, get_sandbox_client
 from tron.schemas.verification import (
     Blueprint,
-    BlueprintScope,
     FindingBatch,
     FindingOutput,
-    SeverityLevel,
-    VerificationMethod,
-    VulnerabilityType,
 )
 
 logger = logging.getLogger(__name__)

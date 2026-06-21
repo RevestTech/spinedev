@@ -9,9 +9,8 @@ Tests:
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 
 from tron.api.routes.ws import _authenticate_ws, _send_json, _active_connections
 

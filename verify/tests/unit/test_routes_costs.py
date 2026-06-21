@@ -6,8 +6,6 @@ Pure Pydantic validation — no FastAPI TestClient or database required.
 
 from __future__ import annotations
 
-import pytest
-from datetime import datetime, timedelta
 
 from tron.api.routes.costs import (
     CostSummary,

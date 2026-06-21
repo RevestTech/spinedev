@@ -11,12 +11,10 @@ Tests:
 
 from __future__ import annotations
 
-import hmac
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi import HTTPException, Request
-from fastapi.security import APIKeyHeader
 
 from tron.api.middleware.auth import require_api_key, api_key_header
 

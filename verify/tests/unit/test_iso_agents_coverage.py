@@ -14,16 +14,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from tron.agents.base import ISOConfig, ISOSpecialization, LLMProvider, ToolResult
+from tron.agents.base import ToolResult
 from tron.agents.security_iso import SecurityISO
 from tron.agents.builder_iso import BuilderISO
 from tron.schemas.verification import (
     Blueprint,
     BlueprintScope,
-    FindingBatch,
     VulnerabilityType,
-    SeverityLevel,
-    VerificationMethod,
 )
 
 

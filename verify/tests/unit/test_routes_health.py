@@ -6,8 +6,6 @@ Pure Pydantic schema tests + direct function tests with mocking.
 
 from __future__ import annotations
 
-import pytest
-import time
 from datetime import datetime, timezone
 from uuid import uuid4
 from unittest.mock import AsyncMock, MagicMock, patch

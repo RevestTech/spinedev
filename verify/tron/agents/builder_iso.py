@@ -21,7 +21,6 @@ from tron.agents.base import (
     BaseISO,
     ISOConfig,
     ISOSpecialization,
-    LLMProvider,
     ToolResult,
 )
 from tron.infra.llm.client import LLMClient, LLMMessage, LLMRequest
@@ -295,7 +294,7 @@ Remember: ONLY JSON. No preamble, no explanation, no markdown.
         # Strip markdown code blocks
         if text.startswith("```"):
             lines = text.split("\n")
-            lines = [l for l in lines if not l.strip().startswith("```")]
+            lines = [ln for ln in lines if not ln.strip().startswith("```")]
             text = "\n".join(lines).strip()
 
         # Strip preamble text before JSON

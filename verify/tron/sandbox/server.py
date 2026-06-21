@@ -6,7 +6,7 @@ import asyncio
 import logging
 import time
 from contextlib import asynccontextmanager
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 
 import os
 from fastapi import FastAPI, HTTPException
@@ -60,6 +60,10 @@ class ExecuteBody(BaseModel):
     script: Optional[str] = None
     language: str = "python"
     timeout: int = Field(default=10, ge=1, le=300)
+    # Only the isolating network modes are accepted. ``host`` would hand the
+    # container the service's own network namespace (no isolation); any
+    # ``container:<id>`` mode shares another container's netns and is a
+    # lateral-movement vector. See tron/services/sandbox_client.py.
     network_mode: str = "none"
     workdir: Optional[str] = None
     volumes: Optional[Dict[str, Any]] = None
@@ -68,6 +72,14 @@ class ExecuteBody(BaseModel):
     def require_code(self) -> ExecuteBody:
         if not (self.code or self.script):
             raise ValueError("code or script is required")
+        if self.network_mode not in {"none", "bridge"}:
+            # Raised as ValueError so FastAPI turns it into a 422 rather than
+            # allowing the request to reach SandboxClient where it would be
+            # rejected again (good defense-in-depth, but noisy in logs).
+            raise ValueError(
+                f"network_mode={self.network_mode!r} not allowed; "
+                "use 'none' (default) or 'bridge'"
+            )
         return self
 
     def source(self) -> str:

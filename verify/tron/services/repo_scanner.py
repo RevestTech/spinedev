@@ -20,8 +20,9 @@ import os
 import shutil
 import tempfile
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
-from uuid import UUID
+from typing import Dict, List, Optional, Set
+
+from tron.services.path_safety import open_no_follow
 
 logger = logging.getLogger(__name__)
 
@@ -400,9 +401,37 @@ class RepoScanner:
                 skipped_count += 1
                 continue
 
+            # ── Symlink safety ────────────────────────────────────────
+            # A repo under scan can commit a symlink pointing outside the
+            # clone (``./README.md -> /etc/passwd``). The ``is_relative_to``
+            # check above passes because the link itself sits inside the
+            # scan root, but ``read_text`` would follow the link and leak
+            # the target. Refuse symlinks entirely. Two checks, belt and
+            # braces:
+            #   1. ``is_symlink()`` on the lstat'd path — cheap early out.
+            #   2. ``O_NOFOLLOW`` at open() time — closes the TOCTOU
+            #      window between the check and the read (a racing
+            #      attacker could replace a regular file with a symlink
+            #      after step 1 but before step 2).
+            try:
+                if abs_path.is_symlink():
+                    logger.warning(
+                        "RepoScanner: refusing to read symlinked tracked "
+                        "file %r (target: %s) — symlinks can point outside "
+                        "the clone root",
+                        rel_path_str,
+                        os.readlink(abs_path),
+                    )
+                    skipped_count += 1
+                    continue
+            except OSError:
+                skipped_count += 1
+                continue
+
             # Check file size
             try:
-                file_size = abs_path.stat().st_size
+                # lstat so we never follow a symlink for sizing either.
+                file_size = abs_path.lstat().st_size
             except OSError:
                 continue
 
@@ -419,9 +448,19 @@ class RepoScanner:
             if file_size == 0:
                 continue
 
-            # Read file
+            # Read file — O_NOFOLLOW catches a late-race symlink substitution.
             try:
-                content = abs_path.read_text(encoding="utf-8", errors="replace")
+                fd = open_no_follow(abs_path)
+                try:
+                    with os.fdopen(fd, "r", encoding="utf-8", errors="replace") as fh:
+                        content = fh.read()
+                except Exception:
+                    # Ensure fd is closed if fdopen failed before taking ownership.
+                    try:
+                        os.close(fd)
+                    except OSError:
+                        pass
+                    raise
             except (OSError, UnicodeDecodeError):
                 skipped_count += 1
                 continue

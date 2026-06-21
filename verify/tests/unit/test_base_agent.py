@@ -15,8 +15,7 @@ Covers:
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -34,7 +33,6 @@ from tron.schemas.verification import (
     FindingOutput,
     VulnerabilityType,
     SeverityLevel,
-    VerificationMethod,
 )
 
 
@@ -100,7 +98,7 @@ class TestToolExecutionWithSemaphore:
                 return ""
             def _parse_llm_response(self, raw_response, blueprint):
                 return []
-            async def _execute_tool(self, tool_name, workspace_root):
+            async def _execute_tool(self, tool_name, workspace_root, file_contents=None):
                 await asyncio.sleep(0.1)
                 return ToolResult(
                     tool_name=tool_name,
@@ -128,7 +126,7 @@ class TestToolExecutionWithSemaphore:
         iso._metrics.tool_durations = {}
 
         start = asyncio.get_event_loop().time()
-        results = await iso._run_deterministic_tools(blueprint, "/workspace")
+        results = await iso._run_deterministic_tools(blueprint, {}, "/workspace")
         elapsed = asyncio.get_event_loop().time() - start
 
         # With max_concurrent_tools=2 and 3 tools, should take > 0.15s
@@ -154,7 +152,7 @@ class TestToolExecutionWithSemaphore:
                 return ""
             def _parse_llm_response(self, raw_response, blueprint):
                 return []
-            async def _execute_tool(self, tool_name, workspace_root):
+            async def _execute_tool(self, tool_name, workspace_root, file_contents=None):
                 raise RuntimeError("Tool execution failed")
 
         iso = FailingISO(config, {"llm/openai-key": "test-key"})
@@ -173,7 +171,7 @@ class TestToolExecutionWithSemaphore:
         iso._metrics = MagicMock()
         iso._metrics.tool_durations = {}
 
-        results = await iso._run_deterministic_tools(blueprint, "/workspace")
+        results = await iso._run_deterministic_tools(blueprint, {}, "/workspace")
 
         assert "failing_tool" in results
         assert results["failing_tool"].exit_code == -1

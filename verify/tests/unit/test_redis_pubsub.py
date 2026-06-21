@@ -10,10 +10,9 @@ Tests:
 from __future__ import annotations
 
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
-import pytest
 
 from tron.infra.redis.pubsub import (
     AuditEvent,

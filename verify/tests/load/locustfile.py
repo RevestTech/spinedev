@@ -32,6 +32,7 @@ For advanced configuration, see tests/load/locust_config.py
 from __future__ import annotations
 
 import os
+import time
 import uuid
 from typing import Optional
 
@@ -171,7 +172,7 @@ class AuditBehavior(TaskSet):
             if project_response.status_code == 201:
                 self.project_id = project_response.json().get("id")
             else:
-                logger.warning(f"Failed to create project for audit")
+                logger.warning("Failed to create project for audit")
                 return
         else:
             self.project_id = project_ids[0]

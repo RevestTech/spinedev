@@ -18,7 +18,6 @@ from tron.workflows.activities import (
     AgentResult,
     FindingInput,
     FixAttempt,
-    FixResult,
     ProjectMeta,
     ScanResult,
     VerificationResult,
@@ -34,6 +33,12 @@ def _noop_layer3() -> VerificationResult:
         skipped_count=0,
         confidence_adjustments=[],
     )
+
+
+def _noop_deep_verify():
+    from tron.workflows.activities import DeepVerifySummary
+
+    return DeepVerifySummary()
 
 
 def _mock_workflow():
@@ -154,11 +159,13 @@ class TestAuditWorkflowRun:
         with _mock_workflow():
             # Mock workflow.execute_activity to return our test data
             with patch("tron.workflows.audit_workflow.workflow.execute_activity", new_callable=AsyncMock) as mock_exec:
-                # Awaited: load_project_metadata, scan_repository, verify_findings_with_sandbox, synthesize_findings
+                # Awaited: load_project_metadata, scan_repository, verify_findings_with_sandbox,
+                # deep_verify_follow_up_findings, synthesize_findings
                 mock_exec.side_effect = [
                     project_meta,
                     scan_result,
                     _noop_layer3(),
+                    _noop_deep_verify(),
                     audit_summary,
                 ]
 
@@ -219,12 +226,13 @@ class TestAuditWorkflowRun:
         with _mock_workflow():
             with patch("tron.workflows.audit_workflow.workflow.execute_activity", new_callable=AsyncMock) as mock_exec:
                 # Only awaited calls consume side_effect:
-                # 1. load_project_metadata, 2. scan_repository, 3. synthesize_findings
+                # load_project_metadata, scan_repository, Layer 3, SEC-5 deep verify, synthesize_findings
                 # Agent calls create coroutines but gather is patched so they're never awaited
                 mock_exec.side_effect = [
                     project_meta,
                     scan_result,
                     _noop_layer3(),
+                    _noop_deep_verify(),
                     audit_summary,
                 ]
 
@@ -284,12 +292,13 @@ class TestAuditWorkflowRun:
         with _mock_workflow():
             with patch("tron.workflows.audit_workflow.workflow.execute_activity", new_callable=AsyncMock) as mock_exec:
                 # Only awaited calls consume side_effect:
-                # 1. load_project_metadata, 2. scan_repository, 3. synthesize_findings
+                # load_project_metadata, scan_repository, Layer 3, SEC-5 deep verify, synthesize_findings
                 # Agent calls create coroutines but gather is patched so they're never awaited
                 mock_exec.side_effect = [
                     project_meta,
                     scan_result,
                     _noop_layer3(),
+                    _noop_deep_verify(),
                     audit_summary,
                 ]
 
@@ -349,12 +358,13 @@ class TestAuditWorkflowRun:
         with _mock_workflow():
             with patch("tron.workflows.audit_workflow.workflow.execute_activity", new_callable=AsyncMock) as mock_exec:
                 # Only awaited calls consume side_effect:
-                # 1. load_project_metadata, 2. scan_repository, 3. synthesize_findings
+                # load_project_metadata, scan_repository, Layer 3, SEC-5 deep verify, synthesize_findings
                 # Agent calls create coroutines but gather is patched so they're never awaited
                 mock_exec.side_effect = [
                     project_meta,
                     scan_result,
                     _noop_layer3(),
+                    _noop_deep_verify(),
                     audit_summary,
                 ]
 

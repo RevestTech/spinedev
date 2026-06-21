@@ -2,6 +2,8 @@
 
 Professional, interactive documentation for the Tron Enterprise AI QA Platform.
 
+**Canonical markdown source of truth** for scope and architecture lives in **`docs/README.md`**, **`docs/BLUEPRINT.md`**, and **`docs/project/`** (BRD, TRD, traceability); this static site is a separate presentation layer.
+
 ## Overview
 
 This is a modern, single-page documentation website that provides comprehensive coverage of:

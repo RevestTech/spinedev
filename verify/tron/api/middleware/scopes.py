@@ -93,6 +93,6 @@ async def enforce_api_key_route_scope(request: Request) -> None:
         status_code=403,
         detail=(
             "API key is missing a required scope for this route. "
-            "See docs/project/MASTER_PROPOSAL_TODO.md (API key scopes)."
+            "See docs/project/TRD.md / docs/reference/API_REFERENCE.md (API key scopes)."
         ),
     )

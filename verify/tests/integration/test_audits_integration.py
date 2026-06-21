@@ -19,7 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from tron.domain.models import Project, AuditRun, Finding
+from tron.domain.models import Project
 
 
 @pytest.fixture

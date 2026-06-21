@@ -12,7 +12,6 @@ from __future__ import annotations
 import uuid
 
 import pytest
-from sqlalchemy import select
 
 from tron.api.routes.gdpr import (
     export_user_data,

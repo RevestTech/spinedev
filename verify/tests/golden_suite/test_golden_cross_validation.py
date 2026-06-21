@@ -12,7 +12,6 @@ Cross-validation ensures:
 """
 
 import pytest
-from datetime import datetime
 from uuid import uuid4
 
 from tron.schemas.verification import (

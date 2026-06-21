@@ -21,7 +21,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Optional
+from typing import Any, List, Optional
 
 from sqlalchemy import (
     Boolean,
@@ -77,7 +77,7 @@ class Project(Base):
     created_by: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True))
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
-    # Proposal: standards + PLAN/BUILD artifacts (see MASTER_PROPOSAL_TODO.md)
+    # Standards + PLAN/BUILD artifacts — see docs/project/BRD.md / TRD.md
     company_quality_gates_json: Mapped[Optional[dict]] = mapped_column(JSONB)
     quality_gates_json: Mapped[Optional[dict]] = mapped_column(JSONB)
     plan_artifact_json: Mapped[Optional[dict]] = mapped_column(JSONB)
@@ -88,6 +88,14 @@ class Project(Base):
     evolve_artifact_json: Mapped[Optional[dict]] = mapped_column(JSONB)
     # Optional built-in compliance reference pack IDs (see tron/standards/control_packs.py).
     compliance_control_pack_ids: Mapped[Optional[list]] = mapped_column(JSONB)
+    # SEC-3: optional glob lists (fnmatch/segment patterns, see audit_path_filters) for scan + tagging.
+    audit_exclude_globs_json: Mapped[Optional[list]] = mapped_column(JSONB)
+    audit_test_path_globs_json: Mapped[Optional[list]] = mapped_column(JSONB)
+    # Outbound webhook fired on audit completion/failure. Body is JSON,
+    # signed with HMAC-SHA256 in X-Tron-Signature when audit_webhook_secret_id
+    # resolves to a keyvault entry. See tron/services/audit_webhook.py.
+    audit_webhook_url: Mapped[Optional[str]] = mapped_column(String(2048))
+    audit_webhook_secret_id: Mapped[Optional[str]] = mapped_column(String(255))
 
     # Relationships
     audit_runs: Mapped[list["AuditRun"]] = relationship(back_populates="project", cascade="all, delete-orphan")
@@ -132,6 +140,11 @@ class AuditRun(Base):
     error_message: Mapped[Optional[str]] = mapped_column(Text)
     error_stack: Mapped[Optional[str]] = mapped_column(Text)
     threat_intel_alerts_json: Mapped[Optional[list]] = mapped_column(JSONB)
+    # Pre-PR diff mode: if non-null, the audit pipeline restricts its scan
+    # to exactly these relative paths (set by POST /api/audits/diff).
+    diff_files_json: Mapped[Optional[list]] = mapped_column(JSONB)
+    diff_base_ref: Mapped[Optional[str]] = mapped_column(String(255))
+    diff_head_ref: Mapped[Optional[str]] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, nullable=False
     )
@@ -185,6 +198,16 @@ class Finding(Base):
     resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     resolved_by: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True))
     code_snippet: Mapped[Optional[str]] = mapped_column(Text)
+    # Evidence (SEC-2): optional on legacy rows; new audits persist from FindingOutput
+    confidence: Mapped[Optional[Decimal]] = mapped_column(Numeric(6, 5), nullable=True)
+    deterministic_tool_confirmed: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
+    layer3_execution: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    confirming_tools_json: Mapped[Optional[List[Any]]] = mapped_column(JSONB, nullable=True)
+    path_role: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    follow_up_recommended: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    evidence_source: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, nullable=False
     )
@@ -201,6 +224,29 @@ class Finding(Base):
         Index("idx_findings_fingerprint", "fingerprint", "project_id"),
         Index("idx_findings_status", "status", "project_id", "created_at"),
         Index("idx_findings_file_id", "file_id"),
+    )
+
+
+class FindingSuppression(Base):
+    """Per-project fingerprint suppressions (SEC-4): dismissed findings do not reappear on re-audit."""
+
+    __tablename__ = "finding_suppressions"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=_gen_uuid
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint("project_id", "fingerprint", name="uq_finding_suppressions_project_fingerprint"),
+        Index("idx_finding_suppressions_project_id", "project_id"),
     )
 
 
@@ -521,3 +567,76 @@ class ApiKey(Base):
     revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
     __table_args__ = (Index("idx_api_keys_active", "active"),)
+
+
+class ApiKeyAuditLog(Base):
+    """One row per scoped-API-key (or master-key) call.
+
+    Required for any enterprise security review — answers "which key
+    accessed what, when, from where." Migration 011 adds the table.
+    Master-key calls and admin-session-cookie calls have ``api_key_id =
+    NULL`` and the corresponding ``is_master`` / ``is_admin_session``
+    flag set, so the same table covers all auth paths.
+    """
+
+    __tablename__ = "api_key_audit_log"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=_gen_uuid
+    )
+    api_key_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("api_keys.id", ondelete="CASCADE"),
+    )
+    is_master: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_admin_session: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    method: Mapped[str] = mapped_column(String(10), nullable=False)
+    path: Mapped[str] = mapped_column(String(512), nullable=False)
+    status_code: Mapped[Optional[int]] = mapped_column(Integer)
+    remote_addr: Mapped[Optional[str]] = mapped_column(String(64))
+    user_agent: Mapped[Optional[str]] = mapped_column(String(512))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, nullable=False
+    )
+
+    __table_args__ = (
+        Index("idx_api_key_audit_log_key_time", "api_key_id", "created_at"),
+        Index("idx_api_key_audit_log_path_time", "path", "created_at"),
+    )
+
+
+class SavedGithubOrg(Base):
+    """A user-saved GitHub organization or user account.
+
+    Backs the org switcher in ``GithubRepoBrowser`` so users can move
+    between orgs without re-typing the login each time. Migration 012
+    creates the table.
+
+    The ``login`` column is stored lowercase (and protected by a
+    functional unique index ``lower(login)``) because GitHub treats
+    logins case-insensitively but the REST API echoes whatever case
+    you send — without the normalisation we'd get duplicate ``Anthropic``
+    and ``anthropic`` rows.
+    """
+
+    __tablename__ = "saved_github_orgs"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=_gen_uuid
+    )
+    login: Mapped[str] = mapped_column(String(100), nullable=False)
+    display_name: Mapped[Optional[str]] = mapped_column(String(255))
+    # 'org' or 'user' — enforced in DB by a CHECK constraint (see migration 012).
+    kind: Mapped[str] = mapped_column(String(16), default="org", nullable=False)
+    pinned: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, nullable=False
+    )
+
+    __table_args__ = (
+        CheckConstraint("kind IN ('org', 'user')", name="ck_saved_github_orgs_kind"),
+        Index(
+            "idx_saved_github_orgs_pinned_created", "pinned", "created_at"
+        ),
+        # Functional unique index ``lower(login)`` lives in migration 012;
+        # SQLAlchemy can't express it portably, so we rely on the DB.
+    )

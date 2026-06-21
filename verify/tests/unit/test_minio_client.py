@@ -13,14 +13,11 @@ Tests:
 
 from __future__ import annotations
 
-import asyncio
 from datetime import datetime
-from io import BytesIO
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
 import pytest
-from minio.error import S3Error
 
 from tron.infra.minio.client import (
     ArtifactInfo,

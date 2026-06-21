@@ -15,11 +15,9 @@ import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
 
-import pytest
 
 from tron.domain.models import (
-    Project, AuditRun, Finding, LLMUsage, LLMCostHourly, LLMCostDaily,
-    ProjectCostLimit, CostEvent, CodeFile, FileDependency,
+    Project, AuditRun, Finding, LLMUsage, ProjectCostLimit, CodeFile, FileDependency,
     FindingRelationship, Standard, _utcnow, _gen_uuid
 )
 

@@ -10,9 +10,13 @@ Architecture ref: docs/architecture/AI_AGENT_ARCHITECTURE.md §1.3
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
+import shutil
+import tempfile
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
@@ -20,7 +24,6 @@ from tron.agents.base import (
     BaseISO,
     ISOConfig,
     ISOSpecialization,
-    LLMProvider,
     ToolResult,
 )
 from tron.infra.llm.client import LLMClient, LLMMessage, LLMRequest
@@ -72,7 +75,16 @@ class QAISO(BaseISO):
     """
 
     SPECIALIZATION = ISOSpecialization.QA
-    DEFAULT_TOOLS = ()  # Pure LLM analysis with regex preprocessing
+    # Ruff catches the deterministic stuff — unused imports, undefined names,
+    # mutable default args, comparison-to-None, etc. — so QAISO's LLM call
+    # can spend its tokens on test-design issues instead of restating Ruff.
+    # The LLM still runs after Ruff and sees Ruff's findings as context.
+    #
+    # mypy is NOT in DEFAULT_TOOLS because:
+    #   1. It's slow on real codebases (full type-graph build).
+    #   2. It hard-fails noisily on projects without type stubs.
+    # Opt in per-blueprint by adding "mypy" to ``Blueprint.tools_required``.
+    DEFAULT_TOOLS = ("ruff",)
 
     SYSTEM_PROMPT = """\
 You are QAISO, a test quality analysis agent in the Tron zero-drift \
@@ -342,7 +354,7 @@ Remember: ONLY JSON. No preamble, no explanation, no markdown.
         # Strip markdown code blocks
         if text.startswith("```"):
             lines = text.split("\n")
-            lines = [l for l in lines if not l.strip().startswith("```")]
+            lines = [ln for ln in lines if not ln.strip().startswith("```")]
             text = "\n".join(lines).strip()
 
         # Strip preamble text before JSON
@@ -451,4 +463,239 @@ Remember: ONLY JSON. No preamble, no explanation, no markdown.
             or lower.endswith(".yaml")
             or lower.endswith(".json")
             or lower.endswith(".toml")
+        )
+
+    # ── Deterministic Tool Execution (Ruff) ──────────────────────────
+
+    async def _execute_tool(
+        self,
+        tool_name: str,
+        workspace_root: str,
+        file_contents: Optional[Dict[str, str]] = None,
+    ) -> ToolResult:
+        """Run Ruff against the Python files in the scan set.
+
+        Mirrors SecurityISO's pattern: writes the in-memory file_contents to
+        a temp dir on the audit worker (or whatever host the sandbox is
+        running on), then dispatches `ruff check --output-format=json` via
+        the sandbox so the actual lint runs in the isolated container.
+        """
+        if tool_name == "mypy":
+            return await self._execute_mypy(workspace_root, file_contents)
+        if tool_name != "ruff":
+            return await super()._execute_tool(tool_name, workspace_root, file_contents)
+
+        # Filter to Python files only — Ruff is a Python-only tool. If the
+        # scan set has no .py files, return a clean empty result rather than
+        # invoking the sandbox at all.
+        py_files = {
+            p: c for p, c in (file_contents or {}).items()
+            if p.endswith(".py") or p.endswith(".pyi")
+        }
+        if not py_files:
+            return ToolResult(
+                tool_name="ruff",
+                exit_code=0,
+                stdout="",
+                stderr="(no Python files in scope)",
+                duration_seconds=0.0,
+                findings_count=0,
+                raw_findings=[],
+            )
+
+        temp_dir = tempfile.mkdtemp(prefix="tron-qa-ruff-")
+        try:
+            for rel_path, content in py_files.items():
+                p = Path(temp_dir) / rel_path.lstrip("/")
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.write_text(content, encoding="utf-8", errors="replace")
+
+            return await self._run_ruff(temp_dir)
+        except Exception as exc:
+            logger.exception("QAISO: failed to prepare files for ruff")
+            return ToolResult(
+                tool_name="ruff",
+                exit_code=-1,
+                stdout="",
+                stderr=str(exc),
+                duration_seconds=0.0,
+            )
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+    async def _run_ruff(self, workspace_root: str) -> ToolResult:
+        """Invoke `ruff check` in JSON mode via the sandbox.
+
+        Ruff exits non-zero when violations exist — that's expected, not an
+        error. The runner only logs a warning if the JSON parse also fails
+        AND stderr looks like a real failure (binary missing, config error).
+        """
+        # ``--no-cache`` — there's no benefit to a cache dir inside the
+        # ephemeral sandbox tmpfs.
+        # ``--exit-zero`` is intentionally NOT used: the non-zero exit gives
+        # downstream metrics a clean signal that lint findings exist.
+        bash_cmd = (
+            "ruff check --output-format=json --no-cache "
+            "--select=F,E7,E9,W6 ."
+        )
+
+        sandbox = await self._get_sandbox()
+        start = asyncio.get_event_loop().time()
+        result = await sandbox.run_bash(bash_cmd, workdir=workspace_root)
+        duration = asyncio.get_event_loop().time() - start
+
+        raw_findings: List[Dict[str, Any]] = []
+        try:
+            stdout = (result.stdout or "").strip() or "[]"
+            payload = json.loads(stdout)
+            for v in payload:
+                # Ruff JSON entry shape (v0.1+):
+                # {"code": "F401", "message": "...", "filename": "...",
+                #  "location": {"row": int, "column": int}, "fix": {...}}
+                loc = v.get("location") or {}
+                raw_findings.append({
+                    "file": v.get("filename", ""),
+                    "line": loc.get("row", 0),
+                    "column": loc.get("column", 0),
+                    "rule_id": v.get("code", ""),
+                    "message": v.get("message", ""),
+                    "fixable": bool(v.get("fix")),
+                })
+        except (json.JSONDecodeError, TypeError):
+            # Real failure (e.g. ruff not on PATH inside the sandbox image)
+            # — log so the operator can fix the image, but don't raise.
+            if result.exit_code not in (0, 1) and result.stderr:
+                logger.warning(
+                    "Ruff returned non-JSON (exit %d): %s",
+                    result.exit_code,
+                    result.stderr[:200],
+                )
+
+        return ToolResult(
+            tool_name="ruff",
+            exit_code=result.exit_code,
+            stdout=result.stdout,
+            stderr=result.stderr,
+            duration_seconds=duration,
+            findings_count=len(raw_findings),
+            raw_findings=raw_findings,
+        )
+
+    async def _execute_mypy(
+        self,
+        workspace_root: str,
+        file_contents: Optional[Dict[str, str]] = None,
+    ) -> ToolResult:
+        """Run mypy on Python files. Opt-in via Blueprint.tools_required.
+
+        mypy is genuinely useful for catching type-shaped bugs that Ruff
+        and the LLM both miss (None-not-handled, signature mismatches,
+        wrong return types). It's also slow and project-config-dependent,
+        which is why it's not in DEFAULT_TOOLS — opt in explicitly when
+        the scanned project has type stubs and you can afford the runtime.
+
+        Implementation parity with Ruff's runner. Same temp-dir prep,
+        same sandbox dispatch, same JSON-shaped output handling. mypy's
+        stdout isn't JSON by default — we use ``--show-error-end`` and
+        ``--no-color-output`` and parse the line-prefix format
+        ``file:line: severity: message [code]``.
+        """
+        py_files = {
+            p: c for p, c in (file_contents or {}).items()
+            if p.endswith(".py") or p.endswith(".pyi")
+        }
+        if not py_files:
+            return ToolResult(
+                tool_name="mypy",
+                exit_code=0,
+                stdout="",
+                stderr="(no Python files in scope)",
+                duration_seconds=0.0,
+                findings_count=0,
+                raw_findings=[],
+            )
+
+        temp_dir = tempfile.mkdtemp(prefix="tron-qa-mypy-")
+        try:
+            for rel_path, content in py_files.items():
+                p = Path(temp_dir) / rel_path.lstrip("/")
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.write_text(content, encoding="utf-8", errors="replace")
+
+            return await self._run_mypy(temp_dir)
+        except Exception as exc:
+            logger.exception("QAISO: failed to prepare files for mypy")
+            return ToolResult(
+                tool_name="mypy",
+                exit_code=-1,
+                stdout="",
+                stderr=str(exc),
+                duration_seconds=0.0,
+            )
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+    async def _run_mypy(self, workspace_root: str) -> ToolResult:
+        """Invoke mypy with relaxed defaults — we want signal, not stub failures.
+
+        Flags:
+          * ``--ignore-missing-imports`` — third-party libs without stubs
+            don't error; the project under audit doesn't ship our deps.
+          * ``--no-color-output`` — avoid ANSI noise in the parser.
+          * ``--show-error-codes`` — surfaces ``[arg-type]``, ``[return-value]``
+            so we can map to vulnerability_type categories downstream.
+          * ``--no-incremental`` — sandbox is ephemeral; cache provides no value.
+        """
+        bash_cmd = (
+            "mypy --ignore-missing-imports --no-color-output "
+            "--show-error-codes --show-column-numbers --no-incremental ."
+        )
+
+        sandbox = await self._get_sandbox()
+        start = asyncio.get_event_loop().time()
+        result = await sandbox.run_bash(bash_cmd, workdir=workspace_root)
+        duration = asyncio.get_event_loop().time() - start
+
+        # mypy line format example:
+        #   src/foo.py:12:9: error: Incompatible return type [return-value]
+        #   src/foo.py: note: ...
+        line_re = re.compile(
+            r"^(?P<file>[^:]+):(?P<line>\d+)(?::(?P<col>\d+))?: "
+            r"(?P<severity>error|warning|note): (?P<message>.+?)"
+            r"(?:  \[(?P<code>[a-z\-]+)\])?$"
+        )
+
+        raw_findings: List[Dict[str, Any]] = []
+        for raw_line in (result.stdout or "").splitlines():
+            m = line_re.match(raw_line.strip())
+            if not m:
+                continue
+            # Notes are informational annotations, not standalone findings.
+            if m.group("severity") == "note":
+                continue
+            raw_findings.append({
+                "file": m.group("file"),
+                "line": int(m.group("line")),
+                "column": int(m.group("col") or 0),
+                "rule_id": m.group("code") or "mypy",
+                "severity": m.group("severity"),
+                "message": m.group("message"),
+            })
+
+        # mypy exits 0 when clean, 1 when type errors found, 2 on internal
+        # error / config problem. 1 is data, not failure.
+        if result.exit_code not in (0, 1) and result.stderr:
+            logger.warning(
+                "mypy returned exit %d; first 200 chars of stderr: %s",
+                result.exit_code, (result.stderr or "")[:200],
+            )
+
+        return ToolResult(
+            tool_name="mypy",
+            exit_code=result.exit_code,
+            stdout=result.stdout,
+            stderr=result.stderr,
+            duration_seconds=duration,
+            findings_count=len(raw_findings),
+            raw_findings=raw_findings,
         )

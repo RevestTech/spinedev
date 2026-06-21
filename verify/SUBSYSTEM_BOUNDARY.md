@@ -2,7 +2,7 @@
 
 > **Spine subsystem boundary doc.** Lives alongside TRON's own `verify/README.md` (TRON's project docs). This file describes the *Spine* role of this subsystem — what it owns, its contract to the Orchestrator, its stack, its boundary. Renamed from `README.md` to `SUBSYSTEM_BOUNDARY.md` to avoid clash with TRON's pre-existing README.md when integrated via `git subtree`.
 >
-> **Status:** TRON subtree-merged 2026-05-16 (Phase 1) from `/Users/khashsarrafi/Projects/Utilities/tron@main` (`adcebe33`).
+> **Status:** TRON subtree-merged 2026-05-16 (Phase 1). **Final delta sync 2026-06-21** from standalone `RevestTech/Tron` into `verify/` via `tools/sync-tron-delta-to-verify.sh`. Standalone Tron repo is **decommissioned** — this directory is the canonical home for TRON code.
 
 ## Purpose
 
@@ -245,4 +245,5 @@ would be a TRON-side feature, not a Spine-side patch.
 - `verify/README.md` — TRON's own project README (immediately below this file in the same dir)
 - `verify/AGENTS.md` — TRON's agent context
 - `verify/docs/BLUEPRINT.md` — TRON's canonical doc index
-- Original TRON source (pre-subtree): `/Users/khashsarrafi/Projects/Utilities/tron`
+- Standalone repo (decommissioned 2026-06-21): `https://github.com/RevestTech/Tron` — use `verify/` in `RevestTech/spinedev` instead
+- Resync script (if ever needed): `tools/sync-tron-delta-to-verify.sh`

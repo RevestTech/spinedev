@@ -14,9 +14,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 from temporalio.common import RetryPolicy
 
 from tron.workflows.activities import (

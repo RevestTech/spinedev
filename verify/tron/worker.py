@@ -38,6 +38,7 @@ from tron.workflows.activities import (
     run_compliance_agent,
     run_documentation_agent,
     verify_findings_with_sandbox,
+    deep_verify_follow_up_findings,
     synthesize_findings,
     mark_audit_run_failed,
     generate_fix,
@@ -117,6 +118,10 @@ async def main():
             run_compliance_agent,
             run_documentation_agent,
             verify_findings_with_sandbox,  # Layer 3: Execution verification
+            # SEC-5 second sandbox pass — AuditWorkflow.run() calls this
+            # at audit_workflow.py:244 when TRON_DEEP_VERIFY_TOP_N > 0.
+            # Without registration here, Temporal would fail to dispatch.
+            deep_verify_follow_up_findings,
             synthesize_findings,
             mark_audit_run_failed,
             # Plan / Build

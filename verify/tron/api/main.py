@@ -20,7 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from tron.api.config import settings
-from tron.api.routes import admin_auth, admin_metrics, api_keys, audits, costs, fixes, graph, health, modes, projects, standards, ws, gdpr, workflow_runs, integrations
+from tron.api.routes import admin_auth, admin_metrics, alerts, api_keys, audits, costs, findings, fixes, graph, health, modes, projects, standards, ws, gdpr, workflow_runs, integrations
 from tron.api.middleware.metrics import MetricsMiddleware
 from tron.api.middleware.rate_limit import RateLimitMiddleware
 from tron.api.middleware.security import SecurityHeadersMiddleware
@@ -125,20 +125,23 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # CORS
+    # CORS — explicit origins (TRON_CORS_ORIGINS) and headers: browsers reject credentials + Allow-Headers: *
+    _cors_hdr = [
+        "Accept",
+        "Accept-Language",
+        "Content-Language",
+        "Content-Type",
+        "Authorization",
+        "X-API-Key",
+        "X-Request-ID",
+        "Cookie",
+    ]
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[
-            "http://localhost:3000",
-            "http://localhost:3001",
-            "http://localhost:13001",
-            "http://localhost:13080",
-            "http://127.0.0.1:13080",
-            "http://127.0.0.1:13001",
-        ],
+        allow_origins=settings.cors_allowed_origins(),
         allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=_cors_hdr,
     )
 
     # Security headers (before CORS so headers are preserved)
@@ -149,6 +152,15 @@ def create_app() -> FastAPI:
 
     # Rate limiting (Redis-backed sliding window)
     app.add_middleware(RateLimitMiddleware)
+
+    # API-key audit log: one row per authed call. Installs after auth so
+    # ``request.state.api_key_db_id`` / ``api_key_is_master`` /
+    # ``admin_ui_session`` are populated. Best-effort write — never blocks
+    # the response.
+    from tron.api.middleware.audit_log import install_api_key_audit_log_middleware
+    from tron.infra.db.session import _session_factory as _audit_log_sf
+    if _audit_log_sf is not None:
+        install_api_key_audit_log_middleware(app, _audit_log_sf)
 
     # Socket.IO mount (before routes)
     app.mount('/socket.io', socket_app)
@@ -175,10 +187,16 @@ def create_app() -> FastAPI:
 
     # Routes
     app.include_router(health.router, tags=["Health"])
+    # Alertmanager webhook receiver — intentionally NOT /api-prefixed so the
+    # existing Alertmanager config ("url: http://tron-api:8000/alerts...") keeps
+    # working. Sits on the internal docker network only; see alerts.py for auth
+    # notes if exposing externally.
+    app.include_router(alerts.router, tags=["Alerts"])
     app.include_router(admin_auth.router, prefix="/api", tags=["Admin UI"])
     app.include_router(admin_metrics.router, prefix="/api", tags=["Admin Metrics"])
     app.include_router(projects.router, prefix="/api", tags=["Projects"])
     app.include_router(audits.router, prefix="/api", tags=["Audits"])
+    app.include_router(findings.router, prefix="/api", tags=["Findings"])
     app.include_router(standards.router, prefix="/api", tags=["Standards"])
     app.include_router(graph.router, prefix="/api", tags=["Graph"])
     app.include_router(modes.router, prefix="/api", tags=["Modes"])

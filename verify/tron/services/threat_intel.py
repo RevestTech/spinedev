@@ -1,15 +1,20 @@
 """
 Threat Intelligence Service - Fetches and caches live vulnerability data.
 
-This service connects Tron to global vulnerability databases (OSV.dev, GitHub)
-to identify backdoors and supply chain attacks in real-time.
+Connects Tron to OSV.dev (and upstream advisory text) so **known** vulnerable
+dependency versions surface during audits. Advisory text is scanned for
+keywords suggesting malicious packages or supply-chain incidents.
+
+This is **one layer** of assurance—not proof that a dependency graph is clean,
+nor detection of unpublished malware. Combine with deterministic scanners,
+SecurityISO analysis, optional sandbox verification, and organizational controls.
 """
 
 import httpx
 import logging
 import asyncio
 from typing import List, Dict, Any, Optional
-from datetime import datetime, timedelta
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +62,20 @@ class ThreatIntelService:
 
     def identify_malicious_patterns(self, vuln_data: List[Dict[str, Any]]) -> List[str]:
         """Look for keywords indicating a backdoor or supply chain attack in vulnerability descriptions."""
-        malicious_keywords = ["backdoor", "malicious", "supply chain", "credential theft", "exfiltrate", "remote access"]
+        malicious_keywords = [
+            "backdoor",
+            "malicious",
+            "supply chain",
+            "credential theft",
+            "exfiltrate",
+            "remote access",
+            "typosquat",
+            "cryptomin",
+            "ransomware",
+            "worm",
+            "preinstall",  # npm postinstall abuse (heuristic)
+            "postinstall",
+        ]
         warnings = []
         
         for vuln in vuln_data:

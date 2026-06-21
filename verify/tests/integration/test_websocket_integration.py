@@ -28,11 +28,7 @@ import pytest
 from tron.api.routes.ws import (
     _active_connections,
     _authenticate_ws,
-    _forward_redis_to_ws,
     _send_json,
-    _stream_from_redis,
-    _ws_keepalive,
-    audit_progress_ws,
 )
 
 

@@ -25,7 +25,7 @@ DB_USER = "app_user"
 # Severity: CRITICAL
 # Impact: Attacker can make API calls as the application
 # Fix: Use environment variable: STRIPE_API_KEY
-STRIPE_API_KEY = "fake_stripe_key_golden_suite_fixture"  # VULNERABLE: Line 18
+STRIPE_API_KEY = "sk_live_FAKE_tron_golden_suite_not_a_real_stripe_key_00"  # VULNERABLE: Line 18
 
 
 # VULNERABILITY: Hardcoded AWS credentials
@@ -50,7 +50,7 @@ JWT_SECRET = "my-super-secret-jwt-key-do-not-share"  # VULNERABLE: Line 28
 # Severity: CRITICAL
 # Impact: OAuth token generation/interception possible
 # Fix: Environment variables + secure secret management
-GITHUB_CLIENT_SECRET = "fake_github_pat_golden_suite_fixture"  # VULNERABLE: Line 32
+GITHUB_CLIENT_SECRET = "ghp_1234567890abcdefghijklmnopqrstuvwxyz"  # VULNERABLE: Line 32
 
 
 # VULNERABILITY: Hardcoded private encryption key
@@ -66,7 +66,7 @@ ENCRYPTION_KEY = "e7f4a8c2b9d3e1f5a7c9b1d3e5f7a9c2b1d3e5f7"  # VULNERABLE: Line 
 # Severity: HIGH
 # Impact: Attackers can post messages to Slack channel
 # Fix: Environment variable
-SLACK_WEBHOOK = "https://example.invalid/webhooks/slack/golden-fixture"  # VULNERABLE: Line 40
+SLACK_WEBHOOK = "https://example.invalid/fake-slack-webhook/tron-golden-suite-not-real"  # VULNERABLE: Line 40
 
 
 # VULNERABILITY: Hardcoded database connection string
@@ -81,7 +81,7 @@ class APIClient:
     """VULNERABILITY: Hardcoded API credentials in class"""
     
     # VULNERABLE: Line 50 - API key in class attribute
-    API_KEY = "fake_stripe_test_key_golden_suite_fixture"
+    API_KEY = "sk_test_abcdef1234567890abcdef1234567890"
     
     def __init__(self):
         # VULNERABLE: Line 53 - Hardcoded bearer token

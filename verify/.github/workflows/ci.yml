@@ -1,0 +1,70 @@
+# Gates that must be green for every push and PR:
+#   1. App import smoke  — catches import-time regressions across routes/services.
+#   2. pytest unit+integration — integration tests are SQLite-backed (see
+#      tests/integration/conftest.py), so no external DB/Redis is needed.
+#   3. ruff check . — lint the whole repo.
+#   4. bandit -r tron/ — static security scan of application code.
+#
+# All four steps are required (no ``continue-on-error``). A red step fails the
+# job. Triage before adding skips; see docs/project/HARDENING_REVIEW_TODO.md.
+name: CI
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+    branches: [main, master, develop]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality-gates:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: .
+      # Tests must not reach a real vault. Unit/integration code paths that
+      # depend on secrets patch ``tron.infra.secrets.get_secret`` directly.
+      VAULT_BACKEND: "kmac"
+      KMAC_TOKEN: "ci-placeholder"
+      KMAC_TOKEN_PATH: "/nonexistent/ci"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # ── Gate 1: import smoke ──────────────────────────────────────
+      # ``create_app()`` runs all router/middleware wiring but does NOT
+      # trigger the lifespan handler (no DB/Redis/vault contact here).
+      - name: App import smoke
+        run: python -c "from tron.api.main import create_app; create_app()"
+
+      # ── Gate 2: full unit + integration tests ────────────────────
+      - name: Pytest (unit + integration)
+        run: |
+          python -m pytest \
+            tests/unit \
+            tests/integration \
+            -q --tb=short --strict-markers
+
+      # ── Gate 3: lint ─────────────────────────────────────────────
+      - name: Ruff
+        run: ruff check .
+
+      # ── Gate 4: static security scan ─────────────────────────────
+      # -ll limits to medium+high severity, -ii to medium+high confidence;
+      # high-noise/low-signal findings are filtered so this can be required
+      # without continuous toil. Tune in pyproject.toml if findings grow.
+      - name: Bandit
+        run: bandit -r tron/ -ll -ii -x tron/tests,tests

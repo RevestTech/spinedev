@@ -23,7 +23,6 @@ import logging
 import os
 import time
 from dataclasses import dataclass, field
-from typing import AsyncGenerator, Dict, List, Optional
 
 import httpx
 

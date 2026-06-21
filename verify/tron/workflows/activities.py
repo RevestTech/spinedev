@@ -19,7 +19,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 from uuid import UUID, uuid4
 
 from temporalio import activity
@@ -130,6 +130,11 @@ class ProjectMeta:
     name: str
     repo_url: Optional[str]
     default_branch: str
+    # Pre-PR diff mode: if non-None, scan_repository restricts the file
+    # set to exactly these relative paths before storing in Redis. Read
+    # from ``audit_runs.diff_files_json`` by ``load_project_metadata``.
+    # Default ``None`` preserves the full-audit semantics.
+    diff_files: Optional[List[str]] = None
 
 
 @dataclass
@@ -183,6 +188,16 @@ class VerificationResult:
     unverified_count: int
     skipped_count: int
     confidence_adjustments: List[Dict[str, Any]]
+
+
+@dataclass
+class DeepVerifySummary:
+    """SEC-5: second sandbox pass stats for critical/high findings still unverified after Layer 3."""
+
+    attempted: int = 0
+    verified: int = 0
+    rejected: int = 0
+    skipped_reason: str = ""
 
 
 @dataclass
@@ -257,6 +272,26 @@ async def load_project_metadata(audit_input: AuditInput) -> ProjectMeta:
         )
         await session.commit()
 
+    # Pre-PR diff mode: read the audit row's diff_files_json so the scanner
+    # can restrict its file set in scan_repository. Null/missing means a
+    # full audit; an empty list would mean "scan zero files" — we treat
+    # that as a misconfig and fall back to full audit with a loud warning.
+    diff_files: Optional[List[str]] = None
+    async with _session_factory() as session:
+        ar = await session.get(AuditRun, audit_run_id)
+        if ar is not None and isinstance(ar.diff_files_json, list):
+            if not ar.diff_files_json:
+                activity.logger.warning(
+                    "Audit %s has empty diff_files_json — running full audit",
+                    audit_run_id,
+                )
+            else:
+                diff_files = [str(p) for p in ar.diff_files_json]
+                activity.logger.info(
+                    "Audit %s in diff mode: %d files in scope",
+                    audit_run_id, len(diff_files),
+                )
+
     activity.logger.info("Loaded project: %s (%s)", project.name, project.repo_url or "no repo")
 
     return ProjectMeta(
@@ -264,6 +299,7 @@ async def load_project_metadata(audit_input: AuditInput) -> ProjectMeta:
         name=project.name,
         repo_url=project.repo_url,
         default_branch=project.default_branch or "main",
+        diff_files=diff_files,
     )
 
 
@@ -301,6 +337,24 @@ async def mark_audit_run_failed(audit_run_id: str, message: str, stack: Optional
 
     await publish_audit_failed(aid, msg)
     activity.logger.warning("Audit %s marked failed: %s", audit_run_id, msg[:200])
+
+    # Fire the failure webhook (#7). We do this AFTER the row update so
+    # the payload reflects ``status: failed``. We need the project_id —
+    # re-read the row to get it cleanly even though we just wrote it.
+    try:
+        async with _session_factory() as session:
+            row = await session.get(AuditRun, aid)
+        if row is not None:
+            await _fire_audit_webhook_inline(
+                audit_run_id=aid,
+                project_id=row.project_id,
+                event="audit.failed",
+            )
+    except Exception:
+        activity.logger.warning(
+            "Failure webhook fire-after-mark failed for %s", audit_run_id,
+            exc_info=True,
+        )
 
 
 @activity.defn
@@ -347,6 +401,20 @@ async def scan_repository(project_meta: ProjectMeta) -> ScanResult:
     else:
         activity.logger.info("No repo_url — using demo source files")
         file_contents = _demo_source_files()
+
+    # Pre-PR diff mode: restrict to exactly the changed files BEFORE
+    # storing in Redis or computing language stats. Mirrors the
+    # in-process AuditExecutor._load_diff_files step — keeping both code
+    # paths aligned so a Temporal-vs-in-process handoff doesn't surprise
+    # a customer.
+    if project_meta.diff_files is not None:
+        allowed = set(project_meta.diff_files)
+        before = len(file_contents)
+        file_contents = {p: c for p, c in file_contents.items() if p in allowed}
+        activity.logger.info(
+            "Diff mode: restricted scan from %d files to %d (of %d requested)",
+            before, len(file_contents), len(allowed),
+        )
 
     languages = detect_languages(file_contents)
     total_size = sum(len(v) for v in file_contents.values())
@@ -506,18 +574,34 @@ async def verify_findings_with_sandbox(
     
     # Initialize sandbox client
     sandbox_client = SandboxClient(logger=activity.logger)
-    
-    # Check if Docker is available
+
+    def _tag_layer3_no_sandbox() -> None:
+        """Ensure findings carry layer3_execution so synthesis/triage can classify."""
+        for ar in agent_results:
+            try:
+                findings = json.loads(ar.findings_json)
+            except json.JSONDecodeError:
+                continue
+            for fd in findings:
+                sev = str(fd.get("severity", "")).lower()
+                fd["layer3_execution"] = (
+                    "skipped" if sev in ("critical", "high") else "not_applicable"
+                )
+            ar.findings_json = json.dumps(findings)
+            ar.findings_count = len(findings)
+
+    # Check if Docker / sandbox HTTP is available
     if not sandbox_client.is_available():
         activity.logger.warning(
-            "Layer 3: Docker not available - skipping sandbox verification"
+            "Layer 3: sandbox not available — tagging findings as skipped/not_applicable"
         )
+        _tag_layer3_no_sandbox()
         return VerificationResult(
             verified_count=0,
             rejected_count=0,
             unverified_count=0,
             skipped_count=sum(ar.findings_count for ar in agent_results),
-            confidence_adjustments=[]
+            confidence_adjustments=[],
         )
     
     verifier = ExecutionVerifier(
@@ -569,6 +653,8 @@ async def verify_findings_with_sandbox(
                     )
                     finding_dict["sandbox_verified"] = True
                     finding_dict["verification_method"] = result.method
+                    finding_dict["layer3_execution"] = "verified"
+                    finding_dict["deterministic_tool_confirmed"] = True
                     verified += 1
                     adjustments.append({
                         "finding_id": finding_dict.get("finding_fingerprint"),
@@ -598,14 +684,17 @@ async def verify_findings_with_sandbox(
                 elif result.status == VerificationStatus.UNVERIFIED:
                     finding_dict["sandbox_verified"] = False
                     finding_dict["verification_reason"] = result.reason
+                    finding_dict["layer3_execution"] = "unverified"
                     unverified += 1
                     activity.logger.debug(
                         f"Layer 3: UNVERIFIED {category} - {result.reason}"
                     )
-                
+
                 else:  # SKIPPED
+                    finding_dict["layer3_execution"] = "skipped"
                     skipped += 1
             else:
+                finding_dict["layer3_execution"] = "not_applicable"
                 skipped += 1
         
         # Remove rejected findings from results
@@ -625,67 +714,182 @@ async def verify_findings_with_sandbox(
         skipped_count=skipped,
         confidence_adjustments=adjustments
     )
-    
-    # FUTURE: Full implementation
-    # verifier = ExecutionVerifier(sandbox_client=docker_client, logger=activity.logger)
-    # 
-    # verified = 0
-    # rejected = 0
-    # unverified = 0
-    # skipped = 0
-    # adjustments = []
-    # 
-    # # Parse all findings
-    # for ar in agent_results:
-    #     findings = json.loads(ar.findings_json)
-    #     
-    #     for finding in findings:
-    #         severity = finding.get("severity", "").lower()
-    #         
-    #         # Only verify critical/high findings
-    #         if severity in ["critical", "high"]:
-    #             result = await verifier.verify_finding(finding)
-    #             
-    #             if result.status == VerificationStatus.VERIFIED:
-    #                 finding["confidence"] += result.confidence_adjustment
-    #                 finding["sandbox_verified"] = True
-    #                 verified += 1
-    #                 adjustments.append({
-    #                     "finding_id": finding.get("finding_fingerprint"),
-    #                     "adjustment": result.confidence_adjustment,
-    #                     "status": "verified"
-    #                 })
-    #             
-    #             elif result.status == VerificationStatus.REJECTED:
-    #                 # False positive - remove from results
-    #                 rejected += 1
-    #                 adjustments.append({
-    #                     "finding_id": finding.get("finding_fingerprint"),
-    #                     "adjustment": result.confidence_adjustment,
-    #                     "status": "rejected"
-    #                 })
-    #             
-    #             elif result.status == VerificationStatus.UNVERIFIED:
-    #                 finding["sandbox_verified"] = False
-    #                 unverified += 1
-    #             
-    #             else:
-    #                 skipped += 1
-    #         else:
-    #             skipped += 1
-    # 
-    # activity.logger.info(
-    #     "Layer 3 complete: %d verified, %d rejected, %d unverified, %d skipped",
-    #     verified, rejected, unverified, skipped
-    # )
-    # 
-    # return VerificationResult(
-    #     verified_count=verified,
-    #     rejected_count=rejected,
-    #     unverified_count=unverified,
-    #     skipped_count=skipped,
-    #     confidence_adjustments=adjustments
-    # )
+
+
+def _collect_findings_dicts_from_agents(agent_results: List[AgentResult]) -> List[Dict[str, Any]]:
+    import json
+
+    out: List[Dict[str, Any]] = []
+    for ar in agent_results:
+        try:
+            out.extend(json.loads(ar.findings_json))
+        except json.JSONDecodeError:
+            continue
+    return out
+
+
+def _propagate_fingerprint_updates(
+    agent_results: List[AgentResult],
+    fingerprint: str,
+    updater: Callable[[Dict[str, Any]], None],
+) -> None:
+    """Apply updater(fd) to every finding dict matching fingerprint across agents."""
+    import json
+
+    for ar in agent_results:
+        try:
+            findings = json.loads(ar.findings_json)
+        except json.JSONDecodeError:
+            continue
+        changed = False
+        for fd in findings:
+            if fd.get("finding_fingerprint") != fingerprint:
+                continue
+            updater(fd)
+            changed = True
+        if changed:
+            findings_filtered = [f for f in findings if not f.get("_reject", False)]
+            ar.findings_json = json.dumps(findings_filtered)
+            ar.findings_count = len(findings_filtered)
+
+
+@activity.defn
+async def deep_verify_follow_up_findings(
+    audit_input: AuditInput,
+    agent_results: List[AgentResult],
+) -> DeepVerifySummary:
+    """SEC-5: optional second sandbox pass for top-N critical/high findings still unverified."""
+
+    from tron.domain.models import Project
+    from tron.infra.db.session import _session_factory
+    from tron.services.finding_triage import (
+        apply_path_role_to_dicts,
+        filter_finding_dicts_by_suppression,
+        load_suppressed_fingerprints_for_project,
+        triage_top_n,
+    )
+    from tron.services.sandbox_client import SandboxClient
+    from tron.verification.execution_verifier import (
+        ExecutionVerifier,
+        FindingSnapshot,
+        VerificationStatus,
+    )
+    from tron.infra.redis.pubsub import publish_progress
+    from tron.workflows.finding_merge import dedupe_findings_dicts
+
+    audit_run_id = UUID(audit_input.audit_run_id)
+    top_n = triage_top_n()
+    if top_n <= 0:
+        return DeepVerifySummary(skipped_reason="TRON_DEEP_VERIFY_TOP_N=0")
+
+    sandbox_client = SandboxClient(logger=activity.logger)
+    if not sandbox_client.is_available():
+        return DeepVerifySummary(skipped_reason="sandbox_unavailable")
+
+    await publish_progress(
+        audit_run_id,
+        "running",
+        72,
+        "SEC-5: Deep verification pass (second sandbox attempt)",
+    )
+
+    all_raw = _collect_findings_dicts_from_agents(agent_results)
+    deduped = dedupe_findings_dicts(all_raw)
+
+    pid = UUID(audit_input.project_id)
+    async with _session_factory() as triage_s:
+        suppressed = await load_suppressed_fingerprints_for_project(triage_s, pid)
+        proj = await triage_s.get(Project, pid)
+    test_globs = list(proj.audit_test_path_globs_json or []) if proj else []
+
+    merged = apply_path_role_to_dicts(deduped, test_globs)
+    merged = filter_finding_dicts_by_suppression(merged, suppressed)
+
+    order = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
+    candidates = [
+        f
+        for f in merged
+        if str(f.get("severity", "")).lower() in ("critical", "high")
+        and str(f.get("layer3_execution", "")).lower() == "unverified"
+    ]
+    candidates.sort(
+        key=lambda f: (
+            order.get(str(f.get("severity", "medium")).lower(), 9),
+            -float(f.get("confidence") or 0.0),
+        )
+    )
+    targets = candidates[:top_n]
+    if not targets:
+        return DeepVerifySummary(skipped_reason="no_unverified_critical_high")
+
+    verifier = ExecutionVerifier(sandbox_client=sandbox_client, logger=activity.logger)
+
+    attempted = verified = rejected = 0
+
+    for tdict in targets:
+        fp = tdict.get("finding_fingerprint")
+        if not fp:
+            continue
+        category = str(
+            tdict.get("category") or tdict.get("vulnerability_type") or ""
+        )
+        severity = str(tdict.get("severity", "")).lower()
+        snap = FindingSnapshot(
+            category=category,
+            severity=severity,
+            title=str(tdict.get("title", "")),
+            description=str(tdict.get("description", "")),
+            file_path=str(tdict.get("file_path", "")),
+            line_number=int(tdict.get("line_number") or 0),
+            code_snippet=str(tdict.get("code_snippet") or ""),
+            confidence=float(tdict.get("confidence") or 0.5),
+        )
+        result = await verifier.verify_finding(snap)
+        attempted += 1
+
+        if result.status == VerificationStatus.VERIFIED:
+
+            def _apply_ver(fd: Dict[str, Any]) -> None:
+                fd["confidence"] = min(
+                    1.0,
+                    float(fd.get("confidence") or 0.5) + result.confidence_adjustment,
+                )
+                fd["sandbox_verified"] = True
+                fd["verification_method"] = result.method
+                fd["layer3_execution"] = "verified"
+                fd["deterministic_tool_confirmed"] = True
+
+            _propagate_fingerprint_updates(agent_results, fp, _apply_ver)
+            verified += 1
+
+        elif result.status == VerificationStatus.REJECTED:
+
+            def _apply_rej(fd: Dict[str, Any]) -> None:
+                fd["_reject"] = True
+                fd["rejection_reason"] = result.reason
+
+            _propagate_fingerprint_updates(agent_results, fp, _apply_rej)
+            rejected += 1
+
+        else:
+            activity.logger.debug(
+                "SEC-5 deep verify still inconclusive for %s — %s",
+                fp,
+                getattr(result, "reason", ""),
+            )
+
+    activity.logger.info(
+        "SEC-5 deep verify: attempted=%s verified=%s rejected=%s",
+        attempted,
+        verified,
+        rejected,
+    )
+
+    return DeepVerifySummary(
+        attempted=attempted,
+        verified=verified,
+        rejected=rejected,
+    )
 
 
 @activity.defn
@@ -727,31 +931,33 @@ async def synthesize_findings(
         except json.JSONDecodeError:
             activity.logger.warning("Failed to parse findings from %s", ar.agent_id)
 
-    # Deduplicate by fingerprint
-    seen: Dict[str, Dict[str, Any]] = {}
-    for f in all_findings_dicts:
-        fp = f.get("finding_fingerprint", str(uuid4()))
-        if fp not in seen:
-            seen[fp] = f
-        else:
-            # Keep the one with tool confirmation or higher confidence
-            existing = seen[fp]
-            if f.get("deterministic_tool_confirmed") and not existing.get("deterministic_tool_confirmed"):
-                seen[fp] = f
-            elif f.get("confidence", 0) > existing.get("confidence", 0):
-                seen[fp] = f
+    from tron.workflows.finding_merge import dedupe_findings_dicts
 
-    deduped = list(seen.values())
+    deduped = dedupe_findings_dicts(all_findings_dicts)
 
-    # Count severities
-    sev_counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
-    for f in deduped:
-        sev = f.get("severity", "medium")
-        if sev in sev_counts:
-            sev_counts[sev] += 1
+    from tron.domain.models import Project
+    from tron.services.finding_triage import (
+        apply_follow_up_flags_to_dicts,
+        apply_path_role_to_dicts,
+        filter_finding_dicts_by_suppression,
+        load_suppressed_fingerprints_for_project,
+        recompute_severity_counts,
+        triage_top_n,
+    )
+    from tron.infra.db.session import _session_factory
+
+    pid = UUID(audit_input.project_id)
+    async with _session_factory() as triage_s:
+        suppressed = await load_suppressed_fingerprints_for_project(triage_s, pid)
+        proj = await triage_s.get(Project, pid)
+    test_globs = list(proj.audit_test_path_globs_json or []) if proj else []
+    deduped = apply_path_role_to_dicts(deduped, test_globs)
+    deduped = filter_finding_dicts_by_suppression(deduped, suppressed)
+    deduped = apply_follow_up_flags_to_dicts(deduped, triage_top_n())
+    sev_counts = recompute_severity_counts(deduped)
 
     activity.logger.info(
-        "Synthesis: %d raw → %d deduped (%d critical, %d high)",
+        "Synthesis: %d raw → %d after triage (%d critical, %d high)",
         len(all_findings_dicts),
         len(deduped),
         sev_counts["critical"],
@@ -786,6 +992,15 @@ async def synthesize_findings(
         preloaded_findings=deduped,
     )
 
+    # Outbound webhook (#7) — fires on the success path. The failed path
+    # is fired by the workflow's mark_audit_run_failed activity (so a
+    # failure midway through synthesize doesn't skip the webhook).
+    await _fire_audit_webhook_inline(
+        audit_run_id=audit_run_id,
+        project_id=UUID(audit_input.project_id),
+        event="audit.completed",
+    )
+
     return AuditSummary(
         audit_run_id=audit_input.audit_run_id,
         findings_total=len(deduped),
@@ -797,6 +1012,56 @@ async def synthesize_findings(
         agents_run=len(agent_results),
         errors=agent_errors,
     )
+
+
+async def _fire_audit_webhook_inline(
+    *,
+    audit_run_id: UUID,
+    project_id: UUID,
+    event: str,
+) -> None:
+    """Best-effort webhook fire from inside an activity.
+
+    Fetches the freshly-updated AuditRun + Project rows so the payload
+    reflects the final counts, then delegates to
+    ``tron.services.audit_webhook.fire_audit_webhook``. Never raises —
+    a webhook problem must NOT mark the audit as failed.
+
+    Worker secrets resolution: the activity worker keeps its loaded
+    secrets in ``_worker_state.SECRETS``. The webhook signs against the
+    keyvault entry referenced by ``project.audit_webhook_secret_id`` if
+    that key is present in the dict.
+    """
+    try:
+        from tron.domain.models import AuditRun, Project
+        from tron.infra.db.session import _session_factory
+        from tron.services.audit_webhook import fire_audit_webhook
+        from tron.workflows._worker_state import get_worker_secrets
+
+        if _session_factory is None:
+            return
+        async with _session_factory() as session:
+            audit = await session.get(AuditRun, audit_run_id)
+            project = await session.get(Project, project_id)
+        if audit is None or project is None:
+            return
+        if not (project.audit_webhook_url or "").strip():
+            return  # not configured → silent skip
+        try:
+            secrets = get_worker_secrets()
+        except Exception:
+            secrets = {}  # worker not initialised yet — deliver unsigned
+        await fire_audit_webhook(
+            event=event,
+            audit=audit,
+            project=project,
+            secrets=secrets,
+        )
+    except Exception:
+        logger.warning(
+            "Outbound audit webhook (Temporal path) failed for run=%s event=%s",
+            audit_run_id, event, exc_info=True,
+        )
 
 
 @activity.defn
@@ -866,7 +1131,7 @@ async def generate_fix(finding_input: FindingInput, iteration: int) -> FixAttemp
         # Strip markdown code blocks if present
         if fix_code.startswith("```"):
             lines = fix_code.split("\n")
-            lines = [l for l in lines if not l.strip().startswith("```")]
+            lines = [ln for ln in lines if not ln.strip().startswith("```")]
             fix_code = "\n".join(lines).strip()
 
         return FixAttempt(
@@ -1453,7 +1718,6 @@ async def merge_build_git_metadata(
     job: BuildJobInput, git_out: BuildGitPushOutcome
 ) -> None:
     """Attach git push metadata to ``last_build_result_json``."""
-    import json
 
     from sqlalchemy import select, update
 
@@ -1839,6 +2103,8 @@ async def _persist_findings_to_db(
     findings: List[Dict[str, Any]],
 ) -> None:
     """Write findings to the database."""
+    from decimal import Decimal
+
     from tron.domain.models import Finding
     from tron.infra.db.session import _session_factory
 
@@ -1850,6 +2116,17 @@ async def _persist_findings_to_db(
 
     async with _session_factory() as session:
         for f in findings:
+            raw_conf = f.get("confidence")
+            conf_val = None
+            if raw_conf is not None:
+                conf_val = Decimal(str(round(float(raw_conf), 5)))
+            ct = f.get("confirming_tools")
+            if ct is None:
+                ct = f.get("confirming_tools_json")
+            if isinstance(ct, tuple):
+                ct = list(ct)
+            if ct is not None and not isinstance(ct, list):
+                ct = None
             finding = Finding(
                 audit_run_id=audit_run_id,
                 project_id=project_id,
@@ -1865,6 +2142,13 @@ async def _persist_findings_to_db(
                 suggested_fix=f.get("fix_suggestion"),
                 status="open",
                 code_snippet=f.get("code_snippet"),
+                confidence=conf_val,
+                deterministic_tool_confirmed=bool(f.get("deterministic_tool_confirmed", False)),
+                layer3_execution=f.get("layer3_execution"),
+                confirming_tools_json=ct,
+                path_role=f.get("path_role"),
+                follow_up_recommended=bool(f.get("follow_up_recommended", False)),
+                evidence_source=f.get("evidence_source") or "agent",
             )
             session.add(finding)
         await session.commit()

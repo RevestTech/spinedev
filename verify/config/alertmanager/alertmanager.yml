@@ -1,4 +1,16 @@
 # Alertmanager configuration for Tron
+#
+# Receivers post to the Tron API's Alertmanager webhook (tron/api/routes/alerts.py),
+# which translates the Alertmanager v4 payload and forwards to Slack. The Slack
+# Incoming Webhook URL is resolved at request time from:
+#
+#   1. TRON_ALERT_SLACK_WEBHOOK env var (dev override)
+#   2. keyvault key "alerts/slack-webhook" (production default)
+#
+# The tron-api service resolves as ``tron-api:8000`` on the default compose
+# network. If neither env var nor vault key is configured, the receiver logs a
+# warning and returns 200 so Alertmanager does not retry-storm.
+#
 global:
   resolve_timeout: 5m
 
@@ -23,17 +35,17 @@ route:
 receivers:
   - name: 'default'
     webhook_configs:
-      - url: 'http://localhost:9095/alerts'
+      - url: 'http://tron-api:8000/alerts'
         send_resolved: true
 
   - name: 'critical-receiver'
     webhook_configs:
-      - url: 'http://localhost:9095/alerts/critical'
+      - url: 'http://tron-api:8000/alerts/critical'
         send_resolved: true
 
   - name: 'warning-receiver'
     webhook_configs:
-      - url: 'http://localhost:9095/alerts/warning'
+      - url: 'http://tron-api:8000/alerts/warning'
         send_resolved: true
 
 inhibit_rules:

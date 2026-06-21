@@ -26,9 +26,50 @@ class DriftCheckRequest(BaseModel):
 
 @router.get("/calibration", response_model=List[CalibrationMetric])
 async def get_calibration_metrics(_: str = Depends(require_api_key)):
-    """Fetch current confidence calibration metrics based on historical data."""
+    """Fetch current confidence calibration metrics based on historical data.
+
+    Each row's ``use_platt_scaling`` reflects whether the engine's
+    Platt-scaling fit is currently active (i.e. a labeled corpus of
+    sufficient size has been provided AND scikit-learn is available).
+    """
     engine = CalibrationEngine()
-    return engine.calculate_metrics()
+    metrics = engine.calculate_metrics()
+    # Reflect the engine's actual Platt status on every row so an
+    # operator scanning the metrics table can tell at a glance whether
+    # they're seeing a real fit or the banded fallback.
+    is_platt = engine.is_platt_active
+    return [m.model_copy(update={"use_platt_scaling": is_platt}) for m in metrics]
+
+
+class CalibrationStatus(BaseModel):
+    """Operator-facing summary: which calibration mode is in effect?"""
+
+    mode: str  # "platt" | "banded"
+    is_platt_active: bool
+    platt_sample_count: int
+    sklearn_available: bool
+
+
+@router.get("/calibration/status", response_model=CalibrationStatus)
+async def calibration_status(_: str = Depends(require_api_key)):
+    """Report which calibration path is in effect right now.
+
+    Useful for ops dashboards: "are we doing real Platt scaling, or is
+    the engine still on the banded mock fallback?" When ``mode=banded``
+    you're getting per-confidence-band TP rates from
+    ``CalibrationEngine.historical_data`` (default mock unless a corpus
+    has been loaded); when ``mode=platt`` you're getting a logistic fit
+    over labeled outcomes.
+    """
+    from tron.services.calibration_engine import _HAS_SKLEARN
+
+    engine = CalibrationEngine()
+    return CalibrationStatus(
+        mode="platt" if engine.is_platt_active else "banded",
+        is_platt_active=engine.is_platt_active,
+        platt_sample_count=engine.platt_sample_count,
+        sklearn_available=_HAS_SKLEARN,
+    )
 
 
 @router.post("/calibration/apply", response_model=List[FindingOutput])

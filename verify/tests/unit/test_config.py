@@ -9,7 +9,6 @@ Tests:
 
 from __future__ import annotations
 
-import pytest
 
 from tron.api.config import Settings
 

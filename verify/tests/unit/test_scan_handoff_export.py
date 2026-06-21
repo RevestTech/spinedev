@@ -52,7 +52,7 @@ def test_build_tron_post_scan_markdown_table_and_top() -> None:
             "severity": "medium",
             "file_path": "b.txt",
             "line_start": 2,
-            "title": "M",
+            "title": "M1",
             "category": "c",
         },
         {
@@ -76,17 +76,20 @@ def test_build_tron_post_scan_markdown_table_and_top() -> None:
         tron_ui_base="http://localhost:13080",
         audit=audit,
         findings=findings,
-        top_n=10,
     )
-    assert "# Tron post-scan — App" in md
-    assert "**Local agent workflow:**" in md
-    assert "**`tron.md`**" in md
-    assert "| Status | completed |" in md
-    assert "| Duration | 299s |" in md
-    assert "0 / 2 / 1 / 0" in md
-    assert "**HIGH** `a.txt:1`" in md
-    assert "**HIGH** `z.txt:9`" in md
-    assert "**MEDIUM** `b.txt:2`" in md
+    # Header identifies the app and audit.
+    assert "— App" in md
+    assert "`aid`" in md
+    # Severity counts appear in the snapshot table.
+    assert "| CRITICAL | 0 |" in md
+    assert "| HIGH     | 2 |" in md
+    # Each finding renders as a directive with its file location.
+    assert "`a.txt:1`" in md
+    assert "`z.txt:9`" in md
+    assert "`b.txt:2`" in md
+    # High findings must precede the medium finding (severity ordering).
+    assert md.index("H1") < md.index("M1")
+    assert md.index("H2") < md.index("M1")
 
 
 def test_wrap_managed_handoff_inner() -> None:

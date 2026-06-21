@@ -65,7 +65,10 @@ export default function Sidebar() {
     try {
       await api.adminLogout()
     } catch { /* ignore */ }
-    localStorage.removeItem('tron-api-key')
+    // adminLogout clears the httpOnly session cookie server-side. No client
+    // storage scrub is needed — API keys are no longer kept in localStorage
+    // (see frontend/src/api.ts::purgeLegacyApiKeyStorage for one-shot cleanup
+    // of stale keys from older builds).
     navigate('/login', { replace: true })
   }
 

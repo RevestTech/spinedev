@@ -14,11 +14,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import UUID
 
-import pytest
 
 from tron.workflows.activities import (
     AuditInput,
@@ -30,7 +26,6 @@ from tron.workflows.activities import (
     ProjectMeta,
     ScanResult,
     _demo_source_files,
-    verify_fix,
 )
 
 

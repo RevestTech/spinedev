@@ -5,7 +5,6 @@ Verifies findings by executing exploits in isolated sandbox.
 This layer catches false positives by testing if vulnerabilities are actually exploitable.
 """
 
-import asyncio
 import logging
 import textwrap
 from typing import Optional
@@ -394,7 +393,11 @@ except Exception as e:
                 method=f"{injection_type}_injection_test",
                 confidence_adjustment=-0.2,
                 reason=f"Failed to verify {injection_type} injection",
-                execution_output=result.get("output", "") + result.get("error", "")
+                # Defensive: SandboxClient may return ``{"error": None}`` for
+                # successful runs. ``dict.get(k, "")`` only falls back when
+                # the key is missing — None values still come through and
+                # blow up str concatenation. Normalise both sides.
+                execution_output=(result.get("output") or "") + (result.get("error") or "")
             )
     
     async def _verify_path_traversal(self, finding: FindingSnapshot) -> VerificationResult:
@@ -448,7 +451,11 @@ except Exception as e:
                 method="path_traversal_test",
                 confidence_adjustment=-0.2,
                 reason="Path traversal verification failed",
-                execution_output=result.get("output", "") + result.get("error", "")
+                # Defensive: SandboxClient may return ``{"error": None}`` for
+                # successful runs. ``dict.get(k, "")`` only falls back when
+                # the key is missing — None values still come through and
+                # blow up str concatenation. Normalise both sides.
+                execution_output=(result.get("output") or "") + (result.get("error") or "")
             )
     
     async def _verify_ssrf(self, finding: FindingSnapshot) -> VerificationResult:
@@ -506,7 +513,11 @@ except Exception as e:
                 method="ssrf_test",
                 confidence_adjustment=-0.2,
                 reason="SSRF verification failed",
-                execution_output=result.get("output", "") + result.get("error", "")
+                # Defensive: SandboxClient may return ``{"error": None}`` for
+                # successful runs. ``dict.get(k, "")`` only falls back when
+                # the key is missing — None values still come through and
+                # blow up str concatenation. Normalise both sides.
+                execution_output=(result.get("output") or "") + (result.get("error") or "")
             )
     
     async def _execute_in_sandbox(

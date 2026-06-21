@@ -15,13 +15,11 @@ import json
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
-import pytest
 
 from tron.agents.base import (
     ISOConfig,
     ISOSpecialization,
     LLMProvider,
-    AgentMetrics,
 )
 from tron.agents.manager import (
     AuditManager,
@@ -38,7 +36,6 @@ from tron.schemas.verification import (
     ConsensusLevel,
     VulnerabilityType,
     SeverityLevel,
-    VerificationMethod,
 )
 
 

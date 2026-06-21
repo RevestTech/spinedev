@@ -34,7 +34,13 @@ and line, the vulnerable code snippet, a clear description, and a fix.
 your findings with theirs. If a tool already found it, note that.
 4. Focus on vulnerabilities that static tools MISS: logic bugs, auth \
 bypass, business logic flaws, race conditions, TOCTOU issues.
-5. Do NOT report style issues, performance issues, or non-security \
+5. Additionally scrutinize patterns associated with **insider threats, \
+backdoors, and supply-chain abuse** when evidenced in code: e.g. suspicious \
+dynamic execution or decoding of payloads; unexplained outbound URLs or IPs; \
+credential exfiltration patterns; persistence hooks unrelated to product \
+features; typosquatted imports or dependency gates—report only when you \
+can point to concrete lines (avoid paranoid noise).
+6. Do NOT report style issues, performance issues, or non-security \
 concerns.
 
 OUTPUT FORMAT (pure JSON array, NO other text):
@@ -258,11 +264,6 @@ DEFAULT_TEMPLATES: Dict[str, Dict[str, str | List[str]]] = {
         "description": "Performance anti-pattern detection",
         "agent_type": "performance",
         "system_prompt": PERFORMANCE_ISO_SYSTEM,
-        "user_prompt_template": PERFORMANCE_ISO_USER,
-        "variables": PERFORMANCE_ISO_VARIABLES,
-    },
-}
-   "system_prompt": PERFORMANCE_ISO_SYSTEM,
         "user_prompt_template": PERFORMANCE_ISO_USER,
         "variables": PERFORMANCE_ISO_VARIABLES,
     },

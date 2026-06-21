@@ -23,10 +23,9 @@ from __future__ import annotations
 
 import sqlite3
 import uuid
-from typing import List
 
 import pytest
-from sqlalchemy import String, JSON, Text, event, TypeDecorator
+from sqlalchemy import String, JSON, event, TypeDecorator
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID, JSONB, ARRAY
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
@@ -34,7 +33,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-from tron.domain.models import ApiKey, Project, AuditRun, Finding
+from tron.domain.models import ApiKey, Project, AuditRun, Finding, FindingSuppression
 from tron.infra.db.base import Base
 
 # Register sqlite3 adapter to convert uuid.UUID → hex string (no hyphens).
@@ -69,6 +68,7 @@ SQLITE_SAFE_TABLES = [
     Project.__table__,
     AuditRun.__table__,
     Finding.__table__,
+    FindingSuppression.__table__,
     ApiKey.__table__,
 ]
 

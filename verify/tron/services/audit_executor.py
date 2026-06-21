@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Dict, List, Optional
 from uuid import UUID
 
@@ -37,9 +38,20 @@ from tron.infra.redis.pubsub import (
     publish_finding,
     publish_progress,
 )
-from tron.schemas.verification import FindingOutput, SeverityLevel
+from tron.schemas.verification import SeverityLevel
+from tron.services.audit_path_filters import filter_file_contents
 from tron.services.graph_sync import sync_project_graph
-from tron.services.layer3_findings import apply_layer3_to_findings
+from tron.services.finding_triage import (
+    apply_follow_up_flags_to_outputs,
+    apply_path_role_to_outputs,
+    filter_findings_by_suppression,
+    load_suppressed_fingerprints_for_project,
+    triage_top_n,
+)
+from tron.services.layer3_findings import (
+    apply_deep_verify_retry_pass_to_outputs,
+    apply_layer3_to_findings,
+)
 from tron.services.repo_scanner import RepoScanner, RepoScanError, detect_languages
 
 logger = logging.getLogger(__name__)
@@ -98,6 +110,25 @@ class AuditExecutor:
 
             # 2. Collect source files to analyze
             file_contents = await self._collect_source_files(project)
+
+            # 2b. Pre-PR diff mode: if the audit run has a diff_files_json
+            # set, restrict the file set to exactly those paths. This is
+            # the load-bearing piece of POST /api/audits/diff — without
+            # it, the audit would happily scan the whole repo regardless
+            # of what the PR changed. We take the intersection (not the
+            # union) so a CI request for files that don't exist in the
+            # current repo state is silently dropped, not crashing.
+            diff_paths = await self._load_diff_files(audit_run_id)
+            if diff_paths is not None:
+                allowed = set(diff_paths)
+                before = len(file_contents)
+                file_contents = {
+                    p: c for p, c in file_contents.items() if p in allowed
+                }
+                logger.info(
+                    "Diff mode: restricted scan from %d files to %d (of %d requested)",
+                    before, len(file_contents), len(allowed),
+                )
 
             await self._update_status(
                 audit_run_id, "running", progress=20,
@@ -158,6 +189,29 @@ class AuditExecutor:
             )
             result.findings = await apply_layer3_to_findings(
                 result.findings, logger=logger
+            )
+
+            test_globs = project.audit_test_path_globs_json
+            tlist: list[str] = list(test_globs) if isinstance(test_globs, list) else []
+            result.findings = apply_path_role_to_outputs(result.findings, tlist)
+            async with self._sf() as sup_s:
+                suppressed = await load_suppressed_fingerprints_for_project(
+                    sup_s, project_id
+                )
+            result.findings = filter_findings_by_suppression(result.findings, suppressed)
+
+            await self._update_status(
+                audit_run_id, "running", progress=73,
+                message="SEC-5: optional deep verification pass (top unverified)",
+            )
+            result.findings = await apply_deep_verify_retry_pass_to_outputs(
+                result.findings,
+                logger=logger,
+                top_n=triage_top_n(),
+            )
+
+            result.findings = apply_follow_up_flags_to_outputs(
+                result.findings, triage_top_n()
             )
 
             await self._update_status(
@@ -226,6 +280,15 @@ class AuditExecutor:
                 preloaded_findings=handoff_payload,
             )
 
+            # Outbound webhook (#7). Fires only when project.audit_webhook_url
+            # is set; never raises into the audit flow. The DB row has been
+            # updated by publish_audit_completed via the publish path's
+            # row-update side effect, so the webhook payload reflects the
+            # finalised counts.
+            await self._fire_completion_webhook(
+                audit_run_id, project_id, "audit.completed",
+            )
+
             logger.info(
                 "AuditExecutor completed: run=%s findings=%d duration=%.1fs",
                 audit_run_id,
@@ -237,6 +300,9 @@ class AuditExecutor:
             logger.exception("AuditExecutor failed: run=%s", audit_run_id)
             await self._fail_audit(audit_run_id, str(exc))
             await publish_audit_failed(audit_run_id, str(exc))
+            await self._fire_completion_webhook(
+                audit_run_id, project_id, "audit.failed",
+            )
 
         finally:
             await self._llm.close()
@@ -398,6 +464,67 @@ class AuditExecutor:
 
         return manager
 
+    async def _fire_completion_webhook(
+        self,
+        audit_run_id: UUID,
+        project_id: UUID,
+        event: str,
+    ) -> None:
+        """Fire the project's outbound webhook for an audit terminal event.
+
+        Loads the freshly-updated AuditRun + Project rows so the payload
+        reflects the final counts and status, then delegates to
+        ``fire_audit_webhook``. Errors are logged and swallowed — the
+        completion path must NEVER fail because of a webhook problem.
+        """
+        try:
+            from tron.services.audit_webhook import fire_audit_webhook
+        except Exception:  # pragma: no cover — defensive
+            logger.warning("audit_webhook import failed", exc_info=True)
+            return
+
+        try:
+            async with self._sf() as session:
+                audit = await session.get(AuditRun, audit_run_id)
+                project = await session.get(Project, project_id)
+            if audit is None or project is None:
+                return
+            if not (project.audit_webhook_url or "").strip():
+                return  # not configured → silent skip
+            await fire_audit_webhook(
+                event=event,
+                audit=audit,
+                project=project,
+                secrets=self._secrets,
+            )
+        except Exception:
+            logger.warning(
+                "Outbound audit webhook failed for run=%s event=%s",
+                audit_run_id, event, exc_info=True,
+            )
+
+    async def _load_diff_files(self, audit_run_id: UUID) -> Optional[List[str]]:
+        """Return the diff scope set for this audit run, or None for full audits.
+
+        ``None`` means "no diff scope was set" (the audit was created via
+        ``POST /api/audits``, not the diff-mode endpoint). An empty list
+        means "diff mode requested with zero files" — that's a 400 at the
+        edge but if it somehow reached the executor, we bail by treating
+        it as "scan nothing" (returning an empty list, not None).
+        """
+        async with self._sf() as session:
+            result = await session.execute(
+                select(AuditRun.diff_files_json).where(AuditRun.id == audit_run_id)
+            )
+            row = result.scalar_one_or_none()
+        if row is None:
+            return None
+        # Defensive: SQLAlchemy returns None for null JSONB; only return a
+        # list when something was actually persisted.
+        if not isinstance(row, list):
+            return None
+        return [str(p) for p in row]
+
     async def _load_project(self, project_id: UUID) -> Optional[Project]:
         """Load project from database."""
         async with self._sf() as session:
@@ -442,11 +569,18 @@ class AuditExecutor:
                     f"Repo cloned but 0 analyzable files found in "
                     f"{project.repo_url}@{project.default_branch or 'main'}"
                 )
+            excl = project.audit_exclude_globs_json
+            if excl and isinstance(excl, list):
+                return filter_file_contents(files, excl)
             return files
 
         # Demo mode: only when repo_url is explicitly not set
         logger.info("Using demo source files (no repo_url configured)")
-        return self._demo_source_files()
+        demo = self._demo_source_files()
+        excl = project.audit_exclude_globs_json
+        if excl and isinstance(excl, list):
+            return filter_file_contents(demo, excl)
+        return demo
 
     @staticmethod
     def _demo_source_files() -> Dict[str, str]:
@@ -533,6 +667,10 @@ if __name__ == "__main__":
 
         async with self._sf() as session:
             for fo in result.findings:
+                ct = list(fo.confirming_tools) if fo.confirming_tools else None
+                conf_val = None
+                if fo.confidence is not None:
+                    conf_val = Decimal(str(round(float(fo.confidence), 5)))
                 finding = Finding(
                     audit_run_id=audit_run_id,
                     project_id=project_id,
@@ -548,6 +686,13 @@ if __name__ == "__main__":
                     suggested_fix=fo.fix_suggestion,
                     status="open",
                     code_snippet=fo.code_snippet,
+                    confidence=conf_val,
+                    deterministic_tool_confirmed=fo.deterministic_tool_confirmed,
+                    layer3_execution=fo.layer3_execution,
+                    confirming_tools_json=ct,
+                    path_role=fo.path_role,
+                    follow_up_recommended=bool(fo.follow_up_recommended),
+                    evidence_source=fo.evidence_source or "agent",
                 )
                 session.add(finding)
 

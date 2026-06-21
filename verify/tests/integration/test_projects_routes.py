@@ -11,7 +11,6 @@ Uses in-memory SQLite via the sqlite_db fixture.
 from __future__ import annotations
 
 import uuid
-from unittest.mock import MagicMock
 
 import pytest
 from fastapi import HTTPException
@@ -25,7 +24,6 @@ from tron.api.routes.projects import (
     list_projects,
     update_project,
 )
-from tron.domain.models import Project
 
 
 @pytest.fixture

@@ -37,7 +37,7 @@ async def create_and_stream():
         audit_id = response.json()["id"]
     
     print(f"Audit created: {audit_id}")
-    print(f"Connecting to WebSocket...\n")
+    print("Connecting to WebSocket...\n")
     
     # Connect to WebSocket
     uri = f"ws://localhost:8000/ws/audits/{audit_id}?token={API_KEY}"

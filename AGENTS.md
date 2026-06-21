@@ -17,6 +17,8 @@ Set `SPINE_LOCAL_ROOT=~/dev/SpineDevelopment`. Cursor hooks block npm/Docker on 
 
 Spine is a self-hosted AI engineering Hub (Docker). See `docs/SPINE_MASTER.md` and `CLAUDE.md`.
 
+**TRON (Verify subsystem):** canonical code lives in **`verify/`** (`verify/tron/`, `verify/frontend/`, `verify/tests/`). Standalone `RevestTech/Tron` was decommissioned 2026-06-21; boundary doc: `verify/SUBSYSTEM_BOUNDARY.md`.
+
 ## This machine
 
 - Hub: http://localhost:8090/spa/ — `bash tools/hub-up.sh`

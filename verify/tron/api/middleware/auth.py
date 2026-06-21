@@ -25,12 +25,13 @@ logger = logging.getLogger(__name__)
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 
-async def lookup_scoped_api_key_scopes(plain_key: str) -> frozenset[str] | None:
-    """
-    Resolve a non-master API key against ``api_keys``.
+async def lookup_scoped_api_key(plain_key: str):
+    """Resolve a non-master API key against ``api_keys`` and return the row.
 
-    Returns scopes (possibly empty) when the key is valid; ``None`` when invalid
-    or when the DB factory is unavailable.
+    Returns the ApiKey ORM row on success, ``None`` when invalid / inactive
+    or when the DB factory is unavailable. Used by both
+    ``lookup_scoped_api_key_scopes`` (for the auth check) and
+    ``require_api_key`` (which also wants the row's id for the audit log).
     """
     key_hash = hashlib.sha256(plain_key.encode("utf-8")).hexdigest()
     if _session_factory is None:
@@ -47,7 +48,17 @@ async def lookup_scoped_api_key_scopes(plain_key: str) -> frozenset[str] | None:
     except Exception as exc:
         logger.warning("api_keys lookup failed: %s", exc)
         return None
+    return row
 
+
+async def lookup_scoped_api_key_scopes(plain_key: str) -> frozenset[str] | None:
+    """
+    Resolve a non-master API key against ``api_keys``.
+
+    Returns scopes (possibly empty) when the key is valid; ``None`` when invalid
+    or when the DB factory is unavailable.
+    """
+    row = await lookup_scoped_api_key(plain_key)
     if row is None:
         return None
 
@@ -98,7 +109,17 @@ async def require_api_key(
     request.state.api_key_is_master = False
     request.state.admin_ui_session = False
 
-    scopes = await lookup_scoped_api_key_scopes(api_key)
+    # Look up the row directly so we can stash the row id for the audit log
+    # middleware AND derive scopes — saves a second DB round-trip on every
+    # authed request.
+    api_key_row = await lookup_scoped_api_key(api_key)
+    if api_key_row is None:
+        scopes = None
+    else:
+        scopes_raw = api_key_row.scopes if isinstance(api_key_row.scopes, list) else []
+        normalized = [str(s).strip() for s in scopes_raw if str(s).strip()]
+        scopes = frozenset({"*"}) if "*" in normalized else frozenset(normalized)
+        request.state.api_key_db_id = api_key_row.id
     if scopes is None:
         if _session_factory is None:
             _host = request.client.host if request.client else "unknown"

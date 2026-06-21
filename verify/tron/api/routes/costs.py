@@ -6,6 +6,7 @@ Aggregates `llm_usage` for the Admin UI. Budget cap from `TRON_LLM_BUDGET_USD` /
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -19,6 +20,8 @@ from tron.api.middleware.auth import require_api_key
 from tron.api.middleware.scopes import enforce_api_key_route_scope
 from tron.domain.models import AuditRun, LLMUsage, Project
 from tron.infra.db.session import get_session
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     dependencies=[
@@ -249,7 +252,7 @@ async def get_cost_dashboard(
             budget_limit_usd=budget_limit,
             budget_used_pct=min(budget_used_pct, 999.0),
         )
-    except Exception as e:
+    except Exception:
         logger.exception("Cost dashboard failed")
         raise
 

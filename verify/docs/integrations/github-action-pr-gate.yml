@@ -1,0 +1,126 @@
+# Sample GitHub Action — gate every PR with a Tron diff-mode audit.
+#
+# Drop this into ``.github/workflows/tron-pr-gate.yml`` of any repo
+# Tron is configured to scan. The Action:
+#
+#   1. Computes the list of changed files vs the PR's base branch.
+#   2. POSTs them to ``/api/audits/diff`` on your Tron instance.
+#   3. Polls the audit run until it completes (or times out).
+#   4. Fails the PR check if any critical/high findings were returned.
+#
+# Required secrets in your repo settings:
+#   * TRON_BASE_URL       — e.g. https://tron.your-domain.com
+#   * TRON_API_KEY        — a scoped API key with the ``audits`` scope.
+#                           Master keys work too but use a scoped key.
+#   * TRON_PROJECT_ID     — the UUID of the project in Tron that
+#                           corresponds to this repo.
+#
+# Notes:
+#   * The diff-mode endpoint scans ONLY the changed files. Config files
+#     (Dockerfiles, pyproject.toml) that the changed files reference are
+#     still picked up by the existing audit_path_filters.
+#   * Failing the PR is opt-in via TRON_FAIL_ON_HIGH=true. By default
+#     the Action posts a comment but doesn't block.
+
+name: Tron PR Gate
+
+on:
+  pull_request:
+    branches: [main, master, develop]
+
+jobs:
+  tron-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Need full history to compute diff against the PR base.
+          fetch-depth: 0
+
+      - name: Compute changed files vs PR base
+        id: diff
+        run: |
+          BASE="origin/${{ github.event.pull_request.base.ref }}"
+          # ``--diff-filter=ACMR`` — added, copied, modified, renamed.
+          # Exclude deletions (D) — there's nothing to scan in a deleted file.
+          CHANGED="$(git diff --name-only --diff-filter=ACMR "$BASE"...HEAD)"
+          if [ -z "$CHANGED" ]; then
+            echo "No code changes — skipping Tron audit"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Build a JSON array for the API request.
+          JSON_ARRAY="$(echo "$CHANGED" | jq -R -s -c 'split("\n") | map(select(length > 0))')"
+          echo "files=$JSON_ARRAY" >> "$GITHUB_OUTPUT"
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+          echo "Changed files (${{ github.event.pull_request.base.ref }}...HEAD):"
+          echo "$CHANGED"
+
+      - name: Start Tron diff audit
+        id: start
+        if: steps.diff.outputs.skip != 'true'
+        env:
+          BASE_URL: ${{ secrets.TRON_BASE_URL }}
+          API_KEY: ${{ secrets.TRON_API_KEY }}
+          PROJECT_ID: ${{ secrets.TRON_PROJECT_ID }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          CHANGED_FILES: ${{ steps.diff.outputs.files }}
+        run: |
+          BODY=$(jq -n --argjson files "$CHANGED_FILES" \
+                       --arg pid "$PROJECT_ID" \
+                       --arg base "$BASE_REF" \
+                       --arg head "$HEAD_REF" \
+                       '{project_id: $pid, changed_files: $files, base_ref: $base, head_ref: $head}')
+          RESPONSE="$(curl -fsSL -X POST "$BASE_URL/api/audits/diff" \
+            -H "X-API-Key: $API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "$BODY")"
+          AUDIT_ID="$(echo "$RESPONSE" | jq -r .id)"
+          echo "audit_id=$AUDIT_ID" >> "$GITHUB_OUTPUT"
+          echo "Tron audit started: $AUDIT_ID"
+
+      - name: Poll Tron audit until complete
+        id: poll
+        if: steps.diff.outputs.skip != 'true'
+        env:
+          BASE_URL: ${{ secrets.TRON_BASE_URL }}
+          API_KEY: ${{ secrets.TRON_API_KEY }}
+          AUDIT_ID: ${{ steps.start.outputs.audit_id }}
+        run: |
+          # Poll up to 12 minutes with 10s intervals (72 attempts).
+          for i in $(seq 1 72); do
+            RUN="$(curl -fsSL "$BASE_URL/api/audits/$AUDIT_ID" -H "X-API-Key: $API_KEY")"
+            STATUS="$(echo "$RUN" | jq -r .status)"
+            CRIT="$(echo "$RUN" | jq -r .findings_critical)"
+            HIGH="$(echo "$RUN" | jq -r .findings_high)"
+            echo "[$i/72] status=$STATUS critical=$CRIT high=$HIGH"
+            if [ "$STATUS" = "completed" ] || [ "$STATUS" = "failed" ]; then
+              echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+              echo "findings_critical=$CRIT" >> "$GITHUB_OUTPUT"
+              echo "findings_high=$HIGH" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::Tron audit didn't complete within 12 minutes"
+          exit 1
+
+      - name: Gate the PR on critical/high findings
+        if: steps.diff.outputs.skip != 'true' && env.TRON_FAIL_ON_HIGH == 'true'
+        env:
+          TRON_FAIL_ON_HIGH: ${{ secrets.TRON_FAIL_ON_HIGH || 'false' }}
+          STATUS: ${{ steps.poll.outputs.status }}
+          CRIT: ${{ steps.poll.outputs.findings_critical }}
+          HIGH: ${{ steps.poll.outputs.findings_high }}
+        run: |
+          if [ "$STATUS" != "completed" ]; then
+            echo "::error::Tron audit did not complete (status=$STATUS)"
+            exit 1
+          fi
+          if [ "${CRIT:-0}" -gt 0 ] || [ "${HIGH:-0}" -gt 0 ]; then
+            echo "::error::Tron found $CRIT critical and $HIGH high findings"
+            exit 1
+          fi
+          echo "Tron audit passed — no critical/high findings"

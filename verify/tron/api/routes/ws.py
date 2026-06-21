@@ -1,12 +1,16 @@
 """
 WebSocket endpoint for real-time audit progress streaming.
 
-Clients connect to /ws/audits/{audit_id}?token=<api_key> and receive
-JSON events as the audit runs: progress updates, finding discoveries,
-agent status changes, and completion/failure notifications.
+Clients connect to ``/ws/audits/{audit_id}`` and receive JSON events
+(progress, findings, completion/failure).
+
+**Auth (preferred):** admin JWT cookie (httpOnly) when ``ws_require_auth`` is on.
+
+**Auth (fallback):** ``?token=<api_key>`` — convenient for scripts but can appear in
+proxy/access logs, browser history, and Referer. Prefer the cookie in browsers.
 
 Protocol:
-  1. Client opens WebSocket with API key as query param
+  1. Client opens WebSocket; server authenticates (cookie and/or query token)
   2. Server authenticates, subscribes to Redis pub/sub channel
   3. Server pushes events as JSON frames until audit completes or fails
   4. Server sends a final "close" frame and disconnects
@@ -28,7 +32,7 @@ import json
 import logging
 from uuid import UUID
 
-from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy import select
 
 from tron.api.admin_session import ADMIN_COOKIE_NAME, verify_admin_jwt
@@ -42,6 +46,7 @@ router = APIRouter()
 
 # Track active connections for the max-connections guard
 _active_connections: set[WebSocket] = set()
+_ws_connection_lock = asyncio.Lock()
 
 
 async def _authenticate_ws(websocket: WebSocket) -> bool:
@@ -104,19 +109,18 @@ async def audit_progress_ws(
       3. Forward all events until audit_completed or audit_failed
       4. Auto-close after the terminal event
     """
-    # ── Guard: max connections ──
-    if len(_active_connections) >= settings.ws_max_connections:
-        await websocket.close(code=1013, reason="Too many connections")
-        return
-
-    # ── Authenticate ──
+    # ── Authenticate (before accept; no slot reserved yet) ──
     if not await _authenticate_ws(websocket):
         await websocket.close(code=4001, reason="Authentication required")
         return
 
-    # ── Accept connection ──
-    await websocket.accept()
-    _active_connections.add(websocket)
+    # ── Cap concurrent connections (under lock: check + accept + track) ──
+    async with _ws_connection_lock:
+        if len(_active_connections) >= settings.ws_max_connections:
+            await websocket.close(code=1013, reason="Too many connections")
+            return
+        await websocket.accept()
+        _active_connections.add(websocket)
 
     logger.info("WebSocket connected for audit %s (total=%d)", audit_id, len(_active_connections))
 

@@ -16,14 +16,20 @@ from typing import Any, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from tron.api.config import settings
 from tron.infra.db.session import get_session
 from tron.domain.models import Project
 from tron.api.middleware.auth import require_api_key
 from tron.api.middleware.scopes import enforce_api_key_route_scope
+from tron.services.path_safety import (
+    UnsafePathError,
+    parse_allowed_roots,
+    resolve_under_allowlist,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(
@@ -36,13 +42,48 @@ router = APIRouter(
 
 # ── Request/Response Schemas ──
 
+
+def _validate_agent_handoff_path(raw: Optional[str]) -> Optional[str]:
+    """Shared validator for agent_handoff_path on create + update.
+
+    - ``None`` or empty string → allowed (means "unset").
+    - Any non-empty value must resolve under ``TRON_AGENT_HANDOFF_ALLOWED_ROOTS``.
+      Fail-closed: if no allowlist is configured the API refuses the field
+      entirely — the only accepted value is "clear it".
+
+    Raises ``ValueError`` so FastAPI emits a 422 with a clean detail.
+    """
+    if raw is None:
+        return None
+    stripped = raw.strip()
+    if not stripped:
+        return None  # treat blank as clear-field
+
+    roots = parse_allowed_roots(settings.tron_agent_handoff_allowed_roots)
+    try:
+        resolved = resolve_under_allowlist(stripped, roots)
+    except UnsafePathError as exc:
+        # Re-raise as plain ValueError so Pydantic produces a concise 422.
+        raise ValueError(str(exc)) from exc
+    # Store the canonical form — keeps DB rows predictable and makes the
+    # worker's re-validation cheap.
+    return str(resolved)
+
+
 class ProjectCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     description: Optional[str] = None
     repo_url: Optional[str] = None
     default_branch: str = "main"
-    # Absolute path on the audit worker host where Tron writes agent handoff files after each audit.
+    # Absolute path on the audit worker host where Tron writes agent handoff
+    # files after each audit. Must resolve under a root in
+    # TRON_AGENT_HANDOFF_ALLOWED_ROOTS, or the field is refused.
     agent_handoff_path: Optional[str] = None
+
+    @field_validator("agent_handoff_path")
+    @classmethod
+    def _check_handoff_path(cls, v: Optional[str]) -> Optional[str]:
+        return _validate_agent_handoff_path(v)
 
 
 class ProjectUpdate(BaseModel):
@@ -56,6 +97,13 @@ class ProjectUpdate(BaseModel):
     quality_gates_json: Optional[dict[str, Any]] = None
     plan_questionnaire_json: Optional[dict[str, Any]] = None
     compliance_control_pack_ids: Optional[list[str]] = None
+    audit_exclude_globs_json: Optional[list[str]] = None
+    audit_test_path_globs_json: Optional[list[str]] = None
+
+    @field_validator("agent_handoff_path")
+    @classmethod
+    def _check_handoff_path(cls, v: Optional[str]) -> Optional[str]:
+        return _validate_agent_handoff_path(v)
 
 
 class ProjectResponse(BaseModel):
@@ -82,6 +130,8 @@ class ProjectDetailResponse(ProjectResponse):
     last_build_result_json: Optional[dict[str, Any]] = None
     evolve_artifact_json: Optional[dict[str, Any]] = None
     compliance_control_pack_ids: Optional[list[str]] = None
+    audit_exclude_globs_json: Optional[list[str]] = None
+    audit_test_path_globs_json: Optional[list[str]] = None
 
     model_config = {"from_attributes": True}
 

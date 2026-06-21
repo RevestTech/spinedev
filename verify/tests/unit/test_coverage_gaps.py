@@ -17,7 +17,6 @@ Covers uncovered lines across:
 
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import uuid
@@ -423,7 +422,6 @@ class TestManagerAgentEdgeCases:
 
     async def test_validate_no_security_agent_returns_none(self):
         """Line 355: primary_agent not found → return None."""
-        from tron.agents.manager import AuditManager, ISOSpecialization
 
         mgr = self._make_manager()
         mgr._agents = {}  # No agents registered
@@ -442,7 +440,7 @@ class TestManagerAgentEdgeCases:
 
     async def test_validate_json_decode_error_sets_false(self):
         """Line 409: JSONDecodeError → validator_found = False."""
-        from tron.agents.manager import AuditManager, ISOSpecialization
+        from tron.agents.manager import ISOSpecialization
 
         mgr = self._make_manager()
 
@@ -472,7 +470,7 @@ class TestManagerAgentEdgeCases:
 
     async def test_validate_appends_result(self):
         """Lines 336-337: result appended when truthy."""
-        from tron.agents.manager import AuditManager, ISOSpecialization
+        from tron.agents.manager import ISOSpecialization
 
         mgr = self._make_manager()
 
@@ -778,7 +776,17 @@ class TestActivitiesDedup:
         # Mock Redis publish calls and DB session
         with patch("tron.infra.redis.pubsub.publish_progress", new_callable=AsyncMock):
             with patch("tron.infra.redis.pubsub.publish_audit_completed", new_callable=AsyncMock):
-                with patch("tron.infra.db.session._session_factory", mock_sf):
+                with patch("tron.infra.db.session._session_factory", mock_sf), \
+                     patch(
+                         "tron.services.finding_triage.load_suppressed_fingerprints_for_project",
+                         new_callable=AsyncMock, return_value=set()
+                     ), \
+                     patch(
+                         "tron.services.agent_handoff.maybe_write_agent_handoff_after_audit",
+                         new_callable=AsyncMock,
+                     ), \
+                     patch("tron.workflows.activities._persist_findings_to_db", new_callable=AsyncMock), \
+                     patch("tron.workflows.activities._finalize_audit_run", new_callable=AsyncMock):
                     result = await synthesize_findings(
                         audit_input=audit_input,
                         agent_results=agent_results,
@@ -799,7 +807,6 @@ class TestActivitiesUnknownSpecialization:
         """
         from tron.workflows.activities import _run_agent, AuditInput, ScanResult
         from tron.agents.base import ISOSpecialization
-        import enum
 
         audit_input = AuditInput(
             audit_run_id=str(uuid.uuid4()),

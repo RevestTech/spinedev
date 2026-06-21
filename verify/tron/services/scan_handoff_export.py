@@ -211,6 +211,26 @@ def build_tron_post_scan_markdown(
         
         directive_lines.append(f"### 🔴 {sev}: {title}")
         directive_lines.append(f"- **Location:** `{fp}:{line}`")
+        ev_bits = []
+        c = f.get("confidence")
+        if c is not None:
+            try:
+                ev_bits.append(f"confidence {float(c):.2f}")
+            except (TypeError, ValueError):
+                ev_bits.append(f"confidence {c!r}")
+        if f.get("deterministic_tool_confirmed"):
+            ev_bits.append("static tool or execution corroboration")
+        l3 = f.get("layer3_execution")
+        if l3:
+            ev_bits.append(f"Layer 3: {l3}")
+        if f.get("path_role") == "test":
+            ev_bits.append("test path")
+        if f.get("evidence_source"):
+            ev_bits.append(f"source: {f.get('evidence_source')}")
+        if f.get("follow_up_recommended"):
+            ev_bits.append("follow-up recommended")
+        if ev_bits:
+            directive_lines.append(f"- **Evidence (Tron):** {', '.join(ev_bits)}")
         directive_lines.append(f"- **Issue:** {desc}")
         directive_lines.append(f"- **Directive:** {fix}")
         directive_lines.append("")

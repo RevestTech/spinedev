@@ -18,8 +18,7 @@ If any fail, the pipeline has regressed and must be investigated.
 import pytest
 import json
 from pathlib import Path
-from unittest.mock import Mock, MagicMock
-from uuid import uuid4
+from unittest.mock import Mock
 
 from tron.agents.security_iso import SecurityISO, BANDIT_SEVERITY_MAP, BANDIT_VULN_TYPE_MAP
 from tron.schemas.verification import (
@@ -27,7 +26,6 @@ from tron.schemas.verification import (
     BlueprintScope,
     VulnerabilityType,
     SeverityLevel,
-    FindingOutput,
 )
 
 
@@ -290,7 +288,7 @@ class TestGoldenHardcodedSecrets:
                 "severity": "critical",
                 "file_path": "tests/golden_suite/vulnerable_samples/hardcoded_secrets.py",
                 "line_number": 18,
-                "code_snippet": 'STRIPE_API_KEY = "fake_stripe_key_golden_suite_fixture"',
+                "code_snippet": 'STRIPE_API_KEY = "sk_live_FAKE_tron_golden_suite_not_a_real_stripe_key_00"',
                 "description": "Hardcoded Stripe API key — compromises payment processing",
                 "confidence": 0.99,
             }

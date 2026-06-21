@@ -341,7 +341,9 @@ class TestModuleLevelFunctions:
             result = await get_secret("db/password")
 
         assert result == "secret-value"
-        mock_client.get.assert_called_once_with("db/password", field_name="value")
+        mock_client.get.assert_called_once_with(
+            "db/password", field_name="value", explicit=False
+        )
 
     async def test_get_secrets_module_function(self):
         """Module-level get_secrets should use singleton client."""

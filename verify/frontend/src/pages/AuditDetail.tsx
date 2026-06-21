@@ -27,6 +27,15 @@ export default function AuditDetail() {
     30000,
     [audit?.project_id],
   )
+  // Per-audit cost ledger (provider × model × agent). Polled on a slow
+  // interval — costs only update when an agent makes another LLM call.
+  // Best-effort: a 5xx (e.g. row not found yet for a freshly-queued audit)
+  // returns null and we render an empty state.
+  const { data: cost } = usePolling(
+    () => id ? api.getAuditCost(id).catch(() => null) : Promise.resolve(null),
+    15000,
+    [id],
+  )
   const [findings, setFindings] = useState<api.Finding[]>([])
   const [wsEvents, setWsEvents] = useState<any[]>([])
   const [wsConnected, setWsConnected] = useState(false)
@@ -171,6 +180,44 @@ export default function AuditDetail() {
                 </pre>
               </div>
             )}
+          </CardBody>
+        </Card>
+      )}
+
+      {/* LLM cost breakdown — surfaced from /api/audits/{id}/cost */}
+      {cost && cost.request_count > 0 && (
+        <Card>
+          <CardHeader className="flex items-center justify-between">
+            <span className="text-sm font-medium text-white">LLM cost</span>
+            <span className="text-xs text-tron-400">
+              ${cost.total_cost_usd.toFixed(4)} · {cost.total_tokens.toLocaleString()} tokens · {cost.request_count} request{cost.request_count === 1 ? '' : 's'}
+            </span>
+          </CardHeader>
+          <CardBody className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead className="text-tron-400 border-b border-tron-700">
+                <tr>
+                  <th className="text-left py-2 pr-3">Provider</th>
+                  <th className="text-left pr-3">Model</th>
+                  <th className="text-left pr-3">Agent</th>
+                  <th className="text-right pr-3">Calls</th>
+                  <th className="text-right pr-3">Tokens</th>
+                  <th className="text-right">USD</th>
+                </tr>
+              </thead>
+              <tbody>
+                {cost.breakdown.map((row, i) => (
+                  <tr key={i} className="border-b border-tron-800 last:border-0">
+                    <td className="py-1.5 pr-3 text-tron-300">{row.provider}</td>
+                    <td className="pr-3 text-tron-300 font-mono">{row.model}</td>
+                    <td className="pr-3 text-tron-400">{row.operation_detail || '—'}</td>
+                    <td className="text-right pr-3 text-tron-300">{row.request_count}</td>
+                    <td className="text-right pr-3 text-tron-300">{row.total_tokens.toLocaleString()}</td>
+                    <td className="text-right text-accent-light font-mono">${row.cost_usd.toFixed(4)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </CardBody>
         </Card>
       )}

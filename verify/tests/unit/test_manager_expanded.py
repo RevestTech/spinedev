@@ -14,30 +14,21 @@ Tests cover:
 from __future__ import annotations
 
 import uuid
-from typing import Dict, List
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
 from tron.agents.base import (
-    BaseISO,
-    ISOConfig,
     ISOSpecialization,
-    LLMProvider,
     AgentMetrics,
 )
 from tron.agents.manager import AuditManager, AuditRequest, AuditResult
 from tron.schemas.verification import (
     Blueprint,
     BlueprintScope,
-    FindingBatch,
-    FindingOutput,
     SeverityLevel,
     VerificationMethod,
     VulnerabilityType,
-    CrossValidationResult,
-    CrossValidationStatus,
-    ConsensusLevel,
 )
 
 

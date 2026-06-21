@@ -76,6 +76,16 @@ class Settings:
     tron_handoff_append_tron_md: bool = os.getenv(
         "TRON_HANDOFF_APPEND_TRON_MD", "true"
     ).lower() in ("1", "true", "yes")
+    # Comma-separated list of absolute paths under which a project's
+    # ``agent_handoff_path`` is allowed to live. EMPTY by default — with no
+    # allowlist configured, the handoff writer refuses ALL paths (fail-closed).
+    # Operators opt in by setting the env var to the concrete mount prefix(es)
+    # the worker can safely write to, e.g.:
+    #     TRON_AGENT_HANDOFF_ALLOWED_ROOTS=/var/tron/handoffs,/mnt/repos
+    # See tron/services/path_safety.py for the resolution semantics.
+    tron_agent_handoff_allowed_roots: str = os.getenv(
+        "TRON_AGENT_HANDOFF_ALLOWED_ROOTS", ""
+    )
 
     # WebSocket
     ws_require_auth: bool = os.getenv("WS_REQUIRE_AUTH", "true").lower() == "true"
@@ -93,12 +103,36 @@ class Settings:
         "TRON_LLM_BUDGET_ENFORCE", "true"
     ).lower() in ("1", "true", "yes")
     tron_llm_soft_cap_pct: float = float(os.getenv("TRON_LLM_SOFT_CAP_PCT", "0.85"))
+    # Strict mode: if true, LLM calls FAIL when Redis is unreachable (the
+    # only path that gives cross-worker race-free enforcement). Default
+    # false — the process-local fallback is good enough for single-worker
+    # dev and keeps the system running in degraded state in prod.
+    tron_llm_budget_require_redis: bool = os.getenv(
+        "TRON_LLM_BUDGET_REQUIRE_REDIS", "false"
+    ).lower() in ("1", "true", "yes")
 
     # Observability
     otel_endpoint: str = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://otel-collector:4317")
     otel_enabled: bool = os.getenv("OTEL_ENABLED", "true").lower() == "true"
     otel_trace_sample_rate: float = float(os.getenv("OTEL_TRACE_SAMPLE_RATE", "1.0"))
     service_name: str = os.getenv("OTEL_SERVICE_NAME", "tron-api")
+
+    # SEC-5: optional second sandbox pass + follow_up_recommended for top-N critical/high still unverified after Layer 3 (0=off).
+    tron_deep_verify_top_n: int = int(os.getenv("TRON_DEEP_VERIFY_TOP_N", "0"))
+
+    def cors_allowed_origins(self) -> list[str]:
+        """Browser CORS allowlist. Comma-separated TRON_CORS_ORIGINS, else local dev defaults."""
+        raw = os.getenv("TRON_CORS_ORIGINS", "").strip()
+        if raw:
+            return [x.strip() for x in raw.split(",") if x.strip()]
+        return [
+            "http://localhost:3000",
+            "http://localhost:3001",
+            "http://localhost:13001",
+            "http://localhost:13080",
+            "http://127.0.0.1:13080",
+            "http://127.0.0.1:13001",
+        ]
 
     def database_url(self, password: str) -> str:
         """Build async database URL with password from keyvault."""

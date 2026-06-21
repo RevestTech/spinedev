@@ -69,8 +69,6 @@ class FixWorkflow:
             finding_input.severity,
         )
 
-        last_attempt: FixAttempt | None = None
-
         for iteration in range(1, MAX_FIX_ITERATIONS + 1):
             workflow.logger.info(
                 "Fix iteration %d/%d for finding %s",
@@ -90,7 +88,6 @@ class FixWorkflow:
                     "Fix generation failed (iter %d): %s",
                     iteration, attempt.error_message,
                 )
-                last_attempt = attempt
                 continue
 
             # Step 2: Verify fix
@@ -100,8 +97,6 @@ class FixWorkflow:
                 start_to_close_timeout=timedelta(minutes=1),
                 retry_policy=_QUICK_RETRY,
             )
-
-            last_attempt = verified
 
             if verified.verification_passed:
                 workflow.logger.info(

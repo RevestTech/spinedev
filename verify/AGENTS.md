@@ -1,10 +1,21 @@
 # Agent context — Tron
 
+## Documentation map
+
+**[`docs/AGENT_NAV.md`](docs/AGENT_NAV.md)** — **read this first**: task-based routing so you don’t load `archive/`, long runbooks, or the whole blueprint unless needed.
+
+**[`docs/README.md`](docs/README.md)** — **`docs/`** folder tree and human reading order.
+
+**[`docs/BLUEPRINT.md`](docs/BLUEPRINT.md)** — full index (TOC only—don’t read every linked doc).
+
 ## Where we left off
 
-1. **`docs/project/MASTER_PROPOSAL_TODO.md`** — living checklist; start at **“Current snapshot (where we left off)”** for scope + evidence paths.
-2. **`docs/REQUIREMENTS_TRACEABILITY.md`** — Done / Partial / Deferred vocabulary and the **verified deliveries** table.
-3. **Scanned-app handoff** (other repos): **`tron/services/scan_handoff_export.py`**, **`tron/agent_handoff_templates/README.md`**, **`.cursor/rules/tron-scanned-app-handoff.mdc`**.
+1. **`docs/project/BRD.md`** — business outcomes delivered vs proposal; **`docs/project/TRD.md`** — technical design pointers.
+2. **`docs/project/MASTER_PROPOSAL_TODO.md`** — **open backlog only** vs **`docs/archive/PROPOSAL.md`** (proposal-aligned backlog currently empty; deferred ADR items summarized there).
+3. **`docs/project/REQUIREMENTS_TRACEABILITY.md`** — Done / Partial / Deferred vocabulary and **verified deliveries** evidence table.
+4. **`docs/project/HARDENING_REVIEW_TODO.md`** — deployment / third-party review backlog (TLS, CORS prod, sandbox hardening options, scaling docs, etc.); not the same as proposal feature scope.
+
+**Product positioning (parallel ISO swarm + layered dependency/malicious-signal assurance):** root **`README.md`** bullets 8–9; **`tron/agents/manager.py`**, **`tron/services/threat_intel.py`**.
 
 ## Deploy and verify (Docker)
 
@@ -20,4 +31,4 @@ Tron-specific triage does **not** live in this repo’s `docs/audit-reports/` fo
 
 ## Project rules
 
-See `.cursor/rules/` — especially `tron-requirements-source-of-truth.mdc`, `tron-implementation-discipline.mdc`, `tron-docker-rebuild-redeploy.mdc`, and `tron-scanned-app-handoff.mdc`.
+See `.cursor/rules/` — especially `tron-requirements-source-of-truth.mdc`, `tron-implementation-discipline.mdc`, `tron-docker-rebuild-redeploy.mdc`, and `tron-scanned-app-handoff.mdc`. Canonical documentation map: **`docs/BLUEPRINT.md`**.

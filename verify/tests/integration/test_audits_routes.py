@@ -10,7 +10,7 @@ Uses in-memory SQLite via the sqlite_db fixture.
 from __future__ import annotations
 
 import uuid
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import BackgroundTasks, HTTPException

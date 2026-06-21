@@ -14,12 +14,12 @@ from __future__ import annotations
 
 import asyncio
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from tron.agents.builder_iso import BuilderISO, _is_build_file, BUILD_FILE_PATTERNS
-from tron.agents.base import ISOConfig, ISOSpecialization, LLMProvider, ToolResult
+from tron.agents.builder_iso import BuilderISO, _is_build_file
+from tron.agents.base import ToolResult
 
 
 @pytest.fixture

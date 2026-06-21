@@ -7,7 +7,7 @@ Unit tests for Week 8 security hardening:
 from __future__ import annotations
 
 import base64
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 from cryptography.fernet import Fernet

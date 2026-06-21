@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import secrets
 from datetime import datetime, timezone
+from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Response
@@ -101,3 +102,62 @@ async def revoke_api_key(
     row.revoked_at = datetime.now(timezone.utc)
     await session.commit()
     return Response(status_code=204)
+
+
+class ApiKeyAuditLogRow(BaseModel):
+    id: UUID
+    api_key_id: Optional[UUID] = None
+    is_master: bool
+    is_admin_session: bool
+    method: str
+    path: str
+    status_code: Optional[int] = None
+    remote_addr: Optional[str] = None
+    user_agent: Optional[str] = None
+    created_at: datetime
+
+
+@router.get(
+    "/api-keys/{key_id}/usage",
+    response_model=list[ApiKeyAuditLogRow],
+    dependencies=[Depends(require_master_api_key)],
+)
+async def list_api_key_usage(
+    key_id: UUID,
+    limit: int = 200,
+    session: AsyncSession = Depends(get_session),
+):
+    """Return recent audit-log rows for one API key.
+
+    Master-only — answers "show me everywhere this key has been used"
+    for security incident response. Default limit 200 most recent;
+    capped at 5000 to keep responses bounded.
+    """
+    from tron.domain.models import ApiKeyAuditLog
+
+    if not await session.get(ApiKey, key_id):
+        raise HTTPException(status_code=404, detail="API key not found")
+
+    capped = max(1, min(limit, 5000))
+    res = await session.execute(
+        select(ApiKeyAuditLog)
+        .where(ApiKeyAuditLog.api_key_id == key_id)
+        .order_by(ApiKeyAuditLog.created_at.desc())
+        .limit(capped)
+    )
+    rows = res.scalars().all()
+    return [
+        ApiKeyAuditLogRow(
+            id=r.id,
+            api_key_id=r.api_key_id,
+            is_master=r.is_master,
+            is_admin_session=r.is_admin_session,
+            method=r.method,
+            path=r.path,
+            status_code=r.status_code,
+            remote_addr=r.remote_addr,
+            user_agent=r.user_agent,
+            created_at=r.created_at,
+        )
+        for r in rows
+    ]

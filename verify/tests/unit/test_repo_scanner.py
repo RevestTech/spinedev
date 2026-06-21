@@ -13,10 +13,7 @@ Tests:
 
 from __future__ import annotations
 
-import os
-import tempfile
-from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -27,7 +24,6 @@ from tron.services.repo_scanner import (
     detect_languages,
     SKIP_DIRS,
     SKIP_EXTENSIONS,
-    SKIP_FILENAMES,
     ANALYZABLE_EXTENSIONS,
     ANALYZABLE_FILENAMES,
     DEFAULT_MAX_FILE_SIZE,

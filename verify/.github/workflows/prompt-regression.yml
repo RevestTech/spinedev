@@ -1,0 +1,104 @@
+# Prompt Regression Gate (Layer 7 of the Zero-Drift Verification Pipeline).
+#
+# What this guards
+# ----------------
+# The ISO agents' system prompts and parsers are the most regression-prone
+# part of Tron — small wording tweaks change false-positive rates,
+# severity distributions, and parse-success rates. Until this workflow
+# existed, those changes had no automated gate; "prompt regression
+# testing" was marketed but manual-only.
+#
+# What this workflow does
+# -----------------------
+# Runs ``tests/golden_suite/`` — labeled vulnerability samples + asserted
+# parser/mapper behaviour for SecurityISO, BuilderISO, QAISO,
+# PerformanceISO, and the cross-validation logic. The suite uses MOCKED
+# LLM responses so it is deterministic and free; no provider keys or
+# credits are consumed.
+#
+# When this workflow runs
+# -----------------------
+# 1. On any PR or push to main/master/develop that touches:
+#       - ``tron/agents/**``   (system prompts, parsers, mappers)
+#       - ``tron/schemas/**``  (the Pydantic FindingOutput contract)
+#       - ``tests/golden_suite/**`` (the corpus itself)
+# 2. Daily at 06:00 UTC via cron — catches the case where a dependency
+#    bump or upstream change quietly breaks parsing.
+# 3. On manual dispatch.
+#
+# Failure semantics
+# -----------------
+# Any failing test in ``tests/golden_suite/`` fails this workflow. That
+# means the agent prompt, parser, or schema has drifted from a labeled
+# baseline. Either fix the regression or — if the drift is intentional —
+# update the golden test alongside the prompt change in the same PR so
+# the gate moves with the source of truth.
+
+name: Prompt Regression
+
+on:
+  push:
+    branches: [main, master, develop]
+    paths:
+      - "tron/agents/**"
+      - "tron/schemas/**"
+      - "tests/golden_suite/**"
+      - ".github/workflows/prompt-regression.yml"
+  pull_request:
+    branches: [main, master, develop]
+    paths:
+      - "tron/agents/**"
+      - "tron/schemas/**"
+      - "tests/golden_suite/**"
+      - ".github/workflows/prompt-regression.yml"
+  schedule:
+    # Daily at 06:00 UTC. Catches dependency drift / parser breakage that
+    # didn't trip a content-path filter above (e.g. a Pydantic minor
+    # version bumping validation behaviour).
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: prompt-regression-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  golden-suite:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: .
+      # Same CI-safe vault env as the main quality-gates workflow — keeps
+      # secret resolution from reaching the real vault during tests that
+      # patch ``tron.infra.secrets.get_secret`` directly.
+      VAULT_BACKEND: "kmac"
+      KMAC_TOKEN: "ci-placeholder"
+      KMAC_TOKEN_PATH: "/nonexistent/ci"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run golden suite (prompt regression)
+        # ``--strict-markers`` so a typo'd marker (e.g. @pytest.mark.golen)
+        # silently disabling a test is caught. ``-rf`` surfaces failure
+        # short summary even with -q.
+        run: |
+          python -m pytest tests/golden_suite \
+            -q --tb=short --strict-markers -rf
+
+      # Note: we deliberately do NOT add a numeric pass-rate threshold
+      # here. The suite is small enough (~126 tests) and deterministic
+      # enough that any regression is a real one — there's no "85%
+      # acceptable" floor. If that changes (suite grows past ~1k cases,
+      # some intentionally flaky), revisit and add ``--maxfail=N`` or a
+      # threshold script here.

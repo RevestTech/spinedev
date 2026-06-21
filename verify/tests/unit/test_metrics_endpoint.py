@@ -8,9 +8,7 @@ Tests:
 
 from __future__ import annotations
 
-from unittest.mock import patch, MagicMock
 
-import pytest
 
 
 class TestMetricsEndpoint:

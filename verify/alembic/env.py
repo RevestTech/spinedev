@@ -9,7 +9,6 @@ from logging.config import fileConfig
 
 from alembic import context
 from sqlalchemy import pool, engine_from_config
-from sqlalchemy.engine import Connection
 
 from tron.infra.db.base import Base
 from tron.domain.models import (  # noqa: F401 — import all models so metadata is populated

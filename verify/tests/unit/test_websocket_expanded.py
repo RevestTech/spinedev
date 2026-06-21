@@ -11,7 +11,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 from fastapi import WebSocket, WebSocketDisconnect
-from starlette.testclient import TestClient
 
 
 # Note: WebSocket tests require running server context

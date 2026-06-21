@@ -17,4 +17,4 @@ The proposal distinguished (a) heuristic / LLM-assisted compliance scanning and 
 ## Consequences
 
 - Marketing and UI must not claim third-party certification derived only from Tron.
-- **`MASTER_PROPOSAL_TODO.md`** marks reference packs **Done** and attestation **Deferred** (this ADR).
+- **`docs/project/BRD.md`** §6 and **`MASTER_PROPOSAL_TODO.md`** (Deferred section) mark reference packs **Done** and certified attestation **Deferred** (this ADR).

@@ -19,7 +19,6 @@ Version: 1.0.0
 
 from datetime import datetime
 from enum import Enum
-from pathlib import Path
 from typing import List, Optional
 from uuid import UUID, uuid4
 
@@ -207,6 +206,25 @@ class FindingOutput(BaseModel):
     cross_validation_status: CrossValidationStatus = Field(
         default=CrossValidationStatus.PENDING,
         description="Current validation status across multiple agents",
+    )
+    layer3_execution: Optional[str] = Field(
+        default=None,
+        description=(
+            "Layer 3 sandbox execution outcome: not_applicable, verified, unverified, "
+            "skipped (sandbox off), or null if not yet set"
+        ),
+    )
+    path_role: Optional[str] = Field(
+        default=None,
+        description="e.g. 'test' when file path matches project test-path globs (SEC-3)",
+    )
+    follow_up_recommended: bool = Field(
+        default=False,
+        description="True when flagged for optional deeper verification (SEC-5, env-capped top N)",
+    )
+    evidence_source: Optional[str] = Field(
+        default=None,
+        description="provenance: agent, sarif, import, etc.",
     )
     agent_id: str = Field(
         description="Identifier of the ISO agent that produced this finding",

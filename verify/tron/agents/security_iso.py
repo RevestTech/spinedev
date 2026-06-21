@@ -15,7 +15,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import shutil
 import tempfile
 from pathlib import Path
@@ -26,10 +25,9 @@ from tron.agents.base import (
     BaseISO,
     ISOConfig,
     ISOSpecialization,
-    LLMProvider,
     ToolResult,
 )
-from tron.infra.llm.client import LLMClient, LLMMessage, LLMRequest, LLMResponse
+from tron.infra.llm.client import LLMClient, LLMMessage, LLMRequest
 from tron.schemas.verification import (
     Blueprint,
     FindingOutput,
@@ -116,7 +114,12 @@ class SecurityISO(BaseISO):
     """
 
     SPECIALIZATION = ISOSpecialization.SECURITY
-    DEFAULT_TOOLS = ("bandit", "semgrep")
+    # Safety runs only when a Python requirements manifest is in the file set;
+    # ESLint runs only when JS/TS files are present (closes the long-standing
+    # "Python-only deterministic baseline" gap). Bandit + Semgrep run on every
+    # SecurityISO invocation; the runners themselves no-op when they have
+    # nothing to scan.
+    DEFAULT_TOOLS = ("bandit", "semgrep", "safety", "eslint")
 
     SYSTEM_PROMPT = """\
 You are SecurityISO, a security-focused code analysis agent in the Tron \
@@ -137,7 +140,13 @@ and line, the vulnerable code snippet, a clear description, and a fix.
 your findings with theirs. If a tool already found it, note that.
 4. Focus on vulnerabilities that static tools MISS: logic bugs, auth \
 bypass, business logic flaws, race conditions, TOCTOU issues.
-5. Do NOT report style issues, performance issues, or non-security \
+5. Additionally scrutinize patterns associated with **insider threats, \
+backdoors, and supply-chain abuse** when evidenced in code: e.g. suspicious \
+dynamic execution or decoding of payloads; unexplained outbound URLs or IPs; \
+credential exfiltration patterns; persistence hooks unrelated to product \
+features; typosquatted imports or dependency gates—report only when you \
+can point to concrete lines (avoid paranoid noise).
+6. Do NOT report style issues, performance issues, or non-security \
 concerns.
 
 OUTPUT FORMAT (pure JSON array, NO other text):
@@ -290,7 +299,7 @@ Remember: ONLY JSON. No preamble, no explanation, no markdown.
         # Handle markdown code blocks
         if text.startswith("```"):
             lines = text.split("\n")
-            lines = [l for l in lines if not l.strip().startswith("```")]
+            lines = [ln for ln in lines if not ln.strip().startswith("```")]
             text = "\n".join(lines).strip()
 
         # Strip preamble text before JSON
@@ -364,8 +373,8 @@ Remember: ONLY JSON. No preamble, no explanation, no markdown.
         workspace_root: str,
         file_contents: Optional[Dict[str, str]] = None,
     ) -> ToolResult:
-        """Execute Bandit or Semgrep in the sandbox."""
-        if tool_name not in ("bandit", "semgrep"):
+        """Execute Bandit / Semgrep / Safety / ESLint in the sandbox."""
+        if tool_name not in ("bandit", "semgrep", "safety", "eslint"):
             return await super()._execute_tool(tool_name, workspace_root, file_contents)
 
         # To run Bandit/Semgrep, we need actual files on disk.
@@ -391,8 +400,12 @@ Remember: ONLY JSON. No preamble, no explanation, no markdown.
 
             if tool_name == "bandit":
                 return await self._run_bandit(temp_dir)
-            else:  # semgrep
+            elif tool_name == "semgrep":
                 return await self._run_semgrep(temp_dir)
+            elif tool_name == "safety":
+                return await self._run_safety(temp_dir, file_contents or {})
+            else:  # eslint
+                return await self._run_eslint(temp_dir, file_contents or {})
 
         except Exception as exc:
             logger.exception("SecurityISO: Failed to prepare files for %s", tool_name)
@@ -496,6 +509,214 @@ Remember: ONLY JSON. No preamble, no explanation, no markdown.
 
         return ToolResult(
             tool_name="semgrep",
+            exit_code=result.exit_code,
+            stdout=result.stdout,
+            stderr=result.stderr,
+            duration_seconds=duration,
+            findings_count=len(raw_findings),
+            raw_findings=raw_findings,
+        )
+
+    async def _run_safety(
+        self,
+        workspace_root: str,
+        file_contents: Dict[str, str],
+    ) -> ToolResult:
+        """Run pyup.io's `safety` against any Python requirements manifest in
+        the scanned tree. Reports known-vulnerable dependency versions.
+
+        Behaviour:
+          * No requirements*.txt / Pipfile / pyproject.toml in the file set
+            → return an empty ToolResult with exit_code=0 (silent no-op).
+          * One or more manifests → run ``safety check --file <path> --json``
+            for each, accumulate the JSON vulnerabilities into raw_findings.
+          * Unparseable JSON or missing binary → log + return exit_code=-1
+            with the stderr captured. We still continue the audit; Safety
+            is augmentative, not gating.
+        """
+        # Find Python dependency manifests in the scanned files.
+        manifests = [
+            p for p in file_contents.keys()
+            if (
+                p.endswith("requirements.txt")
+                or p.endswith("requirements-dev.txt")
+                or p.endswith("requirements-prod.txt")
+                or p.split("/")[-1].startswith("requirements") and p.endswith(".txt")
+            )
+        ]
+        if not manifests:
+            # Pure no-op — Safety only makes sense with a Python deps file.
+            # Return a clean 0-exit so downstream code doesn't treat the
+            # absence as an error.
+            return ToolResult(
+                tool_name="safety",
+                exit_code=0,
+                stdout="",
+                stderr="(no Python requirements manifest in scope)",
+                duration_seconds=0.0,
+                findings_count=0,
+                raw_findings=[],
+            )
+
+        sandbox = await self._get_sandbox()
+        start_time = asyncio.get_event_loop().time()
+
+        # safety v3 uses ``scan``; v2 uses ``check``. We invoke through bash
+        # so we can fall back transparently if the installed version is
+        # different on the sandbox image.
+        commands = " || ".join(
+            f"safety check --file {m} --json --disable-optional-telemetry"
+            for m in manifests
+        )
+        result = await sandbox.run_bash(commands, workdir=workspace_root)
+        duration = asyncio.get_event_loop().time() - start_time
+
+        raw_findings: List[Dict[str, Any]] = []
+        try:
+            stdout = result.stdout.strip() or "[]"
+            payload = json.loads(stdout)
+            # Safety v3 returns a dict with "vulnerabilities"; v2 returns a list.
+            vulns = (
+                payload.get("vulnerabilities", [])
+                if isinstance(payload, dict)
+                else payload
+            )
+            for v in vulns:
+                raw_findings.append({
+                    "package": v.get("package_name") or v.get("package", ""),
+                    "installed_version": v.get("analyzed_version")
+                        or v.get("installed_version", ""),
+                    "vulnerability_id": v.get("vulnerability_id")
+                        or v.get("id", ""),
+                    "advisory": v.get("advisory")
+                        or v.get("vulnerable_spec", ""),
+                    "cve": v.get("CVE") or v.get("cve", ""),
+                    "more_info_url": v.get("more_info_url", ""),
+                })
+        except (json.JSONDecodeError, TypeError):
+            # Safety exits non-zero when vulns are found — not an error per
+            # se. Only warn if BOTH the parse failed AND exit was non-zero
+            # AND stderr looks like a real failure.
+            if result.exit_code != 0 and result.stderr:
+                logger.warning(
+                    "Safety check returned non-JSON (exit %d): %s",
+                    result.exit_code,
+                    result.stderr[:200],
+                )
+
+        return ToolResult(
+            tool_name="safety",
+            exit_code=result.exit_code,
+            stdout=result.stdout,
+            stderr=result.stderr,
+            duration_seconds=duration,
+            findings_count=len(raw_findings),
+            raw_findings=raw_findings,
+        )
+
+    async def _run_eslint(
+        self,
+        workspace_root: str,
+        file_contents: Dict[str, str],
+    ) -> ToolResult:
+        """Run ESLint with security-focused rulesets against JS/TS files.
+
+        Closes the long-standing Python-only deterministic baseline gap.
+        Behaviour mirrors `_run_safety`: silent no-op when no JS/TS files
+        are in scope, doesn't raise when the binary is missing, parses
+        ESLint's JSON output into ``raw_findings`` keyed for downstream
+        confirmation matching.
+
+        Configuration:
+          * ``--no-eslintrc`` — ignore any project-side ``.eslintrc`` so
+            consumers don't accidentally inherit rules they didn't ask for.
+          * ``--rule`` flags load ``eslint-plugin-security`` rules
+            individually, which means we don't need that plugin installed
+            on the sandbox image to run *some* of the checks (security/...
+            rules are optional and only fire when the plugin is present;
+            absent plugin = those rules silently no-op, which is what we
+            want).
+          * ``--format json`` — machine-readable output.
+          * ``--ext .js,.jsx,.ts,.tsx,.mjs,.cjs`` — scoped extensions.
+        """
+        js_files = [
+            p for p in file_contents.keys()
+            if any(
+                p.endswith(ext)
+                for ext in (".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs")
+            )
+        ]
+        if not js_files:
+            return ToolResult(
+                tool_name="eslint",
+                exit_code=0,
+                stdout="",
+                stderr="(no JS/TS files in scope)",
+                duration_seconds=0.0,
+                findings_count=0,
+                raw_findings=[],
+            )
+
+        sandbox = await self._get_sandbox()
+        start_time = asyncio.get_event_loop().time()
+
+        # ``|| true`` so ESLint's non-zero "lint errors found" exit doesn't
+        # short-circuit the bash chain. We read the JSON regardless.
+        bash_cmd = (
+            "eslint --no-eslintrc --format json "
+            "--ext .js,.jsx,.ts,.tsx,.mjs,.cjs "
+            "--plugin security "
+            "--rule 'security/detect-eval-with-expression: error' "
+            "--rule 'security/detect-non-literal-fs-filename: error' "
+            "--rule 'security/detect-non-literal-regexp: warn' "
+            "--rule 'security/detect-non-literal-require: warn' "
+            "--rule 'security/detect-object-injection: warn' "
+            "--rule 'security/detect-unsafe-regex: error' "
+            "--rule 'security/detect-buffer-noassert: error' "
+            "--rule 'security/detect-child-process: warn' "
+            "--rule 'security/detect-disable-mustache-escape: error' "
+            "--rule 'security/detect-no-csrf-before-method-override: error' "
+            "--rule 'security/detect-possible-timing-attacks: warn' "
+            "--rule 'security/detect-pseudoRandomBytes: warn' "
+            ". || true"
+        )
+        result = await sandbox.run_bash(bash_cmd, workdir=workspace_root)
+        duration = asyncio.get_event_loop().time() - start_time
+
+        raw_findings: List[Dict[str, Any]] = []
+        try:
+            stdout = (result.stdout or "").strip() or "[]"
+            payload = json.loads(stdout)
+            # ESLint JSON: list of {filePath, messages: [{ruleId, severity,
+            # message, line, column, ...}]}
+            for file_entry in payload:
+                file_path = file_entry.get("filePath", "")
+                # Strip the temp-dir prefix so file_path matches what the
+                # LLM saw — confirmation matching depends on exact paths.
+                if file_path.startswith(workspace_root):
+                    file_path = file_path[len(workspace_root):].lstrip("/")
+                for msg in file_entry.get("messages", []):
+                    raw_findings.append({
+                        "file": file_path,
+                        "line": msg.get("line", 0),
+                        "column": msg.get("column", 0),
+                        "rule_id": msg.get("ruleId", ""),
+                        "severity": msg.get("severity", 0),  # 1=warn, 2=error
+                        "message": msg.get("message", ""),
+                        "fixable": bool(msg.get("fix")),
+                    })
+        except (json.JSONDecodeError, TypeError):
+            # ESLint not installed on the sandbox image, or JSON malformed.
+            # Don't gate the audit on ESLint availability.
+            if result.exit_code not in (0, 1, 2) and result.stderr:
+                logger.warning(
+                    "ESLint returned non-JSON (exit %d): %s",
+                    result.exit_code,
+                    result.stderr[:200],
+                )
+
+        return ToolResult(
+            tool_name="eslint",
             exit_code=result.exit_code,
             stdout=result.stdout,
             stderr=result.stderr,

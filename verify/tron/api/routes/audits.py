@@ -11,12 +11,14 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import Optional
-from uuid import UUID
 from decimal import Decimal
+from typing import Any, List, Optional, Set
+from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
+import json
+
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import select, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -43,6 +45,51 @@ class AuditCreate(BaseModel):
     branch: Optional[str] = "main"
     commit_hash: Optional[str] = None
     trigger_type: str = "manual"
+
+
+class AuditDiffCreate(BaseModel):
+    """Pre-PR diff-mode audit.
+
+    Restricts the audit to exactly ``changed_files``. Optional
+    ``base_ref`` / ``head_ref`` are stored on the audit_run row for
+    traceability (no git operations happen inside the API — the caller,
+    typically a CI runner, computes the diff and passes the path list).
+    """
+
+    project_id: UUID
+    changed_files: list[str] = Field(
+        ..., min_length=1, max_length=2000,
+        description="Relative paths to scan. Anything outside this set "
+        "is skipped by the pipeline. Empty/oversized lists rejected.",
+    )
+    base_ref: Optional[str] = Field(
+        default=None, max_length=255,
+        description="Base git ref the diff was computed from (informational).",
+    )
+    head_ref: Optional[str] = Field(
+        default=None, max_length=255,
+        description="Head git ref the diff was computed from (informational).",
+    )
+    branch: Optional[str] = "main"
+    commit_hash: Optional[str] = None
+    trigger_type: str = "pr"  # default to "pr" since that's the canonical use
+
+    @model_validator(mode="after")
+    def _validate_paths(self) -> "AuditDiffCreate":
+        # Reject paths with traversal or absolute prefixes — this endpoint
+        # operates on relative paths inside the cloned repo only.
+        for p in self.changed_files:
+            if not p or not p.strip():
+                raise ValueError("changed_files must not contain empty entries")
+            if ".." in p.split("/"):
+                raise ValueError(
+                    f"changed_files entry {p!r} contains '..' traversal"
+                )
+            if p.startswith("/"):
+                raise ValueError(
+                    f"changed_files entry {p!r} must be repo-relative, not absolute"
+                )
+        return self
 
 
 class AuditSummary(BaseModel):
@@ -95,10 +142,76 @@ class FindingResponse(BaseModel):
     suggested_fix: Optional[str]
     status: str
     code_snippet: Optional[str]
+    confidence: Optional[float] = None
+    deterministic_tool_confirmed: bool = False
+    layer3_execution: Optional[str] = None
+    confirming_tools: Optional[List[Any]] = None
+    path_role: Optional[str] = None
+    follow_up_recommended: bool = False
+    evidence_source: Optional[str] = None
+    verification_summary: str = Field(
+        default="",
+        description="Derived line: confidence, L3, tool-backed, path role, evidence source.",
+    )
     created_at: datetime
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+def _verification_summary_line(f: Finding) -> str:
+    parts: List[str] = []
+    if f.confidence is not None:
+        try:
+            parts.append(f"confidence {float(f.confidence):.0%}")
+        except (TypeError, ValueError, OverflowError):
+            parts.append("confidence (set)")
+    if f.deterministic_tool_confirmed:
+        parts.append("tool-backed")
+    l3 = f.layer3_execution
+    if l3:
+        parts.append(f"L3 {l3}")
+    if getattr(f, "path_role", None) == "test":
+        parts.append("test path")
+    evs = getattr(f, "evidence_source", None)
+    if evs:
+        parts.append(f"source: {evs}")
+    if getattr(f, "follow_up_recommended", False):
+        parts.append("follow-up recommended")
+    if parts:
+        return " · ".join(parts)
+    return "Candidates for review — not a pentest verdict without corroboration."
+
+
+def _finding_to_response(f: Finding) -> FindingResponse:
+    """Map ORM ``Finding``; ``confirming_tools_json`` → ``confirming_tools``."""
+    return FindingResponse(
+        id=f.id,
+        audit_run_id=f.audit_run_id,
+        project_id=f.project_id,
+        fingerprint=f.fingerprint,
+        rule_id=f.rule_id,
+        file_path=f.file_path,
+        line_start=f.line_start,
+        line_end=f.line_end,
+        severity=f.severity,
+        category=f.category,
+        title=f.title,
+        description=f.description,
+        suggested_fix=f.suggested_fix,
+        status=f.status,
+        code_snippet=f.code_snippet,
+        confidence=float(f.confidence) if f.confidence is not None else None,
+        deterministic_tool_confirmed=bool(f.deterministic_tool_confirmed),
+        layer3_execution=f.layer3_execution,
+        confirming_tools=f.confirming_tools_json,
+        path_role=getattr(f, "path_role", None),
+        follow_up_recommended=bool(getattr(f, "follow_up_recommended", False)),
+        evidence_source=getattr(f, "evidence_source", None),
+        verification_summary=_verification_summary_line(f),
+        created_at=f.created_at,
+        updated_at=f.updated_at,
+    )
 
 
 class FindingListResponse(BaseModel):
@@ -197,6 +310,104 @@ async def create_audit(
     return audit_run
 
 
+@router.post("/audits/diff", response_model=AuditSummary, status_code=201)
+async def create_diff_audit(
+    body: AuditDiffCreate,
+    background_tasks: BackgroundTasks,
+    session: AsyncSession = Depends(get_session),
+):
+    """Start a PR-time audit restricted to a specific list of changed files.
+
+    The pipeline runs the same agents and verification layers as a full
+    audit — Bandit/Semgrep/Safety/ESLint/Ruff still execute, schema
+    validation still applies, Layer 5 scope still enforces. The
+    difference is the file set: only ``changed_files`` (and config files
+    they reference, by way of the existing audit_path_filters) are
+    handed to the agents.
+
+    Use case: a GitHub Action runs ``git diff --name-only origin/main``,
+    POSTs the path list here, and gates the PR on the resulting
+    findings. Turns Tron from "weekly audit" into "PR gate."
+    """
+    result = await session.execute(
+        select(Project).where(
+            Project.id == body.project_id,
+            Project.deleted_at.is_(None),
+        )
+    )
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    audit_run = AuditRun(
+        project_id=body.project_id,
+        workflow_id="pending",
+        workflow_run_id="pending",
+        branch=body.branch,
+        commit_hash=body.commit_hash,
+        trigger_type=body.trigger_type,
+        status="queued",
+        progress=0,
+        # The diff scope is the load-bearing field. AuditExecutor /
+        # workflow activities read this and restrict file_contents to it.
+        diff_files_json=list(body.changed_files),
+        diff_base_ref=body.base_ref,
+        diff_head_ref=body.head_ref,
+    )
+    session.add(audit_run)
+    await session.flush()
+    await session.refresh(audit_run)
+    aid = audit_run.id
+    if settings.temporal_enabled:
+        audit_run.workflow_id = f"audit-{aid}"
+        audit_run.workflow_run_id = "pending-temporal-run"
+    else:
+        audit_run.workflow_id = f"background-audit-{aid}"
+        audit_run.workflow_run_id = f"background-{aid}"
+
+    await session.commit()
+
+    logger.info(
+        "Diff-mode audit created: %s for project %s, %d changed files",
+        audit_run.id,
+        body.project_id,
+        len(body.changed_files),
+    )
+
+    if settings.temporal_enabled:
+        try:
+            await _dispatch_temporal_audit(
+                audit_run.id, body.project_id, body.trigger_type
+            )
+        except Exception as exc:
+            logger.exception(
+                "Temporal dispatch failed for diff audit %s", audit_run.id
+            )
+            err_msg = f"Temporal dispatch failed: {exc}"[:1000]
+            await session.execute(
+                update(AuditRun)
+                .where(AuditRun.id == audit_run.id)
+                .values(
+                    status="failed",
+                    error_message=err_msg,
+                    completed_at=datetime.now(timezone.utc),
+                )
+            )
+            await session.commit()
+            raise HTTPException(
+                status_code=503,
+                detail="Temporal unavailable; diff audit was not started",
+            ) from exc
+    else:
+        background_tasks.add_task(
+            _execute_audit_background,
+            audit_run_id=audit_run.id,
+            project_id=body.project_id,
+        )
+
+    return audit_run
+
+
 @router.get("/audits", response_model=AuditListResponse)
 async def list_audits(
     project_id: Optional[UUID] = Query(None),
@@ -283,6 +494,102 @@ async def post_reconcile_stale_queued_audits(
     )
 
 
+class AuditCostBreakdownRow(BaseModel):
+    """One row of the per-audit cost breakdown."""
+
+    provider: str
+    model: str
+    operation_detail: Optional[str] = None
+    request_count: int
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+    cost_usd: float
+
+
+class AuditCostResponse(BaseModel):
+    audit_run_id: UUID
+    total_cost_usd: float
+    total_tokens: int
+    request_count: int
+    breakdown: list[AuditCostBreakdownRow]
+
+
+@router.get("/audits/{audit_id}/cost", response_model=AuditCostResponse)
+async def get_audit_cost(
+    audit_id: UUID,
+    session: AsyncSession = Depends(get_session),
+):
+    """Per-audit LLM cost breakdown.
+
+    Aggregates ``llm_usage`` rows whose ``workflow_run_id`` matches this
+    audit. Both the in-process executor and the Temporal path persist
+    rows with the audit_run_id in ``workflow_run_id`` (see
+    `audit_executor.py:179` and `activities.py`), so this query covers
+    both code paths.
+
+    Buyer-relevant: lets a customer answer "what did this scan cost me"
+    in one click, surfaced in the AuditDetail UI.
+    """
+    from sqlalchemy import func, text
+
+    from tron.domain.models import LLMUsage
+
+    # Confirm the audit exists (404 vs returning empty cost data which
+    # would be confusing).
+    audit = await session.execute(
+        select(AuditRun).where(AuditRun.id == audit_id)
+    )
+    if audit.scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail="Audit not found")
+
+    # Aggregate by (provider, model, operation_detail). operation_detail
+    # is what tells "which agent" — security_iso, builder_iso, etc.
+    aid_str = str(audit_id)
+    res = await session.execute(
+        select(
+            LLMUsage.provider,
+            LLMUsage.model,
+            LLMUsage.operation_detail,
+            func.count().label("request_count"),
+            func.coalesce(func.sum(LLMUsage.prompt_tokens), 0).label("prompt_tokens"),
+            func.coalesce(func.sum(LLMUsage.completion_tokens), 0).label("completion_tokens"),
+            func.coalesce(func.sum(LLMUsage.cost_usd), 0).label("cost_usd"),
+        )
+        .where(LLMUsage.workflow_run_id == aid_str)
+        .group_by(
+            LLMUsage.provider, LLMUsage.model, LLMUsage.operation_detail
+        )
+        .order_by(text("cost_usd DESC"))
+    )
+
+    rows = res.all()
+    breakdown = [
+        AuditCostBreakdownRow(
+            provider=r.provider,
+            model=r.model,
+            operation_detail=r.operation_detail,
+            request_count=int(r.request_count or 0),
+            prompt_tokens=int(r.prompt_tokens or 0),
+            completion_tokens=int(r.completion_tokens or 0),
+            total_tokens=int((r.prompt_tokens or 0) + (r.completion_tokens or 0)),
+            cost_usd=float(r.cost_usd or 0),
+        )
+        for r in rows
+    ]
+    total_cost = sum(b.cost_usd for b in breakdown)
+    total_tokens = sum(b.total_tokens for b in breakdown)
+    request_count = sum(b.request_count for b in breakdown)
+
+    return AuditCostResponse(
+        audit_run_id=audit_id,
+        total_cost_usd=total_cost,
+        total_tokens=total_tokens,
+        request_count=request_count,
+        breakdown=breakdown,
+    )
+
+
 @router.get("/audits/{audit_id}", response_model=AuditSummary)
 async def get_audit(
     audit_id: UUID,
@@ -296,6 +603,127 @@ async def get_audit(
     if not audit:
         raise HTTPException(status_code=404, detail="Audit run not found")
     return audit
+
+
+class SarifImportBody(BaseModel):
+    sarif: dict
+
+
+class SarifImportResponse(BaseModel):
+    inserted: int
+    skipped_duplicates: int
+
+
+async def _resync_audit_run_counts(session: AsyncSession, audit_id: UUID) -> None:
+    r = await session.execute(
+        select(Finding).where(Finding.audit_run_id == audit_id)
+    )
+    rows = r.scalars().all()
+    c = h = m = lo = 0
+    for f in rows:
+        if f.severity == "critical":
+            c += 1
+        elif f.severity == "high":
+            h += 1
+        elif f.severity == "medium":
+            m += 1
+        elif f.severity == "low":
+            lo += 1
+    await session.execute(
+        update(AuditRun)
+        .where(AuditRun.id == audit_id)
+        .values(
+            findings_total=len(rows),
+            findings_critical=c,
+            findings_high=h,
+            findings_medium=m,
+            findings_low=lo,
+        )
+    )
+
+
+@router.post(
+    "/audits/{audit_id}/import-sarif",
+    response_model=SarifImportResponse,
+)
+async def import_sarif(
+    audit_id: UUID,
+    body: SarifImportBody,
+    session: AsyncSession = Depends(get_session),
+) -> SarifImportResponse:
+    """Merge SARIF 2.1 results into a run (new fingerprints only). SEC-1."""
+    from tron.services.sarif_import import parse_sarif_to_rows
+
+    res = await session.execute(select(AuditRun).where(AuditRun.id == audit_id))
+    audit = res.scalar_one_or_none()
+    if not audit:
+        raise HTTPException(status_code=404, detail="Audit run not found")
+
+    # Best-effort: archive the raw SARIF blob to MinIO. Findings still go
+    # into Postgres for query performance, but the original SARIF is
+    # available for re-import / re-analysis. MinIO outage is logged but
+    # does not block the import — the import is the source of truth here.
+    try:
+        from tron.infra.minio import get_minio_client
+
+        client = await get_minio_client()
+        await client.upload_artifact(
+            audit_run_id=audit_id,
+            artifact_name=f"sarif-import-{datetime.now(timezone.utc).isoformat()}.json",
+            data=json.dumps(body.sarif).encode("utf-8"),
+            content_type="application/sarif+json",
+        )
+    except Exception:
+        logger.warning(
+            "MinIO archive of SARIF import failed for audit %s",
+            audit_id, exc_info=True,
+        )
+
+    ex = await session.execute(
+        select(Finding.fingerprint).where(Finding.audit_run_id == audit_id)
+    )
+    existing: Set[str] = {x[0] for x in ex.all()}
+    try:
+        rows = parse_sarif_to_rows(body.sarif, str(audit.project_id), str(audit_id))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    n_ins = 0
+    n_skip = 0
+    for row in rows:
+        if row["fingerprint"] in existing:
+            n_skip += 1
+            continue
+        existing.add(row["fingerprint"])
+        session.add(
+            Finding(
+                audit_run_id=UUID(row["audit_run_id"]),
+                project_id=UUID(row["project_id"]),
+                fingerprint=row["fingerprint"],
+                rule_id=row["rule_id"],
+                file_path=row["file_path"],
+                line_start=row["line_start"],
+                line_end=row["line_end"],
+                severity=row["severity"],
+                category=row["category"],
+                title=row["title"],
+                description=row["description"],
+                suggested_fix=row.get("suggested_fix"),
+                status=row.get("status", "open"),
+                code_snippet=row.get("code_snippet"),
+                confidence=row.get("confidence"),
+                deterministic_tool_confirmed=row["deterministic_tool_confirmed"],
+                layer3_execution=row.get("layer3_execution"),
+                confirming_tools_json=row.get("confirming_tools_json"),
+                path_role=row.get("path_role"),
+                follow_up_recommended=bool(row.get("follow_up_recommended", False)),
+                evidence_source=row.get("evidence_source"),
+            )
+        )
+        n_ins += 1
+    if n_ins:
+        await _resync_audit_run_counts(session, audit_id)
+    await session.commit()
+    return SarifImportResponse(inserted=n_ins, skipped_duplicates=n_skip)
 
 
 @router.get("/audits/{audit_id}/findings", response_model=FindingListResponse)
@@ -340,7 +768,7 @@ async def list_audit_findings(
     findings = result.scalars().all()
 
     return FindingListResponse(
-        items=[FindingResponse.model_validate(f) for f in findings],
+        items=[_finding_to_response(f) for f in findings],
         total=total,
         page=page,
         page_size=page_size,

@@ -1,16 +1,23 @@
 const API_BASE = '/api';
 
-// API key stored in localStorage for convenience
-export function getApiKey(): string {
-  return localStorage.getItem('tron-api-key') || '';
+/**
+ * One-shot migration helper. Previous builds of this SPA stored the master key
+ * in `localStorage['tron-api-key']`, which is readable by any script injected
+ * via XSS. Auth now rides entirely on the httpOnly admin session cookie
+ * (see tron/api/middleware/auth.py::require_api_key). On load we scrub any
+ * stale key so an old tab doesn't keep it alive. X-API-Key is still accepted
+ * server-side for CLI/automation consumers — just not from the browser.
+ */
+function purgeLegacyApiKeyStorage(): void {
+  try {
+    localStorage.removeItem('tron-api-key');
+  } catch {
+    /* private-mode / quota errors are fine to ignore */
+  }
 }
-
-export function setApiKey(key: string) {
-  localStorage.setItem('tron-api-key', key);
-}
+purgeLegacyApiKeyStorage();
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const key = getApiKey();
   // Ensure path has leading slash
   const normalizedPath = path.startsWith('/') ? path : `/${path}`;
   const res = await fetch(`${API_BASE}${normalizedPath}`, {
@@ -18,7 +25,6 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     ...options,
     headers: {
       'Content-Type': 'application/json',
-      ...(key ? { 'X-API-Key': key } : {}),
       ...options.headers,
     },
   });
@@ -85,6 +91,10 @@ export interface ProjectDetail extends Project {
   last_build_result_json?: Record<string, unknown> | null;
   evolve_artifact_json?: Record<string, unknown> | null;
   compliance_control_pack_ids?: string[] | null;
+  /** Globs (fnmatch + **) excluded from clone scan — SEC-3 */
+  audit_exclude_globs_json?: string[] | null;
+  /** Globs marking test paths (tagged on findings) — SEC-3 */
+  audit_test_path_globs_json?: string[] | null;
 }
 
 export type PlanQuestionnairePayload = Record<string, unknown>;
@@ -106,8 +116,44 @@ export interface GithubRepo {
   updated_at: string;
 }
 
-export const listGithubRepos = (org?: string) =>
-  request<GithubRepo[]>(`/integrations/github/repos${org ? `?org=${org}` : ''}`);
+export const listGithubRepos = (org?: string) => {
+  const o = org?.trim();
+  const q = o ? `?org=${encodeURIComponent(o)}` : '';
+  return request<GithubRepo[]>(`/integrations/github/repos${q}`);
+};
+
+// ─── Saved GitHub orgs (org switcher) ───
+//
+// Lets the user persist a list of GitHub orgs / user accounts they
+// audit, so the GithubRepoBrowser can show them in a dropdown instead
+// of forcing a re-type each time. Backed by ``saved_github_orgs``
+// (Alembic 012). Single shared PAT in vault still — these rows just
+// scope which logins the dropdown lists.
+
+export interface SavedGithubOrg {
+  id: string;
+  login: string;
+  display_name: string | null;
+  kind: 'org' | 'user';
+  pinned: boolean;
+  created_at: string;
+}
+
+export const listSavedGithubOrgs = () =>
+  request<SavedGithubOrg[]>('/integrations/github/saved-orgs');
+
+export const addSavedGithubOrg = (
+  payload: { login: string; display_name?: string | null; pinned?: boolean }
+) =>
+  request<SavedGithubOrg>('/integrations/github/saved-orgs', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+
+export const deleteSavedGithubOrg = (id: string) =>
+  request<void>(`/integrations/github/saved-orgs/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
 
 export const listProjects = (page = 1, pageSize = 20) =>
 
@@ -127,6 +173,8 @@ export const updateProject = (id: string, patch: Partial<{
   quality_gates_json: Record<string, unknown> | null;
   plan_questionnaire_json: Record<string, unknown> | null;
   compliance_control_pack_ids: string[] | null;
+  audit_exclude_globs_json: string[] | null;
+  audit_test_path_globs_json: string[] | null;
 }>) =>
   request<ProjectDetail>(`/projects/${id}`, { method: 'PUT', body: JSON.stringify(patch) });
 
@@ -211,6 +259,27 @@ export const getAudit = (id: string) =>
 export const createAudit = (data: { project_id: string; branch?: string; trigger_type?: string }) =>
   request<AuditRun>('/audits', { method: 'POST', body: JSON.stringify(data) });
 
+// ── Per-audit cost (LLM ledger aggregation) ──
+export interface AuditCostBreakdownRow {
+  provider: string;
+  model: string;
+  operation_detail: string | null;
+  request_count: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  cost_usd: number;
+}
+export interface AuditCost {
+  audit_run_id: string;
+  total_cost_usd: number;
+  total_tokens: number;
+  request_count: number;
+  breakdown: AuditCostBreakdownRow[];
+}
+export const getAuditCost = (id: string) =>
+  request<AuditCost>(`/audits/${id}/cost`);
+
 // ── Workflow runs (Temporal IDs on audit_runs) ──
 export interface WorkflowRunRow {
   audit_run_id: string;
@@ -264,12 +333,9 @@ export const createApiKey = (body: { label: string; scopes?: string[] }) =>
   request<ApiKeyCreated>('/api-keys', { method: 'POST', body: JSON.stringify(body) });
 
 export const revokeApiKey = (id: string) =>
-  fetch(`${API_BASE}/api-keys/${id}`, {
-    method: 'DELETE',
-    headers: { 'X-API-Key': getApiKey() },
-  }).then(r => {
-    if (!r.ok) throw new Error(`${r.status}: ${r.statusText}`);
-  });
+  // Goes through request() so it rides the httpOnly session cookie like every
+  // other admin-UI mutation. No localStorage, no explicit X-API-Key header.
+  request<null>(`/api-keys/${id}`, { method: 'DELETE' });
 
 // ── Findings ──
 export interface Finding {
@@ -288,7 +354,20 @@ export interface Finding {
   suggested_fix: string | null;
   status: string;
   code_snippet: string | null;
+  /** Model confidence 0–1; null for legacy rows */
+  confidence?: number | null;
+  /** Bandit/Semgrep or Layer-3 match */
+  deterministic_tool_confirmed?: boolean;
+  /** Sandbox: not_applicable, verified, unverified, skipped */
+  layer3_execution?: string | null;
+  confirming_tools?: string[] | null;
+  path_role?: string | null;
+  follow_up_recommended?: boolean;
+  evidence_source?: string | null;
+  /** API-derived single line for badges */
+  verification_summary?: string;
   created_at: string;
+  updated_at?: string;
 }
 
 export interface FindingListResponse {
@@ -297,6 +376,41 @@ export interface FindingListResponse {
   page: number;
   page_size: number;
 }
+
+export interface SarifImportResponse {
+  inserted: number;
+  skipped_duplicates: number;
+}
+
+export const importSarif = (auditId: string, sarif: Record<string, unknown>) =>
+  request<SarifImportResponse>(`/audits/${auditId}/import-sarif`, {
+    method: 'POST',
+    body: JSON.stringify({ sarif }),
+  });
+
+export const dismissFinding = (findingId: string, reason: string) =>
+  request<null>(`/findings/${findingId}/dismiss`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  });
+
+export const restoreFinding = (findingId: string) =>
+  request<null>(`/findings/${findingId}/restore`, { method: 'POST' });
+
+export interface FindingSuppression {
+  project_id: string;
+  fingerprint: string;
+  reason: string;
+  created_at: string;
+}
+
+export const listFindingSuppressions = (projectId: string) =>
+  request<FindingSuppression[]>(`/projects/${projectId}/finding-suppressions`);
+
+export const deleteFindingSuppression = (projectId: string, fingerprint: string) =>
+  request<null>(`/projects/${projectId}/finding-suppressions/${encodeURIComponent(fingerprint)}`, {
+    method: 'DELETE',
+  });
 
 export const listFindings = (auditId: string, params?: { severity?: string; status?: string; page?: number; page_size?: number }) => {
   const q = new URLSearchParams();
@@ -332,11 +446,13 @@ export const getCostDashboard = (startDate?: string, endDate?: string) => {
 };
 
 // ── WebSocket ──
+// The WS upgrade request carries the same httpOnly admin session cookie as any
+// other fetch; ws.py::_authenticate_ws verifies that cookie before accept().
+// We intentionally DO NOT put the API key in the query string — query strings
+// bleed into proxy/access logs, referer headers, and browser history.
 export function connectAuditWs(auditId: string, onMessage: (data: unknown) => void): WebSocket {
   const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-  const key = getApiKey().trim();
-  const qs = key ? `?token=${encodeURIComponent(key)}` : '';
-  const ws = new WebSocket(`${proto}://${window.location.host}/ws/audits/${auditId}${qs}`);
+  const ws = new WebSocket(`${proto}://${window.location.host}/ws/audits/${auditId}`);
   ws.onmessage = (e) => onMessage(JSON.parse(e.data));
   return ws;
 }

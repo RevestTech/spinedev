@@ -38,7 +38,16 @@ async def _remote_httpx_client(base_url: str, default_timeout: int) -> httpx.Asy
 
 try:
     import docker
-    from docker.errors import DockerException, ContainerError, ImageNotFound, APIError
+    # Imports kept for their side effect of validating the docker SDK at import
+    # time — the symbols are referenced below only via ``docker.errors.*`` style
+    # access and don't all need to be name-visible. Re-exported for callers that
+    # want to catch them.
+    from docker.errors import (  # noqa: F401
+        APIError,
+        ContainerError,
+        DockerException,
+        ImageNotFound,
+    )
 except ImportError:
     docker = None  # Handle gracefully if docker SDK not installed
 
@@ -46,6 +55,172 @@ except ImportError:
 class SandboxExecutionError(Exception):
     """Raised when sandbox execution fails"""
     pass
+
+
+# ── Defense-in-depth container hardening ─────────────────────────────────────
+# These values are applied to EVERY container this client launches — both
+# ``run_python`` and ``run_bash``. See docs/security/SANDBOX_THREAT_MODEL.md
+# for the rationale behind each flag. Any change here should come with a
+# threat-model update.
+
+# Only network modes that actually isolate a sandboxed payload are acceptable.
+# ``host`` gives the container the host's network namespace (no isolation).
+# ``container:<id>`` shares another container's namespace (lateral movement
+# vector). Custom bridges are allowed for the outbound-HTTPS-only audit mode,
+# which is set up separately and not reachable from raw user input.
+_ALLOWED_NETWORK_MODES = frozenset({"none", "bridge"})
+
+# Non-root user inside the container. 65534:65534 is the ``nobody:nogroup``
+# pair on every Debian/Ubuntu-derived base image, including python:3.11-slim.
+# Picking an existing UID avoids ``chown -R`` headaches on bind-mounted dirs.
+_SANDBOX_USER = "65534:65534"
+
+# Custom seccomp profile path. The file under config/sandbox/seccomp.json
+# is stricter than Docker's default — it removes mount/swap/kexec/ptrace
+# and ~20 other syscall classes the Python/bash payload demonstrably
+# doesn't need (see the file for the rationale per syscall). Override
+# with TRON_SANDBOX_SECCOMP=disabled if you need to debug a payload that
+# the profile is rejecting.
+_SECCOMP_PROFILE_PATH = os.environ.get(
+    "TRON_SANDBOX_SECCOMP",
+    "/etc/tron/sandbox/seccomp.json",
+)
+
+# Cap on concurrent processes — defeats fork bombs even if a payload bypasses
+# the memory limit.
+_SANDBOX_PIDS_LIMIT = 64
+
+# ulimits are enforced by the kernel inside the container. ``fsize`` caps any
+# single file created inside the sandbox at 10 MiB (defeats disk-fill attacks
+# against the tmpfs); ``nofile`` caps open file descriptors.
+_SANDBOX_ULIMITS_SPEC = (
+    {"name": "fsize", "soft": 10 * 1024 * 1024, "hard": 10 * 1024 * 1024},
+    {"name": "nofile", "soft": 128, "hard": 256},
+)
+
+# Environment applied to every execution. ``PYTHONDONTWRITEBYTECODE`` keeps
+# the interpreter from emitting .pyc files next to source — otherwise we'd
+# need a writable workdir which defeats the tmpfs-only writable model.
+_SANDBOX_ENV = {
+    "PYTHONDONTWRITEBYTECODE": "1",
+    "PYTHONUNBUFFERED": "1",
+    # HOME points at the per-container tmpfs mounted above — not the host's
+    # /tmp. See SANDBOX_THREAT_MODEL.md. The only writable location inside
+    # the container IS /tmp, so HOME has to live there.
+    "HOME": "/tmp",  # nosec B108
+}
+
+
+def _build_ulimits() -> list:
+    """Return docker.types.Ulimit instances, or dicts if SDK unavailable.
+
+    Kept as a function rather than a module constant so test environments
+    without the docker SDK can still import ``sandbox_client``.
+    """
+    if docker is None:  # pragma: no cover - SDK always present in runtime images
+        return [dict(spec) for spec in _SANDBOX_ULIMITS_SPEC]
+    return [docker.types.Ulimit(**spec) for spec in _SANDBOX_ULIMITS_SPEC]
+
+
+def _validate_network_mode(mode: str) -> str:
+    """Enforce the allowlist above. Rejects ``host`` / ``container:...``."""
+    if mode not in _ALLOWED_NETWORK_MODES:
+        raise ValueError(
+            f"Sandbox network_mode={mode!r} is not in the allowlist "
+            f"{sorted(_ALLOWED_NETWORK_MODES)!r}. Refusing to launch — "
+            f"``host`` and ``container:...`` break the isolation boundary."
+        )
+    return mode
+
+
+def _build_security_opt() -> list:
+    """Compose the Docker ``security_opt`` list including the seccomp profile.
+
+    Resolution order:
+      1. ``TRON_SANDBOX_SECCOMP=disabled`` — drop the seccomp clause
+         entirely, fall back to Docker's default profile. Use only for
+         debugging a payload the strict profile is rejecting.
+      2. The configured path (default ``/etc/tron/sandbox/seccomp.json``)
+         — Docker reads the file at container start and applies it.
+      3. If the file isn't present at runtime, log a warning and fall
+         back to default. We don't fail-closed here because that would
+         take down the audit pipeline if the operator hasn't mounted
+         the profile yet; the warning makes the misconfig visible.
+    """
+    base = ["no-new-privileges:true"]
+
+    if _SECCOMP_PROFILE_PATH.lower() in ("disabled", "off", "default"):
+        return base
+
+    if os.path.isfile(_SECCOMP_PROFILE_PATH):
+        return base + [f"seccomp={_SECCOMP_PROFILE_PATH}"]
+
+    # File configured but missing — warn loudly, return base. Don't
+    # crash the executor for a config issue.
+    logging.getLogger(__name__).warning(
+        "Sandbox seccomp profile not found at %s — falling back to Docker "
+        "default. Mount the file or set TRON_SANDBOX_SECCOMP=disabled to "
+        "silence this warning.",
+        _SECCOMP_PROFILE_PATH,
+    )
+    return base
+
+
+def _hardened_run_kwargs(
+    *,
+    memory_limit: str,
+    cpu_quota: int,
+    network_mode: str,
+    workdir: Optional[str],
+    volumes: Optional[Dict],
+) -> dict:
+    """Build the full ``containers.run`` kwargs with all hardening applied.
+
+    One code path for both ``run_python`` and ``run_bash`` — drifting two
+    independently-secured callsites is how holes appear.
+    """
+    return {
+        # ── Identity ─────────────────────────────────────────────────
+        "user": _SANDBOX_USER,
+        "hostname": "tron-sandbox",  # don't leak the host's hostname
+
+        # ── Network ──────────────────────────────────────────────────
+        "network_mode": _validate_network_mode(network_mode),
+        "network_disabled": network_mode == "none",
+
+        # ── Resource limits ─────────────────────────────────────────
+        "mem_limit": memory_limit,
+        "memswap_limit": memory_limit,  # disable swap — match RAM cap
+        "cpu_quota": cpu_quota,
+        "pids_limit": _SANDBOX_PIDS_LIMIT,
+        "ulimits": _build_ulimits(),
+
+        # ── Filesystem ──────────────────────────────────────────────
+        # Root FS is read-only; the only writable region is the 10 MiB
+        # per-container tmpfs mounted at /tmp. Everything else a payload
+        # can touch must be in a caller-provided volume.
+        "read_only": True,
+        "tmpfs": {"/tmp": "size=10M,mode=1777"},  # nosec B108
+
+        # ── Kernel-enforced isolation ───────────────────────────────
+        "cap_drop": ["ALL"],
+        "security_opt": _build_security_opt(),
+        "ipc_mode": "private",  # no shared-memory lateral moves
+        "pid_mode": None,       # separate PID namespace (default)
+
+        # ── Execution mode ──────────────────────────────────────────
+        "detach": True,
+        "remove": True,  # auto-remove on exit
+        "environment": dict(_SANDBOX_ENV),
+
+        # ── Workspace ───────────────────────────────────────────────
+        "working_dir": workdir,
+        "volumes": volumes,
+
+        # ── Output capture ──────────────────────────────────────────
+        "stdout": True,
+        "stderr": True,
+    }
 
 
 class SandboxClient:
@@ -135,6 +310,11 @@ class SandboxClient:
         Returns:
             dict with result info
         """
+        # Validate BEFORE the broad try/except so a caller passing a forbidden
+        # network mode gets a loud ValueError, not a silently-swallowed error
+        # dict that looks like a runtime failure.
+        _validate_network_mode(network_mode)
+
         timeout = timeout or self.default_timeout
         if self._remote_url:
             return await self._run_python_remote(
@@ -147,47 +327,30 @@ class SandboxClient:
                 "error": "Docker client not available",
                 "duration_ms": 0
             }
-        
+
         memory_limit = memory_limit or self.default_memory_limit
         cpu_quota = cpu_quota or self.default_cpu_quota
-        
+
         start_time = datetime.utcnow()
-        
+
         try:
             self.logger.debug(
                 f"Executing Python script in sandbox "
                 f"(timeout={timeout}s, network={network_mode}, workdir={workdir})"
             )
             
-            # Create and run container
+            # Create and run container with the full hardening kwargs.
+            # See ``_hardened_run_kwargs`` for the defense-in-depth rationale.
             container = self.docker_client.containers.run(
                 image="python:3.11-slim",
                 command=["python", "-c", script],
-                
-                # Network isolation
-                network_mode=network_mode,
-                
-                # Resource limits
-                mem_limit=memory_limit,
-                cpu_quota=cpu_quota,
-                
-                # Security hardening
-                read_only=False,  # Python needs /tmp for imports
-                tmpfs={"/tmp": "size=10M,mode=1777"},
-                cap_drop=["ALL"],
-                security_opt=["no-new-privileges:true"],
-                
-                # Execution mode
-                detach=True,
-                remove=True,  # Auto-remove after completion
-                
-                # Workspace
-                working_dir=workdir,
-                volumes=volumes,
-
-                # Output capture
-                stdout=True,
-                stderr=True
+                **_hardened_run_kwargs(
+                    memory_limit=memory_limit,
+                    cpu_quota=cpu_quota,
+                    network_mode=network_mode,
+                    workdir=workdir,
+                    volumes=volumes,
+                ),
             )
             
             # Wait for completion with timeout
@@ -199,7 +362,8 @@ class SandboxClient:
                 self.logger.warning(f"Container timeout/error: {timeout_error}")
                 try:
                     container.kill()
-                except:
+                except Exception:
+                    # Best-effort kill — container may already be dead.
                     pass
                 
                 duration = (datetime.utcnow() - start_time).total_seconds() * 1000
@@ -348,6 +512,10 @@ class SandboxClient:
         
         Similar to run_python but uses bash interpreter.
         """
+        # Same hoist as run_python — validation must precede the swallowing
+        # try/except or the ValueError becomes an opaque error dict.
+        _validate_network_mode(network_mode)
+
         timeout = timeout or self.default_timeout
         if self._remote_url:
             return await self._run_bash_remote(
@@ -362,24 +530,18 @@ class SandboxClient:
             }
         
         start_time = datetime.utcnow()
-        
+
         try:
             container = self.docker_client.containers.run(
                 image="python:3.11-slim",  # Has bash
                 command=["bash", "-c", script],
-                network_mode=network_mode,
-                mem_limit=self.default_memory_limit,
-                cpu_quota=self.default_cpu_quota,
-                read_only=False,
-                tmpfs={"/tmp": "size=10M,mode=1777"},
-                cap_drop=["ALL"],
-                security_opt=["no-new-privileges:true"],
-                detach=True,
-                remove=True,
-                working_dir=workdir,
-                volumes=volumes,
-                stdout=True,
-                stderr=True
+                **_hardened_run_kwargs(
+                    memory_limit=self.default_memory_limit,
+                    cpu_quota=self.default_cpu_quota,
+                    network_mode=network_mode,
+                    workdir=workdir,
+                    volumes=volumes,
+                ),
             )
             
             result = container.wait(timeout=timeout)

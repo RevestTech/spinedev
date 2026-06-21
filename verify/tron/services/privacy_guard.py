@@ -7,7 +7,6 @@ retaining the structural integrity required for security and performance analysi
 
 import ast
 import re
-import hashlib
 from typing import Dict, Tuple
 
 class PrivacyGuard:
@@ -94,31 +93,29 @@ class PrivacyGuard:
         def strip_bodies(text):
             result = []
             stack = 0
-            current_line = []
-            
-            # This logic identifies method/class signatures and preserves them 
+
+            # This logic identifies method/class signatures and preserves them
             # while purging the actual implementation blocks.
             lines = text.split('\n')
             for line in lines:
-                trimmed = line.strip()
-                
                 # Check for start of a block
                 if '{' in line:
                     if stack == 0:
                         # Capture the signature (part before the {)
                         result.append(line.split('{')[0] + '{ /* TRON REDACTED IP */ }')
                     stack += line.count('{')
-                
+
                 # Check for end of a block
                 if '}' in line:
                     stack -= line.count('}')
-                    if stack < 0: stack = 0
+                    if stack < 0:
+                        stack = 0
                     continue
-                
+
                 # If we are not inside a block, preserve the line (headers, imports, namespaces)
                 if stack == 0:
                     result.append(line)
-            
+
             return '\n'.join(result)
 
         return strip_bodies(code)

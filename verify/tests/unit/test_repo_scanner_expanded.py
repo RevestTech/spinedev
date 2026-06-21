@@ -14,15 +14,14 @@ Tests:
 from __future__ import annotations
 
 import asyncio
-import os
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from tron.services.repo_scanner import (
     RepoScanner, RepoScanError, SKIP_DIRS, SKIP_EXTENSIONS,
-    SKIP_FILENAMES, ANALYZABLE_EXTENSIONS, ANALYZABLE_FILENAMES,
+    ANALYZABLE_EXTENSIONS, ANALYZABLE_FILENAMES,
     detect_languages, _looks_binary,
     DEFAULT_MAX_FILE_SIZE, DEFAULT_MAX_TOTAL_SIZE, DEFAULT_MAX_FILES,
 )

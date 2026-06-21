@@ -13,15 +13,13 @@ from __future__ import annotations
 
 import json
 import uuid
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 
 from tron.infra.redis.pubsub import (
     AuditEvent,
-    publish_audit_event,
     publish_progress,
-    publish_finding,
     publish_audit_completed,
     publish_audit_failed,
 )

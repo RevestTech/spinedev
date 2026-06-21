@@ -123,7 +123,7 @@ async def monitor_audit(audit_id: str, api_key: str):
                         print(f"  🟠 High:     {Colors.YELLOW}{high}{Colors.NC}")
                         print(f"  🟡 Medium:   {medium}")
                         print(f"  🟢 Low:      {low}")
-                        print(f"  ═══════════")
+                        print("  ═══════════")
                         print(f"  📊 Total:    {Colors.GREEN}{total}{Colors.NC}")
                         print()
                         break

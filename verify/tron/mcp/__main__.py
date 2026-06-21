@@ -138,6 +138,58 @@ def tron_start_fix(finding_id: str) -> str:
 
 
 @mcp.tool()
+def tron_list_actionable_findings(
+    audit_id: str,
+    severity: str = "high,critical",
+    limit: int = 20,
+) -> str:
+    """List the highest-priority findings from an audit, ready to feed
+    back into a coding agent for in-IDE fixing.
+
+    Designed for the agent-handoff workflow: an in-IDE Claude/Cursor
+    session gets the audit_id from the post-scan handoff file, calls
+    this tool, and walks the returned findings one at a time — calling
+    ``tron_start_fix(finding_id)`` for each to spawn the FixWorkflow.
+
+    Filters out anything that's already dismissed or has a fix in
+    progress so the IDE agent doesn't re-fight resolved issues.
+
+    Args:
+        audit_id: UUID of the audit run.
+        severity: Comma-separated severities to include
+                  (default ``"high,critical"``). Use ``"all"`` for everything.
+        limit: Max findings to return (default 20, capped at 200 server-side
+               by the underlying findings API).
+    """
+    UUID(audit_id)
+    sev_list = [s.strip() for s in severity.split(",") if s.strip()]
+    if sev_list == ["all"]:
+        sev_param = None
+    else:
+        sev_param = ",".join(sev_list)
+
+    params = {"page": 1, "page_size": min(max(limit, 1), 200), "status": "open"}
+    if sev_param:
+        params["severity"] = sev_param
+
+    return _api_json(
+        "GET", f"/audits/{audit_id}/findings", params=params,
+    )
+
+
+@mcp.tool()
+def tron_get_audit_cost(audit_id: str) -> str:
+    """Per-audit LLM cost breakdown (provider × model × agent).
+
+    Surfaces what each scan cost the operator. Useful when an IDE agent
+    is iterating fixes and wants to budget further calls — or when a
+    customer wants the spend number for their internal chargeback.
+    """
+    UUID(audit_id)
+    return _api_json("GET", f"/audits/{audit_id}/cost")
+
+
+@mcp.tool()
 def tron_standards_defaults() -> str:
     """Return built-in default quality gates JSON."""
     return _api_json("GET", "/standards/defaults")

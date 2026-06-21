@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import List, Optional
+from typing import List
 
 from tron.parsers.base import (
     BaseParser,

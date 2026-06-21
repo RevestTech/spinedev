@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -133,6 +133,15 @@ async def export_user_data(
             "title": f.title,
             "status": f.status,
             "created_at": f.created_at.isoformat(),
+            "confidence": float(f.confidence) if getattr(f, "confidence", None) is not None else None,
+            "deterministic_tool_confirmed": bool(
+                getattr(f, "deterministic_tool_confirmed", False)
+            ),
+            "layer3_execution": getattr(f, "layer3_execution", None),
+            "confirming_tools": getattr(f, "confirming_tools_json", None),
+            "path_role": getattr(f, "path_role", None),
+            "follow_up_recommended": bool(getattr(f, "follow_up_recommended", False)),
+            "evidence_source": getattr(f, "evidence_source", None),
         }
         for f in findings
     ]

@@ -13,9 +13,7 @@ Tests cover:
 from __future__ import annotations
 
 import uuid
-from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 
 from tron.workflows.activities import (
     FindingInput,
@@ -337,7 +335,7 @@ cursor.execute(sql, (user_id,))
         # Simulate stripping markdown
         if fix_code.startswith("```"):
             lines = fix_code.split("\n")
-            lines = [l for l in lines if not l.strip().startswith("```")]
+            lines = [ln for ln in lines if not ln.strip().startswith("```")]
             cleaned = "\n".join(lines).strip()
         else:
             cleaned = fix_code

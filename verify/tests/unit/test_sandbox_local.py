@@ -20,8 +20,6 @@ Tests:
 from __future__ import annotations
 
 import asyncio
-import json
-import shutil
 import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -29,7 +27,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from tron.infra.sandbox.client import ExecutionResult, VerificationResult
 from tron.infra.sandbox.http import HTTPSandbox
 from tron.infra.sandbox.local import LocalSandbox
 

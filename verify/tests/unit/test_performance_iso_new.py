@@ -12,17 +12,14 @@ Covers:
 from __future__ import annotations
 
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from tron.agents.base import ISOConfig, ISOSpecialization, LLMProvider, ToolResult
 from tron.agents.performance_iso import PerformanceISO, _is_code_file
 from tron.schemas.verification import (
     Blueprint,
     BlueprintScope,
-    VulnerabilityType,
-    SeverityLevel,
     VerificationMethod,
 )
 

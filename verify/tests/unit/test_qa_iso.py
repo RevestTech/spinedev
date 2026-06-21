@@ -13,16 +13,15 @@ Tests:
 from __future__ import annotations
 
 import json
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
 from tron.agents.qa_iso import QAISO, QA_VULN_TYPE_MAP
-from tron.agents.base import ISOConfig, ISOSpecialization, LLMProvider, ToolResult
+from tron.agents.base import ISOConfig, ISOSpecialization, LLMProvider
 from tron.schemas.verification import (
     Blueprint,
     BlueprintScope,
-    FindingOutput,
     SeverityLevel,
     VerificationMethod,
     VulnerabilityType,
@@ -179,39 +178,39 @@ class TestIsConfigFile:
 
 class TestDeterministicTools:
 
-    def test_counts_test_files(self, qa_iso, sample_test_files):
+    def test_counts_test_files(self, qa_iso, qa_blueprint, sample_test_files):
         """Pre-pass counts test files correctly."""
-        metadata = qa_iso._run_deterministic_tools(sample_test_files)
+        metadata = qa_iso._run_deterministic_tools(qa_blueprint, sample_test_files, {})
 
         assert metadata["test_file_count"] == 2  # test_auth.py, test_api.py
 
-    def test_counts_test_functions(self, qa_iso, sample_test_files):
+    def test_counts_test_functions(self, qa_iso, qa_blueprint, sample_test_files):
         """Pre-pass counts test functions via regex."""
-        metadata = qa_iso._run_deterministic_tools(sample_test_files)
+        metadata = qa_iso._run_deterministic_tools(qa_blueprint, sample_test_files, {})
 
         # test_auth.py: test_valid_login, test_empty_password, test_timeout_handling = 3
         # test_api.py: test_get_users, test_create_user = 2
         assert metadata["test_function_count"] == 5
 
-    def test_counts_skipped_tests(self, qa_iso, sample_test_files):
+    def test_counts_skipped_tests(self, qa_iso, qa_blueprint, sample_test_files):
         """Pre-pass detects @pytest.mark.skip decorators."""
-        metadata = qa_iso._run_deterministic_tools(sample_test_files)
+        metadata = qa_iso._run_deterministic_tools(qa_blueprint, sample_test_files, {})
 
         assert metadata["skipped_test_count"] == 1
 
-    def test_detects_pytest_config(self, qa_iso):
+    def test_detects_pytest_config(self, qa_iso, qa_blueprint):
         """Pre-pass notes presence of pytest config files."""
         files = {
             "pyproject.toml": "[tool.pytest.ini_options]\ntestpaths = ['tests']",
             "tests/test_x.py": "def test_x(): pass",
         }
-        metadata = qa_iso._run_deterministic_tools(files)
+        metadata = qa_iso._run_deterministic_tools(qa_blueprint, files, {})
         assert "pyproject.toml" in metadata["pytest_config"]
 
-    def test_no_test_files(self, qa_iso):
+    def test_no_test_files(self, qa_iso, qa_blueprint):
         """Pre-pass handles no test files gracefully."""
         files = {"app.py": "x = 1", "utils.py": "y = 2"}
-        metadata = qa_iso._run_deterministic_tools(files)
+        metadata = qa_iso._run_deterministic_tools(qa_blueprint, files, {})
 
         assert metadata["test_file_count"] == 0
         assert metadata["test_function_count"] == 0
@@ -362,7 +361,7 @@ class TestBuildPrompt:
             p: c for p, c in sample_test_files.items()
             if qa_iso._is_test_file(p)
         }
-        metadata = qa_iso._run_deterministic_tools(sample_test_files)
+        metadata = qa_iso._run_deterministic_tools(qa_blueprint, sample_test_files, {})
 
         prompt = qa_iso._build_prompt(
             qa_blueprint, test_files, sample_test_files, metadata, {}
@@ -378,7 +377,7 @@ class TestBuildPrompt:
             p: c for p, c in sample_test_files.items()
             if qa_iso._is_test_file(p)
         }
-        metadata = qa_iso._run_deterministic_tools(sample_test_files)
+        metadata = qa_iso._run_deterministic_tools(qa_blueprint, sample_test_files, {})
 
         prompt = qa_iso._build_prompt(
             qa_blueprint, test_files, sample_test_files, metadata, {}
@@ -394,7 +393,7 @@ class TestBuildPrompt:
             p: c for p, c in sample_test_files.items()
             if qa_iso._is_test_file(p)
         }
-        metadata = qa_iso._run_deterministic_tools(sample_test_files)
+        metadata = qa_iso._run_deterministic_tools(qa_blueprint, sample_test_files, {})
 
         prompt = qa_iso._build_prompt(
             qa_blueprint, test_files, sample_test_files, metadata, {}
@@ -462,3 +461,202 @@ class TestExecute:
         assert len(result) == 1
         assert result[0].severity == SeverityLevel.HIGH
         assert result[0].confidence <= 0.7  # Capped
+
+
+# ── _run_ruff Tests ──────────────────────────────────────────────────
+
+
+class TestRunRuff:
+    """QAISO now actually runs Ruff (closes the README claim that was
+    previously regex-only). Ruff exits non-zero when violations exist;
+    the runner must treat that as data, not error."""
+
+    async def test_default_tools_includes_ruff(self):
+        # Canary: regression-guard the README claim. If someone reverts
+        # ``DEFAULT_TOOLS`` to ``()``, this test fires.
+        assert "ruff" in QAISO.DEFAULT_TOOLS
+
+    async def test_no_python_files_is_silent_noop(self, qa_iso):
+        # Scan set is all YAML / Markdown — Ruff never invoked.
+        files = {"docker-compose.yml": "version: '3'", "README.md": "# hi"}
+        result = await qa_iso._execute_tool("ruff", "/workspace", files)
+        assert result.tool_name == "ruff"
+        assert result.exit_code == 0
+        assert result.findings_count == 0
+        assert "no Python files in scope" in result.stderr
+
+    async def test_parses_ruff_json_findings(self, qa_iso):
+        from unittest.mock import patch
+        from tron.infra.sandbox.client import ExecutionResult
+
+        files = {"src/app.py": "import os\n"}  # F401 trigger
+        ruff_output = json.dumps([
+            {
+                "code": "F401",
+                "message": "`os` imported but unused",
+                "filename": "src/app.py",
+                "location": {"row": 1, "column": 1},
+                "fix": {"applicability": "safe"},
+            },
+            {
+                "code": "E711",
+                "message": "Comparison to None should be 'cond is None'",
+                "filename": "src/app.py",
+                "location": {"row": 5, "column": 9},
+                "fix": None,
+            },
+        ])
+
+        mock_sandbox = AsyncMock()
+        mock_sandbox.run_bash = AsyncMock(return_value=ExecutionResult(
+            stdout=ruff_output, stderr="", exit_code=1,  # ruff exits 1 when issues found
+            duration_seconds=0.05, timed_out=False,
+        ))
+
+        with patch.object(qa_iso, "_get_sandbox", new_callable=AsyncMock,
+                          return_value=mock_sandbox):
+            result = await qa_iso._execute_tool("ruff", "/workspace", files)
+
+        assert result.tool_name == "ruff"
+        assert result.findings_count == 2
+        assert result.raw_findings[0]["rule_id"] == "F401"
+        assert result.raw_findings[0]["fixable"] is True
+        assert result.raw_findings[1]["rule_id"] == "E711"
+        assert result.raw_findings[1]["fixable"] is False
+
+    async def test_clean_codebase_returns_empty(self, qa_iso):
+        from unittest.mock import patch
+        from tron.infra.sandbox.client import ExecutionResult
+
+        files = {"src/clean.py": "x = 1\n"}
+        mock_sandbox = AsyncMock()
+        mock_sandbox.run_bash = AsyncMock(return_value=ExecutionResult(
+            stdout="[]", stderr="", exit_code=0,
+            duration_seconds=0.02, timed_out=False,
+        ))
+
+        with patch.object(qa_iso, "_get_sandbox", new_callable=AsyncMock,
+                          return_value=mock_sandbox):
+            result = await qa_iso._execute_tool("ruff", "/workspace", files)
+
+        assert result.findings_count == 0
+        assert result.exit_code == 0
+
+    async def test_unparseable_output_does_not_raise(self, qa_iso):
+        # Sandbox image without ruff installed — runner must keep audit going.
+        from unittest.mock import patch
+        from tron.infra.sandbox.client import ExecutionResult
+
+        files = {"src/app.py": "x = 1\n"}
+        mock_sandbox = AsyncMock()
+        mock_sandbox.run_bash = AsyncMock(return_value=ExecutionResult(
+            stdout="bash: ruff: command not found",
+            stderr="exit status 127", exit_code=127,
+            duration_seconds=0.0, timed_out=False,
+        ))
+
+        with patch.object(qa_iso, "_get_sandbox", new_callable=AsyncMock,
+                          return_value=mock_sandbox):
+            result = await qa_iso._execute_tool("ruff", "/workspace", files)
+
+        assert result.tool_name == "ruff"
+        assert result.findings_count == 0
+        # No raise — Ruff is augmentative.
+
+    async def test_unknown_tool_falls_back_to_super(self, qa_iso):
+        # Belt-and-braces: if someone adds a new tool to DEFAULT_TOOLS or
+        # a Blueprint's required tools, the QAISO override must defer to
+        # BaseISO (which raises NotImplementedError) rather than silently
+        # treating unknown tools as ruff.
+        with pytest.raises(NotImplementedError):
+            await qa_iso._execute_tool("complexity", "/workspace", {"x.py": "x = 1"})
+
+
+# ── _run_mypy Tests (opt-in via tools_required) ──────────────────────
+
+
+class TestRunMypy:
+    """mypy is opt-in (not in DEFAULT_TOOLS) but QAISO must dispatch it
+    correctly when a Blueprint includes it in ``tools_required``."""
+
+    async def test_mypy_not_in_default_tools(self):
+        # Canary: mypy must STAY opt-in. Adding it to DEFAULT_TOOLS would
+        # make every QA scan slow and noisy by default.
+        assert "mypy" not in QAISO.DEFAULT_TOOLS
+
+    async def test_no_python_files_is_silent_noop(self, qa_iso):
+        files = {"package.json": "{}", "Dockerfile": "FROM python"}
+        result = await qa_iso._execute_tool("mypy", "/workspace", files)
+        assert result.tool_name == "mypy"
+        assert result.exit_code == 0
+        assert result.findings_count == 0
+
+    async def test_parses_mypy_line_format(self, qa_iso):
+        from unittest.mock import patch
+        from tron.infra.sandbox.client import ExecutionResult
+
+        files = {"src/app.py": "def f() -> int: return 'x'\n"}
+        # mypy stdout shape for a real run with --show-error-codes + --show-column-numbers
+        mypy_output = (
+            "src/app.py:1:24: error: Incompatible return value type "
+            '(got "str", expected "int")  [return-value]\n'
+            "src/app.py:5:1: warning: Unreachable code  [unreachable]\n"
+            "src/app.py: note: See https://mypy.rtfd.io/some/url\n"
+        )
+
+        mock_sandbox = AsyncMock()
+        mock_sandbox.run_bash = AsyncMock(return_value=ExecutionResult(
+            stdout=mypy_output, stderr="", exit_code=1,  # 1 = type errors
+            duration_seconds=2.5, timed_out=False,
+        ))
+
+        with patch.object(qa_iso, "_get_sandbox", new_callable=AsyncMock,
+                          return_value=mock_sandbox):
+            result = await qa_iso._execute_tool("mypy", "/workspace", files)
+
+        assert result.tool_name == "mypy"
+        # 2 findings: error + warning. Note line skipped.
+        assert result.findings_count == 2
+        assert result.raw_findings[0]["rule_id"] == "return-value"
+        assert result.raw_findings[0]["line"] == 1
+        assert result.raw_findings[0]["severity"] == "error"
+        assert result.raw_findings[1]["rule_id"] == "unreachable"
+        assert result.raw_findings[1]["severity"] == "warning"
+
+    async def test_clean_codebase_returns_empty(self, qa_iso):
+        from unittest.mock import patch
+        from tron.infra.sandbox.client import ExecutionResult
+
+        files = {"src/clean.py": "x: int = 1\n"}
+        mock_sandbox = AsyncMock()
+        mock_sandbox.run_bash = AsyncMock(return_value=ExecutionResult(
+            stdout="Success: no issues found in 1 source file\n",
+            stderr="", exit_code=0,
+            duration_seconds=1.2, timed_out=False,
+        ))
+
+        with patch.object(qa_iso, "_get_sandbox", new_callable=AsyncMock,
+                          return_value=mock_sandbox):
+            result = await qa_iso._execute_tool("mypy", "/workspace", files)
+
+        assert result.findings_count == 0
+        assert result.exit_code == 0
+
+    async def test_unparseable_output_does_not_raise(self, qa_iso):
+        from unittest.mock import patch
+        from tron.infra.sandbox.client import ExecutionResult
+
+        files = {"src/app.py": "x = 1\n"}
+        mock_sandbox = AsyncMock()
+        mock_sandbox.run_bash = AsyncMock(return_value=ExecutionResult(
+            stdout="bash: mypy: command not found",
+            stderr="exit status 127", exit_code=127,
+            duration_seconds=0.0, timed_out=False,
+        ))
+
+        with patch.object(qa_iso, "_get_sandbox", new_callable=AsyncMock,
+                          return_value=mock_sandbox):
+            result = await qa_iso._execute_tool("mypy", "/workspace", files)
+
+        assert result.tool_name == "mypy"
+        assert result.findings_count == 0

@@ -179,7 +179,11 @@ class TestRunHappyPath:
              patch("tron.services.audit_executor.publish_audit_event", new_callable=AsyncMock), \
              patch("tron.services.audit_executor.publish_finding", new_callable=AsyncMock), \
              patch("tron.services.audit_executor.publish_audit_completed", new_callable=AsyncMock), \
-             patch("tron.services.audit_executor.publish_progress", new_callable=AsyncMock):
+             patch("tron.services.audit_executor.publish_progress", new_callable=AsyncMock), \
+             patch(
+                 "tron.services.audit_executor.load_suppressed_fingerprints_for_project",
+                 new_callable=AsyncMock, return_value=set(),
+             ):
 
             # Mock the manager run_audit
             mock_result = MagicMock()
@@ -287,7 +291,7 @@ class TestPersistFindings:
 
     async def test_persist_findings_with_findings(self, fake_secrets, mock_session_factory):
         """Persist multiple findings to database."""
-        from tron.schemas.verification import FindingOutput, SeverityLevel, VulnerabilityType
+        from tron.schemas.verification import SeverityLevel, VulnerabilityType
 
         executor = AuditExecutor(mock_session_factory, fake_secrets)
 
@@ -350,7 +354,7 @@ class TestFinalizeAudit:
 
     async def test_finalize_audit_updates_counts(self, fake_secrets, mock_session_factory):
         """Update audit run with final severity counts."""
-        from tron.schemas.verification import FindingOutput, SeverityLevel, VulnerabilityType
+        from tron.schemas.verification import SeverityLevel
 
         executor = AuditExecutor(mock_session_factory, fake_secrets)
 
@@ -493,7 +497,7 @@ class TestAgentEventPublishing:
 
     async def test_run_publishes_findings(self, fake_secrets, mock_session_factory):
         """Individual finding events are published."""
-        from tron.schemas.verification import FindingOutput, SeverityLevel, VulnerabilityType
+        from tron.schemas.verification import SeverityLevel, VulnerabilityType
 
         executor = AuditExecutor(mock_session_factory, fake_secrets)
 
@@ -501,6 +505,7 @@ class TestAgentEventPublishing:
         mock_project.name = "TestProject"
         mock_project.repo_url = None
         mock_project.default_branch = "main"
+        mock_project.audit_test_path_globs_json = []
 
         finding = MagicMock()
         finding.severity = SeverityLevel.HIGH
@@ -516,7 +521,28 @@ class TestAgentEventPublishing:
              patch("tron.services.audit_executor.publish_audit_event", new_callable=AsyncMock), \
              patch("tron.services.audit_executor.publish_finding", new_callable=AsyncMock) as mock_pub_finding, \
              patch("tron.services.audit_executor.publish_audit_completed", new_callable=AsyncMock), \
-             patch("tron.services.audit_executor.publish_progress", new_callable=AsyncMock):
+             patch("tron.services.audit_executor.publish_progress", new_callable=AsyncMock), \
+             patch(
+                 "tron.services.audit_executor.load_suppressed_fingerprints_for_project",
+                 new_callable=AsyncMock, return_value=set(),
+             ), \
+             patch(
+                 "tron.services.audit_executor.apply_layer3_to_findings",
+                 new_callable=AsyncMock, side_effect=lambda findings, logger=None: findings,
+             ), \
+             patch(
+                 "tron.services.audit_executor.apply_deep_verify_retry_pass_to_outputs",
+                 new_callable=AsyncMock,
+                 side_effect=lambda findings, logger=None, top_n=0: findings,
+             ), \
+             patch(
+                 "tron.services.audit_executor.apply_path_role_to_outputs",
+                 side_effect=lambda findings, tlist: findings,
+             ), \
+             patch(
+                 "tron.services.audit_executor.apply_follow_up_flags_to_outputs",
+                 side_effect=lambda findings, top_n: findings,
+             ):
 
             mock_result = MagicMock()
             mock_result.findings = [finding]
@@ -549,7 +575,11 @@ class TestAgentEventPublishing:
              patch("tron.services.audit_executor.publish_audit_event", new_callable=AsyncMock), \
              patch("tron.services.audit_executor.publish_finding", new_callable=AsyncMock), \
              patch("tron.services.audit_executor.publish_audit_completed", new_callable=AsyncMock) as mock_pub_completed, \
-             patch("tron.services.audit_executor.publish_progress", new_callable=AsyncMock):
+             patch("tron.services.audit_executor.publish_progress", new_callable=AsyncMock), \
+             patch(
+                 "tron.services.audit_executor.load_suppressed_fingerprints_for_project",
+                 new_callable=AsyncMock, return_value=set(),
+             ):
 
             mock_result = MagicMock()
             mock_result.findings = []
@@ -652,7 +682,36 @@ class TestSeverityCounting:
              patch("tron.services.audit_executor.publish_audit_event", new_callable=AsyncMock), \
              patch("tron.services.audit_executor.publish_finding", new_callable=AsyncMock), \
              patch("tron.services.audit_executor.publish_audit_completed", new_callable=AsyncMock) as mock_pub_completed, \
-             patch("tron.services.audit_executor.publish_progress", new_callable=AsyncMock):
+             patch("tron.services.audit_executor.publish_progress", new_callable=AsyncMock), \
+             patch(
+                 "tron.services.audit_executor.load_suppressed_fingerprints_for_project",
+                 new_callable=AsyncMock, return_value=set(),
+             ), \
+             patch(
+                 "tron.services.audit_executor.apply_layer3_to_findings",
+                 new_callable=AsyncMock, side_effect=lambda findings, logger=None: findings,
+             ), \
+             patch(
+                 "tron.services.audit_executor.apply_path_role_to_outputs",
+                 side_effect=lambda findings, tlist: findings,
+             ), \
+             patch(
+                 "tron.services.audit_executor.filter_findings_by_suppression",
+                 side_effect=lambda findings, suppressed: findings,
+             ), \
+             patch(
+                 "tron.services.audit_executor.apply_deep_verify_retry_pass_to_outputs",
+                 new_callable=AsyncMock,
+                 side_effect=lambda findings, logger=None, top_n=0: findings,
+             ), \
+             patch(
+                 "tron.services.audit_executor.apply_follow_up_flags_to_outputs",
+                 side_effect=lambda findings, top_n: findings,
+             ), \
+             patch(
+                 "tron.services.agent_handoff.maybe_write_agent_handoff_after_audit",
+                 new_callable=AsyncMock,
+             ):
 
             mock_result = MagicMock()
             mock_result.findings = [critical_finding, high_finding, medium_finding]

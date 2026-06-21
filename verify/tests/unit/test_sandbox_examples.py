@@ -15,19 +15,10 @@ Tests:
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
-from tron.infra.sandbox import SandboxClient
-from tron.infra.sandbox.examples import (
-    example_execute,
-    example_health_check,
-    example_integration_with_verify_fix_activity,
-    example_verify_command_injection_fix,
-    example_verify_secrets_fix,
-    example_verify_sql_injection_fix,
-)
 from tron.infra.sandbox.local import LocalSandbox
 
 

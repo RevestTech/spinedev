@@ -11,7 +11,6 @@ import pytest
 
 from tron.parsers import (
     get_parser,
-    BaseParser,
     ClassInfo,
     FunctionInfo,
     ImportInfo,

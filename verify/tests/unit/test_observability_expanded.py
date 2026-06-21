@@ -8,17 +8,17 @@ and OpenTelemetry trace context propagation.
 import pytest
 import json
 import logging
-from datetime import datetime, timezone
 from io import StringIO
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
 from uuid import uuid4
 
-from prometheus_client import REGISTRY, CollectorRegistry
 
 try:
-    from opentelemetry import trace, context
-    from opentelemetry.sdk.trace import TracerProvider
-    from opentelemetry.sdk.trace.export import SimpleSpanProcessor, ConsoleSpanExporter
+    # Availability probe — these imports are intentionally unused; their presence
+    # gates whether the OTEL-dependent tests below are skipped.
+    from opentelemetry import trace, context  # noqa: F401
+    from opentelemetry.sdk.trace import TracerProvider  # noqa: F401
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor, ConsoleSpanExporter  # noqa: F401
     HAS_OTEL = True
 except ImportError:
     HAS_OTEL = False
@@ -438,7 +438,7 @@ class TestMetricsEndpoint:
 
     def test_metrics_endpoint_prometheus_format(self):
         """Metrics endpoint returns Prometheus format"""
-        from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+        from prometheus_client import generate_latest
 
         metrics_output = generate_latest()
 

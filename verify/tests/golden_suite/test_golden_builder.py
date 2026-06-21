@@ -9,7 +9,6 @@ lead to security vulnerabilities in containerized environments.
 """
 
 import pytest
-import json
 from unittest.mock import Mock
 from pathlib import Path
 
@@ -17,7 +16,6 @@ from tron.schemas.verification import (
     Blueprint,
     BlueprintScope,
     VulnerabilityType,
-    SeverityLevel,
 )
 
 
@@ -127,13 +125,13 @@ services:
     image: myapp:latest
     environment:
       - DB_PASSWORD=super_secret_123
-      - API_KEY=fake_stripe_compose_fixture
+      - API_KEY=sk_live_production_key
       - ADMIN_USER=admin
 """
         
         # Secrets in plaintext environment
         assert "DB_PASSWORD=super_secret_123" in vulnerable_compose
-        assert "API_KEY=fake_stripe_compose_fixture" in vulnerable_compose
+        assert "API_KEY=sk_live" in vulnerable_compose
 
 
 # ============================================================================
@@ -428,7 +426,7 @@ WORKDIR /app
 COPY . /app
 
 ENV DB_PASSWORD=secret123
-ENV API_KEY=fake_stripe_dockerfile_fixture
+ENV API_KEY=sk_live_key
 
 RUN apt-get update && apt-get install -y python3
 RUN pip install flask==0.12.0

@@ -112,6 +112,7 @@ class TestAuditSummarySchema:
             findings_high=3, findings_medium=4, findings_low=2,
             started_at=now, completed_at=None, error_message=None,
             created_at=now,
+            workflow_id="audit-test", workflow_run_id="run-test",
         )
         assert s.status == "running"
         assert s.progress == 50
@@ -123,6 +124,7 @@ class TestAuditSummarySchema:
             findings_high=2, findings_medium=2, findings_low=1,
             started_at=now, completed_at=now, error_message=None,
             created_at=now,
+            workflow_id="audit-test", workflow_run_id="run-test",
         )
         assert s.completed_at is not None
 
@@ -133,6 +135,7 @@ class TestAuditSummarySchema:
             findings_high=0, findings_medium=0, findings_low=0,
             started_at=now, completed_at=now,
             error_message="LLM timeout", created_at=now,
+            workflow_id="audit-test", workflow_run_id="run-test",
         )
         assert s.error_message == "LLM timeout"
 
@@ -143,6 +146,7 @@ class TestAuditSummarySchema:
             findings_high=0, findings_medium=0, findings_low=0,
             started_at=now, completed_at=now, error_message=None,
             created_at=now,
+            workflow_id="audit-test", workflow_run_id="run-test",
         )
         total = s.findings_critical + s.findings_high + s.findings_medium + s.findings_low
         assert total == 0
@@ -157,6 +161,7 @@ class TestAuditSummarySchema:
             findings_high=0, findings_medium=0, findings_low=0,
             started_at=now, completed_at=None, error_message=None,
             created_at=now,
+            workflow_id="audit-test", workflow_run_id="run-test",
         )
         data = s.model_dump()
         assert data["status"] == "running"
@@ -187,6 +192,7 @@ class TestAuditListResponseSchema:
             findings_high=1, findings_medium=1, findings_low=0,
             started_at=now, completed_at=now, error_message=None,
             created_at=now,
+            workflow_id="audit-test", workflow_run_id="run-test",
         )
         resp = AuditListResponse(items=[item], total=1, page=1, page_size=20)
         assert len(resp.items) == 1
@@ -207,7 +213,7 @@ class TestFindingResponseSchema:
             severity="critical", category="security",
             title="SQL Injection", description="User input in query",
             suggested_fix="Use parameterized queries", status="open",
-            code_snippet="query = ...", created_at=now,
+            code_snippet="query = ...", created_at=now, updated_at=now,
         )
         assert f.severity == "critical"
         assert f.file_path == "app.py"
@@ -220,7 +226,7 @@ class TestFindingResponseSchema:
             line_start=None, line_end=None, severity="low",
             category=None, title="Issue", description="Desc",
             suggested_fix=None, status="open", code_snippet=None,
-            created_at=now,
+            created_at=now, updated_at=now,
         )
         assert f.line_start is None
         assert f.suggested_fix is None

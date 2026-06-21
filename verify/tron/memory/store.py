@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from sqlalchemy import and_, func, or_, select, text
+from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from tron.infra.embeddings.service import EmbeddingsService
@@ -242,9 +242,10 @@ class MemoryStore:
             except (ValueError, TypeError):
                 pass
 
-        # pgvector cosine distance: <=> operator
-        # Distance is (1 - similarity), so we filter: distance <= (1 - min_similarity)
-        distance_threshold = 1 - min_similarity
+        # pgvector cosine distance is (1 - similarity). We order by distance
+        # and apply ``similarity >= min_similarity`` after fetch (see below) so
+        # the index stays useful and post-filtering is cheap at the
+        # small ``limit``s this method is called with.
 
         stmt = (
             select(

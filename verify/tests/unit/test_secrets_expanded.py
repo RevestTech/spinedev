@@ -16,7 +16,6 @@ from __future__ import annotations
 import os
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
-from dataclasses import dataclass
 
 import pytest
 import httpx

@@ -116,17 +116,32 @@ git config user.name "Tron Scanner" > /dev/null 2>&1
 git add . > /dev/null 2>&1
 git commit -m "Tron local scan - $(date)" > /dev/null 2>&1
 
+DEFAULT_BRANCH=$(git branch --show-current)
+if [ -z "$DEFAULT_BRANCH" ]; then
+    DEFAULT_BRANCH="main"
+fi
+
 echo -e "${GREEN}✓ Temporary repo created: $TEMP_REPO${NC}"
+echo -e "${GREEN}  Default branch: ${DEFAULT_BRANCH}${NC}"
 echo ""
 
 # Create bare repo (simulate remote)
 echo -e "${BLUE}[4/7]${NC} Setting up scan repository..."
 BARE_REPO="$SCAN_DIR/tron-scan-bare-$(date +%s).git"
-git clone --bare "$TEMP_REPO" "$BARE_REPO" > /dev/null 2>&1
+if ! git clone --bare "$TEMP_REPO" "$BARE_REPO" > /dev/null 2>&1; then
+    echo -e "${RED}❌ Failed to create bare repository at $BARE_REPO${NC}"
+    rm -rf "$TEMP_REPO"
+    exit 1
+fi
 
-# Use file:// URL for the bare repo
+# Working tree is only needed to build the bare mirror; remove it to save space.
+rm -rf "$TEMP_REPO"
+TEMP_REPO=""
+
+# Use file:// URL for the bare repo (must stay on disk for re-audits / UI retries)
 REPO_URL="file://$BARE_REPO"
 echo -e "${GREEN}✓ Scan repository ready${NC}"
+echo -e "${YELLOW}  Bare repo (keep this path for retries): $BARE_REPO${NC}"
 echo ""
 
 # Create project in Tron
@@ -138,7 +153,7 @@ PROJECT_RESPONSE=$(curl -s -X POST http://localhost:13000/api/projects \
     \"name\": \"$PROJECT_NAME\",
     \"description\": \"Local scan from: $SOURCE_DIR\",
     \"repo_url\": \"$REPO_URL\",
-    \"default_branch\": \"master\"
+    \"default_branch\": \"$DEFAULT_BRANCH\"
   }")
 
 PROJECT_ID=$(echo $PROJECT_RESPONSE | jq -r '.id')
@@ -146,7 +161,7 @@ PROJECT_ID=$(echo $PROJECT_RESPONSE | jq -r '.id')
 if [ -z "$PROJECT_ID" ] || [ "$PROJECT_ID" == "null" ]; then
     echo -e "${RED}❌ Failed to create project${NC}"
     echo $PROJECT_RESPONSE | jq .
-    rm -rf "$TEMP_REPO" "$BARE_REPO"
+    rm -rf "$BARE_REPO"
     exit 1
 fi
 
@@ -160,7 +175,7 @@ AUDIT_RESPONSE=$(curl -s -X POST http://localhost:13000/api/audits \
   -H "Content-Type: application/json" \
   -d "{
     \"project_id\": \"$PROJECT_ID\",
-    \"branch\": \"master\",
+    \"branch\": \"$DEFAULT_BRANCH\",
     \"trigger_type\": \"manual\"
   }")
 
@@ -169,7 +184,7 @@ AUDIT_ID=$(echo $AUDIT_RESPONSE | jq -r '.id')
 if [ -z "$AUDIT_ID" ] || [ "$AUDIT_ID" == "null" ]; then
     echo -e "${RED}❌ Failed to start audit${NC}"
     echo $AUDIT_RESPONSE | jq .
-    rm -rf "$TEMP_REPO" "$BARE_REPO"
+    rm -rf "$BARE_REPO"
     exit 1
 fi
 
@@ -209,7 +224,7 @@ while true; do
     elif [[ "$CURRENT_STATUS" == "failed" ]]; then
         ERROR=$(echo $STATUS | jq -r '.error_message')
         echo -e "${RED}❌ Audit failed: $ERROR${NC}"
-        rm -rf "$TEMP_REPO" "$BARE_REPO"
+        echo -e "${YELLOW}Bare repo left at $BARE_REPO (fix and retry, or delete manually).${NC}"
         exit 1
     fi
     
@@ -271,8 +286,9 @@ echo -e "  🌐 View in Temporal UI:"
 echo -e "     open http://localhost:13008"
 echo ""
 
-# Cleanup
-echo -e "${BLUE}Cleaning up temporary files...${NC}"
-rm -rf "$TEMP_REPO" "$BARE_REPO"
-echo -e "${GREEN}✓ Cleanup complete${NC}"
+# Keep bare mirror: project's repo_url points here; deleting it breaks UI re-runs.
+echo -e "${BLUE}Local git mirror${NC}"
+echo -e "  ${GREEN}$BARE_REPO${NC}"
+echo -e "  ${YELLOW}Do not delete this while the Tron project still uses file:// — use Settings to change repo or remove the project first.${NC}"
+echo -e "  To free disk: ${BLUE}rm -rf \"$BARE_REPO\"${NC} (then update or recreate the project)"
 echo ""

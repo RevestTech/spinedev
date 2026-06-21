@@ -1,11 +1,9 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
-  Key, Check, KeyRound, Trash2, Sliders, Server, Shield, BookOpen,
+  Key, KeyRound, Trash2, Sliders, Server, Shield, BookOpen,
 } from 'lucide-react'
 import Card, { CardHeader, CardBody } from '../components/Card'
 import {
-  getApiKey,
-  setApiKey,
   listApiKeys,
   createApiKey,
   revokeApiKey,
@@ -41,8 +39,6 @@ const SCOPE_OPTIONS = [
 
 export default function Settings() {
   const [tab, setTab] = useState<Tab>('general')
-  const [key, setKey] = useState(getApiKey())
-  const [saved, setSaved] = useState(false)
   const [keys, setKeys] = useState<ApiKeySummary[]>([])
   const [keysErr, setKeysErr] = useState<string | null>(null)
   const [newLabel, setNewLabel] = useState('')
@@ -65,15 +61,14 @@ export default function Settings() {
 
   const refreshKeys = useCallback(async () => {
     setKeysErr(null)
-    if (!getApiKey().trim()) {
-      setKeys([])
-      return
-    }
+    // Auth rides the admin session cookie. If the user isn't logged in, the
+    // backend returns 401 and we surface that; we no longer gate on a
+    // localStorage-held master key.
     try {
       const k = await listApiKeys()
       setKeys(k)
     } catch (e) {
-      setKeysErr(e instanceof Error ? e.message : 'Could not load API keys (master key only).')
+      setKeysErr(e instanceof Error ? e.message : 'Could not load API keys.')
       setKeys([])
     }
   }, [])
@@ -139,13 +134,6 @@ export default function Settings() {
       }
     })()
   }, [tab])
-
-  function handleSaveKey() {
-    setApiKey(key)
-    setSaved(true)
-    setTimeout(() => setSaved(false), 2000)
-    void refreshKeys()
-  }
 
   async function handleCreateScoped() {
     setCreatedOnce(null)
@@ -234,37 +222,21 @@ export default function Settings() {
             <CardHeader>
               <div className="flex items-center gap-2">
                 <Key className="w-4 h-4 text-tron-400" />
-                <span className="text-sm font-medium text-white">API key</span>
+                <span className="text-sm font-medium text-white">Session auth</span>
               </div>
             </CardHeader>
-            <CardBody className="space-y-3">
-              <p className="text-sm text-tron-400">
-                You sign in on the <strong className="text-tron-300">/login</strong> page (httpOnly session cookie). Use
-                this field only if you need <code className="text-tron-300">X-API-Key</code> for scripts or tools; it is
-                stored in localStorage and sent in addition to the session cookie when set.
+            <CardBody className="space-y-3 text-sm text-tron-400">
+              <p>
+                You signed in on the <strong className="text-tron-300">/login</strong> page. The browser now holds an
+                httpOnly session cookie — JavaScript in this page cannot read it, and it is sent automatically on
+                every request to <code className="text-tron-300">/api</code> and <code className="text-tron-300">/ws</code>.
               </p>
-              <div className="flex gap-2">
-                <input
-                  type="password"
-                  value={key}
-                  onChange={e => setKey(e.target.value)}
-                  placeholder="Enter API key…"
-                  className="flex-1 bg-tron-700 border border-tron-600 rounded-lg px-3 py-2 text-sm text-white placeholder-tron-500 focus:outline-none focus:border-accent font-mono"
-                />
-                <button
-                  type="button"
-                  onClick={handleSaveKey}
-                  className="flex items-center gap-2 px-4 py-2 bg-accent hover:bg-accent-dark text-white rounded-lg text-sm font-medium transition-colors"
-                >
-                  {saved ? (
-                    <>
-                      <Check className="w-4 h-4" /> Saved
-                    </>
-                  ) : (
-                    'Save'
-                  )}
-                </button>
-              </div>
+              <p>
+                Need to call the API from a script or CLI? Mint a scoped key on the{' '}
+                <strong className="text-tron-300">API keys</strong> tab and pass it as an{' '}
+                <code className="text-tron-300">X-API-Key</code> header from that tool. The SPA itself does not store
+                API keys in browser storage — that would make them reachable by any injected script.
+              </p>
             </CardBody>
           </Card>
 
@@ -298,13 +270,9 @@ export default function Settings() {
           </CardHeader>
           <CardBody className="space-y-4">
             <p className="text-sm text-tron-400">
-              Requires the <strong className="text-tron-300">master</strong> key saved under <strong className="text-tron-300">General</strong> (scoped keys get 403 here). Plaintext is shown once after creation.
+              Requires an authenticated admin session (the httpOnly cookie from <strong className="text-tron-300">/login</strong>).
+              Scoped keys are shown in plaintext exactly once — copy them into your CLI/CI secret store right after creation.
             </p>
-            {!getApiKey().trim() && (
-              <p className="text-sm text-sky-400/90">
-                No key in storage yet — save your key on the General tab first to avoid 401 errors when loading this list.
-              </p>
-            )}
             {keysErr && <p className="text-sm text-amber-400/90">{keysErr}</p>}
             {createdOnce && (
               <div className="rounded-lg bg-tron-700/80 border border-accent/40 p-3 text-sm">

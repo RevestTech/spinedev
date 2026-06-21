@@ -3,12 +3,9 @@
 # Compose auto-merges this file with docker-compose.yml when you run
 # `docker compose up -d <service>` from `verify/`. Two purposes:
 #
-#   1. Rename containers to `spine_tron_*` so they don't collide with the
-#      standalone TRON install (still at /Users/.../Utilities/Tron with
-#      container_name=tron-postgres etc.). Standalone TRON deployability
-#      (verify/SUBSYSTEM_BOUNDARY.md G-8) is preserved — that project's
-#      compose is unchanged; this overlay only takes effect when compose
-#      is invoked from verify/ inside Spine.
+#   1. Rename containers to `spine_tron_*` (Spine laptop stack). Standalone
+#      RevestTech/Tron repo was decommissioned 2026-06-21; audit-only deploy
+#      is `cd verify/ && docker compose up -d` from spinedev (G-8).
 #
 #   2. Remap TRON's postgres host port (TRON default 127.0.0.1:13002 →
 #      Spine default 127.0.0.1:33010) so a single laptop can run both

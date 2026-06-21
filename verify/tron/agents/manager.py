@@ -19,14 +19,12 @@ import logging
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from tron.agents.base import (
     BaseISO,
-    ISOConfig,
     ISOSpecialization,
     LLMProvider,
-    AgentMetrics,
 )
 from tron.infra.llm.client import DEFAULT_ANTHROPIC_FAST_MODEL, LLMClient
 from tron.schemas.verification import (
@@ -98,6 +96,12 @@ class AuditResult:
 class AuditManager:
     """Orchestrates ISO agents for a complete audit run.
 
+    **Swarm-shaped dispatch:** each registered specialist runs **concurrently**
+    (`asyncio.gather` in `_dispatch_agents`), then findings merge/dedupe,
+    optional cross-validation on severe LLM-only items, and Layer 3 happens
+    downstream in `AuditExecutor`. This is fixed-role parallelism—not dynamic
+    task decomposition—but it delivers comprehensive QA breadth across domains.
+
     The Manager does NOT do analysis itself — it coordinates agents
     that each handle a specific dimension (security, performance, etc.).
 
@@ -159,6 +163,19 @@ class AuditManager:
 
         # Step 2: Dispatch agents concurrently
         batches = await self._dispatch_agents(request, blueprints)
+
+        # Step 2.5: Layer 5 — drop findings that violate the issuing
+        # Blueprint's scope. The Blueprint shapes the prompt up-front, but
+        # LLMs still occasionally return findings outside the declared
+        # scope (wrong file pattern, off-topic vulnerability_type). Static
+        # post-filter is cheap and turns Layer 5 from "prompt-shaped" to
+        # "prompt-shaped + enforced."
+        scope_drops = self._apply_blueprint_scope_filter(batches, blueprints)
+        if scope_drops:
+            logger.info(
+                "Layer 5 (NOT_IN_SCOPE) dropped %d findings across %d batches",
+                scope_drops, len(batches),
+            )
 
         # Step 3: Merge and deduplicate findings
         all_findings = self._merge_findings(batches)
@@ -247,7 +264,7 @@ class AuditManager:
         request: AuditRequest,
         blueprints: Dict[ISOSpecialization, Blueprint],
     ) -> List[FindingBatch]:
-        """Dispatch all agents concurrently and collect results."""
+        """Dispatch all ISO agents concurrently (parallel swarm) and collect results."""
 
         async def _run_agent(
             spec: ISOSpecialization,
@@ -272,6 +289,79 @@ class AuditManager:
         return [r for r in results if r is not None]
 
     # ── Merge & Dedup ──────────────────────────────────────────────
+
+    def _apply_blueprint_scope_filter(
+        self,
+        batches: List[FindingBatch],
+        blueprints: Dict[str, Blueprint],
+    ) -> int:
+        """Drop findings outside the issuing Blueprint's declared scope.
+
+        Mutates batch.findings in place. Returns the total number of
+        findings dropped across all batches.
+
+        Two scope checks per finding:
+          1. ``file_path`` matches at least one of the Blueprint's
+             ``scope.file_patterns`` (fnmatch glob).
+          2. ``vulnerability_type`` is in the Blueprint's
+             ``scope.check_types`` (or check_types is empty/missing,
+             which is treated as "all types allowed").
+
+        We do NOT drop findings whose Blueprint can't be resolved — that
+        indicates orchestration drift, not LLM scope violation, and
+        we'd rather log loudly than silently lose findings.
+        """
+        import fnmatch
+
+        total_dropped = 0
+        for batch in batches:
+            blueprint = blueprints.get(batch.blueprint_id)
+            if blueprint is None:
+                logger.warning(
+                    "Layer 5: batch %s has no matching Blueprint — "
+                    "skipping scope filter for this batch",
+                    batch.blueprint_id,
+                )
+                continue
+
+            patterns = list(blueprint.scope.file_patterns or [])
+            allowed_types = set(blueprint.scope.check_types or [])
+
+            kept: List[FindingOutput] = []
+            for finding in batch.findings:
+                # File-pattern check. Empty patterns list = no constraint.
+                if patterns:
+                    fp = (finding.file_path or "").replace("\\", "/")
+                    matched = any(
+                        fnmatch.fnmatch(fp, p) or fnmatch.fnmatch(fp, f"**/{p}")
+                        for p in patterns
+                    )
+                    if not matched:
+                        logger.debug(
+                            "Layer 5: dropping finding from agent=%s — "
+                            "file_path=%r doesn't match scope=%r",
+                            batch.agent_id, finding.file_path, patterns,
+                        )
+                        total_dropped += 1
+                        continue
+
+                # Vulnerability-type check. Empty allowed_types = no constraint.
+                if allowed_types and finding.vulnerability_type not in allowed_types:
+                    logger.debug(
+                        "Layer 5: dropping finding from agent=%s — "
+                        "vuln_type=%s not in scope=%s",
+                        batch.agent_id,
+                        finding.vulnerability_type,
+                        sorted(t.value for t in allowed_types),
+                    )
+                    total_dropped += 1
+                    continue
+
+                kept.append(finding)
+
+            batch.findings = kept
+
+        return total_dropped
 
     def _merge_findings(
         self, batches: List[FindingBatch]

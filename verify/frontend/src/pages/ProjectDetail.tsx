@@ -100,7 +100,7 @@ function LiveAuditStatus({ auditId }: { auditId: string }) {
   )
 }
 
-function DependencyGraph({ projectId }: { projectId: string }) {
+function DependencyGraph({projectId }: { projectId: string }) {
   const [graphData, setGraphData] = useState<api.ProjectGraphResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -418,6 +418,9 @@ export default function ProjectDetail() {
   const [scanning, setScanning] = useState(false)
   const [buildBusy, setBuildBusy] = useState(false)
   const [evolveBusy, setEvolveBusy] = useState(false)
+  const [excludeGlobsText, setExcludeGlobsText] = useState('')
+  const [testGlobsText, setTestGlobsText] = useState('')
+  const [pathFilterBusy, setPathFilterBusy] = useState(false)
 
   async function handleGithubSelect(repo: api.GithubRepo) {
     if (!project) return
@@ -434,8 +437,8 @@ export default function ProjectDetail() {
   }
 
   const auditItems = audits?.items ?? []
-  const latestAudit = auditItems[0] ?? null
-  const isRunning = auditItems.some(a => a.status === 'running' || a.status === 'queued')
+  const latestAudit = auditItems.length > 0 ? auditItems[0] : null; // Safely access latestAudit
+  const isRunning = auditItems.some(a => a.status === 'running' || a.status === 'queued');
 
   const completedAudits = auditItems.filter(a => a.status === 'completed')
   const totalFindings = completedAudits.reduce((s, a) => s + a.findings_total, 0)
@@ -519,6 +522,16 @@ export default function ProjectDetail() {
   const planArtifact = project?.plan_artifact_json
   const lastBuild = project?.last_build_result_json
   const evolveArtifact = project?.evolve_artifact_json
+
+  useEffect(() => {
+    if (!project) return
+    setExcludeGlobsText((project.audit_exclude_globs_json || []).join('\n'))
+    setTestGlobsText((project.audit_test_path_globs_json || []).join('\n'))
+  }, [
+    project?.id,
+    project?.audit_exclude_globs_json,
+    project?.audit_test_path_globs_json,
+  ])
 
   if (!project) {
     return (
@@ -609,8 +622,8 @@ export default function ProjectDetail() {
         </div>
       )}
 
-      {/* Stats Row */}
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+      {/* Plan / build / evolve */}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
           {planArtifact && (
             <Card>
               <CardHeader>
@@ -651,7 +664,72 @@ export default function ProjectDetail() {
             </Card>
           )}
         </div>
-      )}
+
+      <Card>
+        <CardHeader className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-2">
+            <Shield className="w-4 h-4 text-accent" />
+            <span className="text-sm font-medium text-white">Audit path filters</span>
+          </div>
+          <p className="text-[11px] text-tron-500 max-w-prose">
+            Exclude globs remove paths from the clone scan. Test globs mark matching files so findings
+            are tagged (test path). Not a substitute for a pentest.
+          </p>
+        </CardHeader>
+        <CardBody className="space-y-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <div className="text-xs text-tron-500 mb-1">Exclude (one glob per line, * and ** ok)</div>
+              <textarea
+                value={excludeGlobsText}
+                onChange={e => setExcludeGlobsText(e.target.value)}
+                className="w-full h-24 bg-tron-900 border border-tron-700 rounded-lg px-3 py-2 text-xs text-tron-200 font-mono"
+                placeholder={'**/node_modules/**\n**/*.min.js'}
+              />
+            </div>
+            <div>
+              <div className="text-xs text-tron-500 mb-1">Test path globs (tag noise)</div>
+              <textarea
+                value={testGlobsText}
+                onChange={e => setTestGlobsText(e.target.value)}
+                className="w-full h-24 bg-tron-900 border border-tron-700 rounded-lg px-3 py-2 text-xs text-tron-200 font-mono"
+                placeholder={'**/test/**\n**/*_test.py'}
+              />
+            </div>
+          </div>
+          <div className="flex justify-end">
+            <button
+              type="button"
+              disabled={pathFilterBusy}
+              onClick={async () => {
+                const ex = excludeGlobsText
+                  .split('\n')
+                  .map(s => s.trim())
+                  .filter(Boolean)
+                const te = testGlobsText
+                  .split('\n')
+                  .map(s => s.trim())
+                  .filter(Boolean)
+                setPathFilterBusy(true)
+                try {
+                  await api.updateProject(project.id, {
+                    audit_exclude_globs_json: ex.length ? ex : null,
+                    audit_test_path_globs_json: te.length ? te : null,
+                  })
+                  await refetchProject()
+                } catch (e) {
+                  window.alert(e instanceof Error ? e.message : 'Save failed')
+                } finally {
+                  setPathFilterBusy(false)
+                }
+              }}
+              className="px-4 py-2 text-xs font-medium bg-tron-700 hover:bg-tron-600 text-white rounded-lg border border-tron-600 disabled:opacity-50"
+            >
+              {pathFilterBusy ? 'Saving…' : 'Save path filters'}
+            </button>
+          </div>
+        </CardBody>
+      </Card>
 
       {/* Stats Row */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">

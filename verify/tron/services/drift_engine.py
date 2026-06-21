@@ -8,7 +8,6 @@ to detect semantic and hash-based drift.
 from __future__ import annotations
 import hashlib
 from datetime import datetime
-from typing import Optional
 
 from tron.schemas.verification import DriftScore
 

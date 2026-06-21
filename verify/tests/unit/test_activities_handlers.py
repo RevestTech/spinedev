@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # json is already imported above, no need to re-import
@@ -935,6 +934,10 @@ class TestSynthesizeFindings:
              patch("tron.infra.redis.pubsub.publish_progress", new_callable=AsyncMock), \
              patch("tron.infra.redis.pubsub.publish_audit_completed", new_callable=AsyncMock), \
              patch("tron.infra.db.session._session_factory", mock_factory), \
+             patch("tron.services.finding_triage.load_suppressed_fingerprints_for_project",
+                   new_callable=AsyncMock, return_value=set()), \
+             patch("tron.services.agent_handoff.maybe_write_agent_handoff_after_audit",
+                   new_callable=AsyncMock), \
              patch("tron.workflows.activities._persist_findings_to_db", new_callable=AsyncMock), \
              patch("tron.workflows.activities._finalize_audit_run", new_callable=AsyncMock):
 
@@ -973,6 +976,10 @@ class TestSynthesizeFindings:
              patch("tron.infra.redis.pubsub.publish_progress", new_callable=AsyncMock), \
              patch("tron.infra.redis.pubsub.publish_audit_completed", new_callable=AsyncMock), \
              patch("tron.infra.db.session._session_factory", mock_factory), \
+             patch("tron.services.finding_triage.load_suppressed_fingerprints_for_project",
+                   new_callable=AsyncMock, return_value=set()), \
+             patch("tron.services.agent_handoff.maybe_write_agent_handoff_after_audit",
+                   new_callable=AsyncMock), \
              patch("tron.workflows.activities._persist_findings_to_db", new_callable=AsyncMock), \
              patch("tron.workflows.activities._finalize_audit_run", new_callable=AsyncMock):
 
@@ -1037,6 +1044,10 @@ class TestSynthesizeFindings:
              patch("tron.infra.redis.pubsub.publish_progress", new_callable=AsyncMock), \
              patch("tron.infra.redis.pubsub.publish_audit_completed", new_callable=AsyncMock), \
              patch("tron.infra.db.session._session_factory", mock_factory), \
+             patch("tron.services.finding_triage.load_suppressed_fingerprints_for_project",
+                   new_callable=AsyncMock, return_value=set()), \
+             patch("tron.services.agent_handoff.maybe_write_agent_handoff_after_audit",
+                   new_callable=AsyncMock), \
              patch("tron.workflows.activities._persist_findings_to_db", new_callable=AsyncMock), \
              patch("tron.workflows.activities._finalize_audit_run", new_callable=AsyncMock):
 

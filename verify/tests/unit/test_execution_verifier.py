@@ -101,3 +101,56 @@ async def test_verify_rejected():
     
     assert result.status == VerificationStatus.REJECTED
     assert "Failed to verify" in result.reason
+
+
+# ── Regression: TypeError on str + None concat ──────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_rejected_handles_none_output_and_error():
+    """
+    Regression: SandboxClient returns ``{"output": None, "error": None}`` for
+    some run paths, and ``dict.get(k, "")`` does NOT substitute the default
+    when the key exists with value None — only when the key is missing. The
+    concatenation in the rejected branch then raised TypeError mid-Layer-3
+    and killed the whole audit workflow.
+
+    The fix uses ``(result.get(k) or "")`` on both sides. This test pins
+    that contract so the regression can't return.
+    """
+    mock_sandbox = MagicMock()
+    # The shape that broke things: keys present, values None, non-zero exit.
+    mock_sandbox.run_python = AsyncMock(return_value={
+        "exit_code": 1, "output": None, "error": None,
+    })
+
+    verifier = ExecutionVerifier(sandbox_client=mock_sandbox)
+    finding = FindingSnapshot(
+        category="sql_injection",
+        code_snippet="cursor.execute('SELECT * FROM users WHERE id = ' + uid)",
+    )
+
+    # Must NOT raise TypeError — the rejection branch should produce a
+    # VerificationResult with execution_output = "" (both sides normalised).
+    result = await verifier.verify_finding(finding)
+
+    assert result.status == VerificationStatus.REJECTED
+    assert result.execution_output == ""
+
+
+@pytest.mark.asyncio
+async def test_rejected_handles_missing_output_and_error_keys():
+    """Belt-and-braces: ``result`` may also be missing keys entirely."""
+    mock_sandbox = MagicMock()
+    mock_sandbox.run_python = AsyncMock(return_value={"exit_code": 1})
+
+    verifier = ExecutionVerifier(sandbox_client=mock_sandbox)
+    finding = FindingSnapshot(
+        category="command_injection",
+        code_snippet="os.system('ls ' + arg)",
+    )
+
+    result = await verifier.verify_finding(finding)
+
+    assert result.status == VerificationStatus.REJECTED
+    assert result.execution_output == ""

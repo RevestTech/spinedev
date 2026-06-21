@@ -11,7 +11,6 @@ Exposes a /metrics endpoint via prometheus-client and records:
 from __future__ import annotations
 
 import logging
-import time
 from dataclasses import dataclass
 from typing import Optional
 
@@ -19,12 +18,10 @@ from prometheus_client import (
     Counter,
     Gauge,
     Histogram,
-    CollectorRegistry,
     REGISTRY,
     generate_latest,
     CONTENT_TYPE_LATEST,
 )
-from starlette.requests import Request
 from starlette.responses import Response
 
 logger = logging.getLogger(__name__)

@@ -13,19 +13,14 @@ from __future__ import annotations
 
 import asyncio
 import json
-import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from tron.agents.security_iso import SecurityISO, BANDIT_SEVERITY_MAP, BANDIT_VULN_TYPE_MAP
-from tron.agents.base import ISOConfig, ISOSpecialization, LLMProvider, ToolResult
+from tron.agents.base import ToolResult
 from tron.schemas.verification import (
-    Blueprint,
-    BlueprintScope,
-    FindingOutput,
     SeverityLevel,
-    VerificationMethod,
     VulnerabilityType,
 )
 
@@ -420,18 +415,30 @@ class TestToolConfirmation:
 class TestExecuteToolRouting:
 
     async def test_routes_to_bandit(self, security_iso):
+        # _execute_tool now requires file_contents; it writes files to a
+        # temp dir and calls _run_bandit with that temp dir (not workspace_root).
         with patch.object(security_iso, "_run_bandit", new_callable=AsyncMock,
                          return_value=ToolResult(tool_name="bandit", exit_code=0,
                                                  stdout="", stderr="", duration_seconds=0)) as mock:
-            await security_iso._execute_tool("bandit", "/workspace")
-            mock.assert_called_once_with("/workspace")
+            await security_iso._execute_tool(
+                "bandit", "/workspace", file_contents={"app.py": "print('x')"}
+            )
+            mock.assert_called_once()
+            # Argument is a temp dir path created by tempfile.mkdtemp
+            (called_path,) = mock.call_args[0]
+            assert "tron-security-bandit" in called_path
 
     async def test_routes_to_semgrep(self, security_iso):
+        # Same pattern as _routes_to_bandit — file_contents required, temp dir used.
         with patch.object(security_iso, "_run_semgrep", new_callable=AsyncMock,
                          return_value=ToolResult(tool_name="semgrep", exit_code=0,
                                                  stdout="", stderr="", duration_seconds=0)) as mock:
-            await security_iso._execute_tool("semgrep", "/workspace")
-            mock.assert_called_once_with("/workspace")
+            await security_iso._execute_tool(
+                "semgrep", "/workspace", file_contents={"app.py": "print('x')"}
+            )
+            mock.assert_called_once()
+            (called_path,) = mock.call_args[0]
+            assert "tron-security-semgrep" in called_path
 
 
 # ── _run_bandit Tests ────────────────────────────────────────────────
@@ -440,6 +447,8 @@ class TestExecuteToolRouting:
 class TestRunBandit:
 
     async def test_parses_bandit_output(self, security_iso):
+        from tron.infra.sandbox.client import ExecutionResult
+
         bandit_output = json.dumps({
             "results": [
                 {
@@ -454,11 +463,15 @@ class TestRunBandit:
             ],
         })
 
-        mock_proc = AsyncMock()
-        mock_proc.communicate = AsyncMock(return_value=(bandit_output.encode(), b""))
-        mock_proc.returncode = 1  # Bandit returns 1 when findings exist
+        # _run_bandit now dispatches through the sandbox client, not
+        # asyncio.create_subprocess_exec — mock the sandbox's run_bash.
+        mock_sandbox = AsyncMock()
+        mock_sandbox.run_bash = AsyncMock(return_value=ExecutionResult(
+            stdout=bandit_output, stderr="", exit_code=1,
+            duration_seconds=0.1, timed_out=False,
+        ))
 
-        with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=mock_proc):
+        with patch.object(security_iso, "_get_sandbox", new_callable=AsyncMock, return_value=mock_sandbox):
             result = await security_iso._run_bandit("/workspace")
 
         assert result.tool_name == "bandit"
@@ -495,6 +508,8 @@ class TestRunBandit:
 class TestRunSemgrep:
 
     async def test_parses_semgrep_output(self, security_iso):
+        from tron.infra.sandbox.client import ExecutionResult
+
         semgrep_output = json.dumps({
             "results": [
                 {
@@ -510,11 +525,14 @@ class TestRunSemgrep:
             ],
         })
 
-        mock_proc = AsyncMock()
-        mock_proc.communicate = AsyncMock(return_value=(semgrep_output.encode(), b""))
-        mock_proc.returncode = 1
+        # Same as _run_bandit: dispatch happens via the sandbox client.
+        mock_sandbox = AsyncMock()
+        mock_sandbox.run_bash = AsyncMock(return_value=ExecutionResult(
+            stdout=semgrep_output, stderr="", exit_code=1,
+            duration_seconds=0.1, timed_out=False,
+        ))
 
-        with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=mock_proc):
+        with patch.object(security_iso, "_get_sandbox", new_callable=AsyncMock, return_value=mock_sandbox):
             result = await security_iso._run_semgrep("/workspace")
 
         assert result.tool_name == "semgrep"
@@ -531,3 +549,225 @@ class TestRunSemgrep:
             result = await security_iso._run_semgrep("/workspace")
 
         assert result.findings_count == 0
+
+
+# ── _run_safety Tests ────────────────────────────────────────────────
+
+
+class TestRunSafety:
+    """Safety scans Python requirements manifests for known-vulnerable
+    versions. The runner is augmentative: missing manifest → silent no-op,
+    not an error."""
+
+    async def test_no_manifest_in_scope_is_silent_noop(self, security_iso):
+        # No requirements*.txt present in the file set → Safety must NOT
+        # invoke the sandbox (waste of time) and must NOT raise. Returns
+        # a zero-exit empty ToolResult.
+        files = {"src/app.py": "print('hello')", "README.md": "# hi"}
+
+        # If the runner accidentally tried to invoke the sandbox, this would
+        # fail because we never patch _get_sandbox.
+        result = await security_iso._run_safety("/workspace", files)
+
+        assert result.tool_name == "safety"
+        assert result.exit_code == 0
+        assert result.findings_count == 0
+        assert "no Python requirements manifest" in result.stderr
+
+    async def test_parses_safety_v3_payload(self, security_iso):
+        # Safety v3 returns ``{"vulnerabilities": [...]}``.
+        from tron.infra.sandbox.client import ExecutionResult
+
+        files = {"requirements.txt": "django==3.2.0\n"}
+        v3_payload = json.dumps({
+            "vulnerabilities": [
+                {
+                    "package_name": "django",
+                    "analyzed_version": "3.2.0",
+                    "vulnerability_id": "GHSA-aaaa-bbbb-cccc",
+                    "advisory": "django<4.2 has CVE-2024-XXXX",
+                    "CVE": "CVE-2024-XXXX",
+                    "more_info_url": "https://example.com",
+                },
+            ],
+        })
+
+        mock_sandbox = AsyncMock()
+        mock_sandbox.run_bash = AsyncMock(return_value=ExecutionResult(
+            stdout=v3_payload, stderr="", exit_code=64,  # safety exits non-0 when vulns found
+            duration_seconds=0.1, timed_out=False,
+        ))
+
+        with patch.object(security_iso, "_get_sandbox", new_callable=AsyncMock,
+                          return_value=mock_sandbox):
+            result = await security_iso._run_safety("/workspace", files)
+
+        assert result.tool_name == "safety"
+        assert result.findings_count == 1
+        assert result.raw_findings[0]["package"] == "django"
+        assert result.raw_findings[0]["vulnerability_id"] == "GHSA-aaaa-bbbb-cccc"
+        assert result.raw_findings[0]["cve"] == "CVE-2024-XXXX"
+
+    async def test_parses_safety_v2_legacy_list_payload(self, security_iso):
+        # Safety v2 returned a bare JSON list. Both shapes must work so we
+        # don't pin to whichever happens to be on the sandbox image today.
+        from tron.infra.sandbox.client import ExecutionResult
+
+        files = {"requirements.txt": "flask==1.0\n"}
+        v2_payload = json.dumps([
+            {
+                "package": "flask",
+                "installed_version": "1.0",
+                "id": "pyup-1234",
+                "vulnerable_spec": "<2.0",
+                "cve": "",
+            },
+        ])
+
+        mock_sandbox = AsyncMock()
+        mock_sandbox.run_bash = AsyncMock(return_value=ExecutionResult(
+            stdout=v2_payload, stderr="", exit_code=64,
+            duration_seconds=0.1, timed_out=False,
+        ))
+
+        with patch.object(security_iso, "_get_sandbox", new_callable=AsyncMock,
+                          return_value=mock_sandbox):
+            result = await security_iso._run_safety("/workspace", files)
+
+        assert result.findings_count == 1
+        assert result.raw_findings[0]["package"] == "flask"
+        assert result.raw_findings[0]["vulnerability_id"] == "pyup-1234"
+
+    async def test_unparseable_output_does_not_raise(self, security_iso):
+        # If safety isn't installed in the sandbox image we get a non-JSON
+        # stderr blob. The runner must keep the audit going.
+        from tron.infra.sandbox.client import ExecutionResult
+
+        files = {"requirements.txt": "django==3.2.0\n"}
+        mock_sandbox = AsyncMock()
+        mock_sandbox.run_bash = AsyncMock(return_value=ExecutionResult(
+            stdout="bash: safety: command not found",
+            stderr="exit status 127", exit_code=127,
+            duration_seconds=0.0, timed_out=False,
+        ))
+
+        with patch.object(security_iso, "_get_sandbox", new_callable=AsyncMock,
+                          return_value=mock_sandbox):
+            result = await security_iso._run_safety("/workspace", files)
+
+        assert result.tool_name == "safety"
+        assert result.findings_count == 0
+        # Don't raise — Safety is augmentative, not gating.
+
+
+# ── _run_eslint Tests ────────────────────────────────────────────────
+
+
+class TestRunESLint:
+    """ESLint with eslint-plugin-security gives JS/TS files a deterministic
+    pass to match what Bandit + Semgrep do for Python. Same shape as Safety:
+    no-op when nothing to scan, doesn't raise when binary is missing, parses
+    JSON into raw_findings."""
+
+    async def test_default_tools_includes_eslint(self):
+        assert "eslint" in SecurityISO.DEFAULT_TOOLS
+
+    async def test_no_js_files_in_scope_is_silent_noop(self, security_iso):
+        files = {"src/app.py": "print('hi')", "Dockerfile": "FROM python"}
+
+        result = await security_iso._run_eslint("/workspace", files)
+
+        assert result.tool_name == "eslint"
+        assert result.exit_code == 0
+        assert result.findings_count == 0
+        assert "no JS/TS files in scope" in result.stderr
+
+    async def test_parses_eslint_json_findings(self, security_iso):
+        from tron.infra.sandbox.client import ExecutionResult
+
+        files = {"src/app.js": "eval(userInput);\n"}
+        eslint_output = json.dumps([
+            {
+                "filePath": "/tmp/tron-security-eslint-abc/src/app.js",
+                "messages": [
+                    {
+                        "ruleId": "security/detect-eval-with-expression",
+                        "severity": 2,  # 2 = error
+                        "message": "eval can be harmful",
+                        "line": 1,
+                        "column": 1,
+                        "fix": None,
+                    },
+                    {
+                        "ruleId": "security/detect-unsafe-regex",
+                        "severity": 2,
+                        "message": "Unsafe regex catastrophic backtracking",
+                        "line": 5,
+                        "column": 10,
+                    },
+                ],
+            },
+        ])
+
+        mock_sandbox = AsyncMock()
+        mock_sandbox.run_bash = AsyncMock(return_value=ExecutionResult(
+            stdout=eslint_output, stderr="", exit_code=1,
+            duration_seconds=0.2, timed_out=False,
+        ))
+
+        with patch.object(security_iso, "_get_sandbox", new_callable=AsyncMock,
+                          return_value=mock_sandbox):
+            result = await security_iso._run_eslint(
+                "/tmp/tron-security-eslint-abc", files,
+            )
+
+        assert result.tool_name == "eslint"
+        assert result.findings_count == 2
+        # Workspace prefix stripped so confirmation matching against the
+        # LLM's reported file_path works ("src/app.js" not the temp path).
+        assert result.raw_findings[0]["file"] == "src/app.js"
+        assert result.raw_findings[0]["rule_id"] == "security/detect-eval-with-expression"
+        assert result.raw_findings[0]["severity"] == 2
+        assert result.raw_findings[1]["rule_id"] == "security/detect-unsafe-regex"
+
+    async def test_typescript_files_are_scanned(self, security_iso):
+        # The .ts/.tsx extensions count too — closes the gap for TS-heavy
+        # projects that previously got LLM-only treatment.
+        from tron.infra.sandbox.client import ExecutionResult
+
+        files = {
+            "src/auth.ts": "export const x = 1;",
+            "components/Login.tsx": "export const C = () => null;",
+        }
+        mock_sandbox = AsyncMock()
+        mock_sandbox.run_bash = AsyncMock(return_value=ExecutionResult(
+            stdout="[]", stderr="", exit_code=0,
+            duration_seconds=0.1, timed_out=False,
+        ))
+
+        with patch.object(security_iso, "_get_sandbox", new_callable=AsyncMock,
+                          return_value=mock_sandbox):
+            result = await security_iso._run_eslint("/workspace", files)
+
+        # Sandbox WAS called (i.e. files were detected as JS/TS)
+        mock_sandbox.run_bash.assert_called_once()
+        assert result.findings_count == 0
+
+    async def test_unparseable_output_does_not_raise(self, security_iso):
+        from tron.infra.sandbox.client import ExecutionResult
+
+        files = {"src/app.js": "let x = 1;"}
+        mock_sandbox = AsyncMock()
+        mock_sandbox.run_bash = AsyncMock(return_value=ExecutionResult(
+            stdout="bash: eslint: command not found",
+            stderr="exit status 127", exit_code=127,
+            duration_seconds=0.0, timed_out=False,
+        ))
+
+        with patch.object(security_iso, "_get_sandbox", new_callable=AsyncMock,
+                          return_value=mock_sandbox):
+            result = await security_iso._run_eslint("/workspace", files)
+
+        assert result.tool_name == "eslint"
+        assert result.findings_count == 0
+        # Don't raise — ESLint is augmentative.

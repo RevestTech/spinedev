@@ -15,9 +15,6 @@ import re
 from typing import List
 
 from tron.parsers.base import (
-    ClassInfo,
-    FunctionInfo,
-    ImportInfo,
     ParseResult,
 )
 from tron.parsers.javascript import JavaScriptParser
@@ -142,7 +139,6 @@ class TypeScriptParser(JavaScriptParser):
 
                 # Find closing brace
                 depth = line.count('{') - line.count('}')
-                end_line = start_line
                 members: List[str] = []
 
                 for j in range(i, min(i + 100, len(lines))):
@@ -157,7 +153,7 @@ class TypeScriptParser(JavaScriptParser):
                             members.append(member)
 
                     if depth == 0:
-                        end_line = j + 1
+                        # Closing brace found — enum body is complete.
                         break
 
                 result.top_level_statements += 1

@@ -31,3 +31,43 @@ exclude_lines = [
     "if __name__ == .__main__.",
     "raise NotImplementedError",
 ]
+
+# ── Ruff ──────────────────────────────────────────────────────────────
+# Lint-as-gate: kept narrow on purpose so the gate catches real defects
+# (undefined names, bare excepts, ambiguous identifiers) without fighting
+# the team over stylistic preferences. Expand `select` deliberately, not
+# reactively.
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+extend-exclude = [
+    # Intentionally-vulnerable code — the scanner's golden suite. Linting
+    # these defeats their purpose.
+    "tests/golden_suite/vulnerable_samples",
+    # Migrations are generated / append-only.
+    "alembic/versions",
+    # Vendored or generated code.
+    ".venv",
+    "build",
+    "dist",
+]
+
+[tool.ruff.lint]
+# Start with a lean rule set. The four we keep catch real bugs:
+#   F    — pyflakes (undefined names, unused imports, dead vars)
+#   E7   — syntax-ish errors (bare except, multi-statement lines)
+#   E9   — runtime-errors
+#   W6   — deprecated syntax
+select = ["F", "E7", "E9", "W6"]
+# F401 (unused imports) is auto-fixed in CI-friendly runs; leave enforced.
+# F841 similar — uncovers genuine dead variables worth cleaning up.
+
+[tool.ruff.lint.per-file-ignores]
+# __init__.py often re-exports for public API.
+"**/__init__.py" = ["F401"]
+# Load-test files use locust-style globals.
+"tests/load/*" = ["F401", "F811"]
+# Test code commonly assigns call results without using them (to verify the
+# call happened, or to keep a reference alive while awaiting). F841 triggers
+# a lot of false positives here. F811 fires on fixture/mock redefines.
+"tests/**" = ["F841", "F811"]

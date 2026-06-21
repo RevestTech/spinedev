@@ -24,7 +24,7 @@ import pytest
 import json
 from unittest.mock import Mock
 
-from tron.agents.qa_iso import QAISO, QA_VULN_TYPE_MAP
+from tron.agents.qa_iso import QAISO
 from tron.schemas.verification import (
     Blueprint,
     BlueprintScope,

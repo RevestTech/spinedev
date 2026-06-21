@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import os
-from pathlib import Path
 from typing import Any
 from uuid import UUID
 
@@ -12,6 +11,11 @@ from sqlalchemy import select
 
 from tron.api.config import settings
 from tron.domain.models import AuditRun, Finding, Project
+from tron.services.path_safety import (
+    UnsafePathError,
+    parse_allowed_roots,
+    resolve_under_allowlist,
+)
 from tron.services.scan_handoff_export import write_audit_handoff_bundle
 
 logger = logging.getLogger(__name__)
@@ -108,14 +112,22 @@ async def _maybe_write_agent_handoff_inner(
     if not raw_path:
         return
 
-    dest = Path(raw_path).expanduser()
-    if not dest.is_absolute():
+    # Re-validate the path against the current allowlist at write time, not
+    # just at API-edit time. A row written before the allowlist was tightened
+    # (or with an allowlist that was later narrowed) would otherwise keep
+    # writing to an unsafe location. Fail-closed: no allowlist = no writes.
+    try:
+        dest = resolve_under_allowlist(
+            raw_path, parse_allowed_roots(settings.tron_agent_handoff_allowed_roots)
+        )
+    except UnsafePathError as exc:
         logger.warning(
-            "agent_handoff_path must be absolute (got %r); skipping handoff for project %s",
-            raw_path,
+            "agent_handoff_path rejected at write time for project %s: %s",
             project_id,
+            exc,
         )
         return
+
     if not dest.is_dir():
         logger.warning(
             "agent_handoff_path is not a directory: %s; skipping handoff",

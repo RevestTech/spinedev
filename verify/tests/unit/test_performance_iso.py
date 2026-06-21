@@ -8,13 +8,11 @@ Tests:
 
 from __future__ import annotations
 
-import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from tron.agents.performance_iso import PerformanceISO, _is_code_file
-from tron.agents.base import ISOConfig, ISOSpecialization, LLMProvider
 
 
 @pytest.fixture

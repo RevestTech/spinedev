@@ -15,9 +15,7 @@ without needing Temporal, real LLMs, or real Redis.
 from __future__ import annotations
 
 import asyncio
-import json
-import uuid
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 

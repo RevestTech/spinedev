@@ -9,9 +9,6 @@ from __future__ import annotations
 
 import json
 import logging
-import time
-from io import StringIO
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -23,7 +20,6 @@ from tron.infra.observability.tracing import (
 )
 from tron.infra.observability.metrics import (
     TronMetrics,
-    _create_metrics,
     _normalise_path,
     get_metrics,
     init_metrics,
@@ -229,7 +225,6 @@ class TestJSONFormatter:
 
     def test_format_includes_trace_context(self):
         """When a span is active, trace_id and span_id are included."""
-        from opentelemetry import trace
         init_tracing(app=None)
         tracer = get_tracer("test")
         formatter = JSONFormatter()

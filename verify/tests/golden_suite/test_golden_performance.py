@@ -23,9 +23,8 @@ Each test:
 import pytest
 import json
 from unittest.mock import Mock
-from uuid import uuid4
 
-from tron.agents.performance_iso import PerformanceISO, PERF_VULN_TYPE_MAP
+from tron.agents.performance_iso import PerformanceISO
 from tron.schemas.verification import (
     Blueprint,
     BlueprintScope,

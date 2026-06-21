@@ -59,7 +59,16 @@ export interface Finding {
   suggested_fix?: string
   status: string
   code_snippet?: string
+  confidence?: number | null
+  deterministic_tool_confirmed?: boolean
+  layer3_execution?: string | null
+  confirming_tools?: string[] | null
+  path_role?: string | null
+  follow_up_recommended?: boolean
+  evidence_source?: string | null
+  verification_summary?: string
   created_at: string
+  updated_at?: string
 }
 
 export interface FindingListResponse {

@@ -14,16 +14,12 @@ Tests:
 
 from __future__ import annotations
 
-import asyncio
-import tempfile
-from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from tron.infra.sandbox.client import (
     ExecutionResult,
-    SandboxClient,
     VerificationResult,
     get_sandbox_client,
 )

@@ -13,8 +13,7 @@ Tests cover:
 
 from __future__ import annotations
 
-import uuid
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -26,11 +25,7 @@ from tron.agents.base import (
     ToolResult,
 )
 from tron.schemas.verification import (
-    Blueprint,
     BlueprintScope,
-    FindingOutput,
-    SeverityLevel,
-    VerificationMethod,
     VulnerabilityType,
 )
 
